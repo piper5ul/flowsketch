@@ -1,0 +1,272 @@
+@import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --color-ink-950: #12131a;
+  --color-ink-900: #181a24;
+  --color-ink-800: #21232f;
+  --color-ink-700: #2b2e3d;
+  --color-ink-600: #3a3d50;
+
+  --color-accent-500: #7c5cff;
+  --color-accent-600: #6a45f5;
+  --color-accent-400: #9b81ff;
+
+  --color-canvas: #f6f7fb;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+/* Visible caret when editing shape text */
+[contenteditable="true"] {
+  caret-color: currentColor;
+}
+[contenteditable="true"]:empty::before {
+  content: attr(data-placeholder);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* ---------- Canvas ---------- */
+.rf-canvas {
+  background-color: var(--color-canvas);
+}
+
+/* React Flow structural overrides so it gets out of our way visually */
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__edge-path {
+  stroke-linecap: round;
+}
+.react-flow__handle {
+  pointer-events: none;
+  border: none;
+  background: transparent;
+  min-width: 0;
+  min-height: 0;
+}
+.react-flow__node {
+  cursor: grab;
+}
+.react-flow__node.selected {
+  z-index: 10;
+}
+.react-flow__resize-control {
+  z-index: 10 !important;
+}
+
+/* React Flow renders nodes *after* the edge-label-renderer portal in the DOM,
+   so without an explicit z-index nodes visually/interactively cover our
+   bend and endpoint drag handles wherever they sit on a shape's border. */
+.react-flow__edgelabel-renderer {
+  z-index: 1000;
+}
+
+/* Connection handle hit areas — invisible but interactive for drag-to-connect.
+   The handle itself is a large invisible hit area; a ::after pseudo-element
+   renders the small visible dot when needed. */
+.shape-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  pointer-events: none !important;
+  cursor: crosshair;
+}
+
+.shape-handle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  transform: translate(-50%, -50%) scale(0.5);
+  background: var(--color-accent-400);
+  opacity: 0;
+  transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+  pointer-events: none;
+}
+
+/* In connector mode, always show handles on all shapes */
+.connector-mode .shape-handle {
+  pointer-events: all !important;
+}
+
+.connector-mode .shape-handle::after {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.connector-mode .shape-handle:hover::after {
+  background: var(--color-accent-500);
+  transform: translate(-50%, -50%) scale(1.3);
+}
+
+.connector-mode .quick-add-btn {
+  display: none;
+}
+
+/* Quick-add directional buttons that appear when hovering a shape */
+.quick-add-btn {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: var(--color-accent-400);
+  border: none;
+  padding: 0;
+  opacity: 0;
+  transform: scale(0.5);
+  transition: opacity 120ms ease, transform 120ms ease, background 120ms ease;
+  pointer-events: none;
+  cursor: pointer;
+}
+
+.quick-add-btn::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+
+.shape-wrapper:hover .quick-add-btn {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: all;
+}
+
+.quick-add-btn:hover {
+  background: var(--color-accent-500);
+  transform: scale(1.3);
+}
+
+/* Edge selection joint handles (endpoint markers + draggable bend point) */
+.connector-joint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-radius: 9999px;
+  background: white;
+  border: 1.5px solid var(--color-accent-500);
+  box-shadow: 0 1px 3px rgba(20, 20, 40, 0.2);
+}
+
+.connector-joint--endpoint {
+  width: 6px;
+  height: 6px;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.connector-joint--bend {
+  width: 7px;
+  height: 7px;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+}
+
+.connector-joint--bend:active {
+  cursor: grabbing;
+  background: var(--color-accent-500);
+}
+
+/* Larger invisible hit area around the small endpoint dots, so they stay
+   easy to grab while looking light. */
+.connector-joint-hit {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  pointer-events: all;
+  cursor: grab;
+}
+
+.connector-joint-hit:active {
+  cursor: grabbing;
+}
+
+.connector-joint-hit .connector-joint--endpoint {
+  transition: transform 100ms ease;
+}
+
+.connector-joint-hit:hover .connector-joint--endpoint {
+  background: var(--color-accent-500);
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+/* Secondary segment handles along each straight run of an elbow connector */
+.connector-joint--segment {
+  border-radius: 9999px;
+  transition: background 100ms ease;
+}
+
+.connector-joint--segment-v,
+.connector-joint--segment-h {
+  width: 6px;
+  height: 6px;
+  transform: translate(-50%, -50%);
+}
+
+.connector-joint-hit--v {
+  cursor: ew-resize;
+}
+
+.connector-joint-hit--h {
+  cursor: ns-resize;
+}
+
+.connector-joint-hit:hover .connector-joint--segment {
+  background: var(--color-accent-500);
+}
+
+/* Smart alignment guide lines shown while dragging shapes */
+.alignment-guide {
+  stroke: #f43f5e;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d7d9e3;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.panel-in {
+  animation: panel-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}

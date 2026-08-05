@@ -1,0 +1,632 @@
+import { useCallback, useEffect, useRef } from 'react';
+import {
+  ReactFlow,
+  Background,
+  BackgroundVariant,
+  ConnectionMode,
+  useReactFlow,
+  type FinalConnectionState,
+} from '@xyflow/react';
+import { nanoid } from 'nanoid';
+import { computeMarkers, useDiagramStore, type ShapeNode, type ConnectorEdge } from '../store/useDiagramStore';
+import type { ConnectorData } from '../types';
+import { nodeTypes } from '../nodes/nodeTypes';
+import { edgeTypes } from '../edges/edgeTypes';
+import { LeftRail } from './LeftRail';
+import { FloatingToolbar } from './FloatingToolbar';
+import { BottomBar } from './BottomBar';
+import { TopBar } from './TopBar';
+import { AlignmentGuides } from './AlignmentGuides';
+import { TextFormatBar } from './TextFormatBar';
+import type { FontSize, ShapeData, ShapeKind, Tool } from '../types';
+
+const SHAPE_TOOLS: ShapeKind[] = ['rectangle', 'ellipse', 'diamond', 'sticky', 'text', 'pill', 'triangle', 'hexagon', 'cylinder'];
+const SHORTCUTS: Record<string, Tool> = {
+  v: 'select',
+  h: 'pan',
+  r: 'rectangle',
+  o: 'ellipse',
+  d: 'diamond',
+  s: 'sticky',
+  n: 'sticky',
+  t: 'text',
+  a: 'connector',
+  l: 'connector',
+  u: 'pill',
+  g: 'triangle',
+  y: 'cylinder',
+};
+
+let copiedStyle: Partial<ShapeData> | null = null;
+
+function isTypingTarget(el: EventTarget | null) {
+  if (!(el instanceof HTMLElement)) return false;
+  return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
+}
+
+export function Canvas() {
+  const nodes = useDiagramStore((s) => s.nodes);
+  const edges = useDiagramStore((s) => s.edges);
+  const onNodesChange = useDiagramStore((s) => s.onNodesChange);
+  const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
+  const onConnect = useDiagramStore((s) => s.onConnect);
+  const addShape = useDiagramStore((s) => s.addShape);
+  const tool = useDiagramStore((s) => s.tool);
+  const setTool = useDiagramStore((s) => s.setTool);
+  const deleteSelection = useDiagramStore((s) => s.deleteSelection);
+  const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
+  const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
+  const undo = useDiagramStore((s) => s.undo);
+  const redo = useDiagramStore((s) => s.redo);
+  const defaultConnector = useDiagramStore((s) => s.defaultConnector);
+
+  const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
+  const wrapperRef = useRef<HTMLDivElement>(null);
+  const prevToolRef = useRef<Tool>('select');
+  const connectorSourceRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (tool !== 'connector') connectorSourceRef.current = null;
+  }, [tool]);
+
+  const onNodeDragStart = useCallback(
+    (_event: React.MouseEvent, _node: ShapeNode) => {
+      if (!_event.altKey) return;
+      useDiagramStore.getState().duplicateSelectedInPlace();
+    },
+    [],
+  );
+
+  const onNodeClick = useCallback(
+    (_event: React.MouseEvent, node: ShapeNode) => {
+      if (tool !== 'connector') return;
+      const isAnchor = node.data.fill === 'transparent' && node.data.stroke === 'transparent';
+      if (isAnchor) return;
+
+      if (!connectorSourceRef.current) {
+        connectorSourceRef.current = node.id;
+        return;
+      }
+
+      if (connectorSourceRef.current === node.id) return;
+
+      const edgeData: ConnectorData = {
+        connectorType: defaultConnector,
+        stroke: '#6B7080',
+        strokeStyle: 'solid',
+        label: '',
+        startArrow: false,
+        endArrow: true,
+      };
+      addEdges({
+        id: nanoid(8),
+        source: connectorSourceRef.current,
+        target: node.id,
+        type: 'connector',
+        zIndex: 1000,
+        ...computeMarkers(edgeData),
+        data: edgeData,
+      });
+      connectorSourceRef.current = null;
+    },
+    [tool, addEdges, defaultConnector],
+  );
+
+  const onPaneClick = useCallback(
+    (event: React.MouseEvent) => {
+      setEditingNodeId(null);
+
+      if (tool === 'connector') {
+        if (connectorSourceRef.current) {
+          connectorSourceRef.current = null;
+          return;
+        }
+        const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        const startId = nanoid(8);
+        const endId = nanoid(8);
+        const anchorSize = 1;
+        addNodes([
+          {
+            id: startId, type: 'shape',
+            position: { x: position.x - anchorSize / 2, y: position.y - anchorSize / 2 },
+            width: anchorSize, height: anchorSize,
+            data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
+          },
+          {
+            id: endId, type: 'shape',
+            position: { x: position.x + 180 - anchorSize / 2, y: position.y - anchorSize / 2 },
+            width: anchorSize, height: anchorSize,
+            data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
+          },
+        ]);
+        const edgeData: ConnectorData = {
+          connectorType: defaultConnector,
+          stroke: '#6B7080',
+          strokeStyle: 'solid',
+          label: '',
+          startArrow: false,
+          endArrow: true,
+        };
+        addEdges({
+          id: nanoid(8),
+          source: startId,
+          target: endId,
+          sourceHandle: 'right',
+          targetHandle: 'left',
+          type: 'connector',
+          zIndex: 1000,
+          ...computeMarkers(edgeData),
+          data: edgeData,
+        });
+        setTool('select');
+        return;
+      }
+
+      if (!SHAPE_TOOLS.includes(tool as ShapeKind)) return;
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const shape = tool as ShapeKind;
+      const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
+      addShape(shape, { x: position.x - sizeOffset.x, y: position.y - sizeOffset.y });
+      setTool('select');
+    },
+    [tool, screenToFlowPosition, addShape, setTool, setEditingNodeId, addNodes, addEdges, defaultConnector],
+  );
+
+  const onCanvasDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('.react-flow__node') || target.closest('.react-flow__edge')) return;
+      if (tool !== 'select') return;
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const id = addShape('text', { x: position.x - 80, y: position.y - 20 });
+      setEditingNodeId(id);
+    },
+    [tool, screenToFlowPosition, addShape, setEditingNodeId],
+  );
+
+  // Dragging a connector out to empty canvas creates a new connected shape,
+  // mirroring Whimsical's "drag to create" flow.
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+      if (connectionState.isValid || !connectionState.fromNode) return;
+      const target = event.target as HTMLElement;
+      if (!target.closest('.react-flow__pane')) return;
+
+      const point = 'changedTouches' in event ? event.changedTouches[0] : event;
+      const position = screenToFlowPosition({ x: point.clientX, y: point.clientY });
+      const id = nanoid(8);
+      const width = 180;
+      const height = 100;
+
+      addNodes({
+        id,
+        type: 'shape',
+        position: { x: position.x - width / 2, y: position.y - height / 2 },
+        width,
+        height,
+        data: { label: '', shape: 'rectangle', fill: '#DCEAFB', stroke: '#3B82F6' },
+      });
+      const edgeData: ConnectorData = {
+        connectorType: defaultConnector,
+        stroke: '#6B7080',
+        strokeStyle: 'solid',
+        label: '',
+        startArrow: false,
+        endArrow: true,
+      };
+      addEdges({
+        id: nanoid(8),
+        source: connectionState.fromNode.id,
+        target: id,
+        sourceHandle: connectionState.fromHandle?.id,
+        type: 'connector',
+        zIndex: 1000,
+        ...computeMarkers(edgeData),
+        data: edgeData,
+      });
+    },
+    [screenToFlowPosition, addNodes, addEdges, defaultConnector],
+  );
+
+  useEffect(() => {
+    let clipboard: { nodes: unknown[]; edges: unknown[] } | null = null;
+
+    function onPaste(e: ClipboardEvent) {
+      if (isTypingTarget(e.target)) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const img = new window.Image();
+            img.onload = () => {
+              const maxW = 400;
+              const scale = img.width > maxW ? maxW / img.width : 1;
+              const w = Math.round(img.width * scale);
+              const h = Math.round(img.height * scale);
+              const id = nanoid(8);
+              const center = screenToFlowPosition({
+                x: window.innerWidth / 2,
+                y: window.innerHeight / 2,
+              });
+              addNodes({
+                id,
+                type: 'shape',
+                position: { x: center.x - w / 2, y: center.y - h / 2 },
+                width: w,
+                height: h,
+                data: {
+                  label: '',
+                  shape: 'rectangle',
+                  fill: '#ffffff',
+                  stroke: '#e5e7eb',
+                  imageSrc: dataUrl,
+                },
+              });
+            };
+            img.src = dataUrl;
+          };
+          reader.readAsDataURL(file);
+          return;
+        }
+      }
+    }
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (isTypingTarget(e.target)) return;
+
+      // Undo / Redo
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+
+      // Select all (excludes locked nodes)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        const state = useDiagramStore.getState();
+        useDiagramStore.setState({
+          nodes: state.nodes.map((n) => ({ ...n, selected: !n.data.locked })),
+          edges: state.edges.map((ed) => ({ ...ed, selected: true })),
+        });
+        return;
+      }
+
+      // Cmd+Shift+C → Copy as image
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+        e.preventDefault();
+        const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
+        if (viewport) {
+          import('html-to-image').then(({ toPng }) => {
+            toPng(viewport, { backgroundColor: '#f6f7fb', pixelRatio: 2 }).then(async (dataUrl) => {
+              const res = await fetch(dataUrl);
+              const blob = await res.blob();
+              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+            });
+          });
+        }
+        return;
+      }
+
+      // Cmd+Shift+D → Save as default style
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        const state = useDiagramStore.getState();
+        const sel = state.nodes.find((nd) => nd.selected);
+        if (sel) state.setDefaultStyle({ fill: sel.data.fill, stroke: sel.data.stroke });
+        return;
+      }
+
+      // Cmd+Shift+L → Lock/unlock
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        useDiagramStore.getState().toggleLock();
+        return;
+      }
+
+      // Cmd+Option+C → Copy style
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyC') {
+        e.preventDefault();
+        const sel = useDiagramStore.getState().nodes.find((nd) => nd.selected);
+        if (sel) {
+          const { fill, stroke, fontSize, bold, italic, textAlign, verticalAlign } = sel.data;
+          copiedStyle = { fill, stroke, fontSize, bold, italic, textAlign, verticalAlign };
+        }
+        return;
+      }
+
+      // Cmd+Option+V → Paste style
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyV') {
+        e.preventDefault();
+        if (copiedStyle) useDiagramStore.getState().updateSelectedNodesData(copiedStyle);
+        return;
+      }
+
+      // Cmd+Option+= → Increase font size
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'Equal') {
+        e.preventDefault();
+        const SIZES: FontSize[] = ['small', 'medium', 'large'];
+        const sel = useDiagramStore.getState().nodes.find((nd) => nd.selected);
+        if (sel) {
+          const idx = SIZES.indexOf(sel.data.fontSize ?? 'medium');
+          useDiagramStore.getState().updateSelectedNodesData({ fontSize: SIZES[Math.min(idx + 1, 2)] });
+        }
+        return;
+      }
+
+      // Cmd+Option+- → Decrease font size
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'Minus') {
+        e.preventDefault();
+        const SIZES: FontSize[] = ['small', 'medium', 'large'];
+        const sel = useDiagramStore.getState().nodes.find((nd) => nd.selected);
+        if (sel) {
+          const idx = SIZES.indexOf(sel.data.fontSize ?? 'medium');
+          useDiagramStore.getState().updateSelectedNodesData({ fontSize: SIZES[Math.max(0, idx - 1)] });
+        }
+        return;
+      }
+
+      // Copy / Cut
+      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'x')) {
+        const state = useDiagramStore.getState();
+        const selNodes = state.nodes.filter((n) => n.selected);
+        const selEdges = state.edges.filter((ed) => ed.selected);
+        if (selNodes.length === 0 && selEdges.length === 0) return;
+        const selNodeIds = new Set(selNodes.map((n) => n.id));
+        const connectedEdges = selEdges.length > 0
+          ? selEdges
+          : state.edges.filter((ed) => selNodeIds.has(ed.source) && selNodeIds.has(ed.target));
+        clipboard = {
+          nodes: selNodes.map((n) => ({ ...n, selected: false })),
+          edges: connectedEdges.map((ed) => ({ ...ed, selected: false })),
+        };
+        if (e.key.toLowerCase() === 'x') {
+          e.preventDefault();
+          deleteSelection();
+        }
+        return;
+      }
+
+      // Duplicate
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        const state = useDiagramStore.getState();
+        const selNodes = state.nodes.filter((n) => n.selected);
+        if (selNodes.length === 0) return;
+        const selNodeIds = new Set(selNodes.map((n) => n.id));
+        const selEdges = state.edges.filter((ed) => selNodeIds.has(ed.source) && selNodeIds.has(ed.target));
+        const idMap = new Map<string, string>();
+        const offset = 30;
+        const newNodes = (selNodes as ShapeNode[]).map((n) => {
+          const newId = nanoid(8);
+          idMap.set(n.id, newId);
+          return { ...n, id: newId, position: { x: n.position.x + offset, y: n.position.y + offset }, selected: true };
+        });
+        const newEdges = (selEdges as ConnectorEdge[]).map((ed) => ({
+          ...ed,
+          id: nanoid(8),
+          source: idMap.get(ed.source) ?? ed.source,
+          target: idMap.get(ed.target) ?? ed.target,
+          selected: true,
+        }));
+        const deselectedNodes = state.nodes.map((n) => ({ ...n, selected: false }));
+        const deselectedEdges = state.edges.map((ed) => ({ ...ed, selected: false }));
+        useDiagramStore.setState({
+          nodes: [...deselectedNodes, ...newNodes],
+          edges: [...deselectedEdges, ...newEdges],
+        });
+        return;
+      }
+
+      // Paste
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
+        if (!clipboard || clipboard.nodes.length === 0) return;
+        e.preventDefault();
+        const idMap = new Map<string, string>();
+        const offset = 30;
+        const newNodes = (clipboard.nodes as ShapeNode[]).map((n) => {
+          const newId = nanoid(8);
+          idMap.set(n.id, newId);
+          return { ...n, id: newId, position: { x: n.position.x + offset, y: n.position.y + offset }, selected: true };
+        });
+        const newEdges = (clipboard.edges as ConnectorEdge[]).map((ed) => ({
+          ...ed,
+          id: nanoid(8),
+          source: idMap.get(ed.source) ?? ed.source,
+          target: idMap.get(ed.target) ?? ed.target,
+          selected: true,
+        }));
+        const state = useDiagramStore.getState();
+        const deselectedNodes = state.nodes.map((n) => ({ ...n, selected: false }));
+        const deselectedEdges = state.edges.map((ed) => ({ ...ed, selected: false }));
+        useDiagramStore.setState({
+          nodes: [...deselectedNodes, ...newNodes],
+          edges: [...deselectedEdges, ...newEdges],
+        });
+        clipboard = {
+          nodes: newNodes.map((n) => ({ ...n, selected: false })),
+          edges: newEdges.map((ed) => ({ ...ed, selected: false })),
+        };
+        return;
+      }
+
+      // Zoom in / out
+      if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        zoomIn({ duration: 150 });
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === '-') {
+        e.preventDefault();
+        zoomOut({ duration: 150 });
+        return;
+      }
+
+      // Fit view
+      if ((e.metaKey || e.ctrlKey) && e.key === '0') {
+        e.preventDefault();
+        fitView({ padding: 0.2, duration: 300 });
+        return;
+      }
+
+      // Cmd+] → Bring forward, Cmd+[ → Send backward
+      if ((e.metaKey || e.ctrlKey) && e.key === ']') {
+        e.preventDefault();
+        useDiagramStore.getState().bringForward();
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === '[') {
+        e.preventDefault();
+        useDiagramStore.getState().sendBackward();
+        return;
+      }
+
+      // Enter to edit
+      if (e.key === 'Enter') {
+        const state = useDiagramStore.getState();
+        const selNodes = state.nodes.filter((n) => n.selected);
+        const selEdges = state.edges.filter((ed) => ed.selected);
+        if (selNodes.length === 1) {
+          e.preventDefault();
+          setEditingNodeId(selNodes[0].id);
+          return;
+        }
+        if (selNodes.length === 0 && selEdges.length === 1) {
+          e.preventDefault();
+          setEditingEdgeId(selEdges[0].id);
+          return;
+        }
+      }
+
+      // Escape to deselect
+      if (e.key === 'Escape') {
+        const state = useDiagramStore.getState();
+        if (state.editingNodeId || state.editingEdgeId) return;
+        useDiagramStore.setState({
+          nodes: state.nodes.map((n) => ({ ...n, selected: false })),
+          edges: state.edges.map((ed) => ({ ...ed, selected: false })),
+        });
+        setTool('select');
+        return;
+      }
+
+      // Arrow keys to nudge selected shapes
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        const state = useDiagramStore.getState();
+        const selNodes = state.nodes.filter((n) => n.selected);
+        if (selNodes.length === 0) return;
+        e.preventDefault();
+        const step = e.shiftKey ? 10 : 1;
+        const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
+        const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
+        const selIds = new Set(selNodes.map((n) => n.id));
+        useDiagramStore.setState({
+          nodes: state.nodes.map((n) =>
+            selIds.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n,
+          ),
+        });
+        return;
+      }
+
+      // Delete
+      if (e.key === 'Backspace' || e.key === 'Delete') {
+        e.preventDefault();
+        deleteSelection();
+        return;
+      }
+
+      // Space to pan (hold)
+      if (e.key === ' ' && !e.repeat) {
+        const currentTool = useDiagramStore.getState().tool;
+        if (currentTool !== 'pan') {
+          e.preventDefault();
+          prevToolRef.current = currentTool;
+          setTool('pan');
+        }
+        return;
+      }
+
+      // Bare zoom shortcuts
+      if (e.key === '=' || e.key === '+') { zoomIn({ duration: 150 }); return; }
+      if (e.key === '-' && !e.metaKey && !e.ctrlKey) { zoomOut({ duration: 150 }); return; }
+      if (e.key === '0') { zoomTo(1, { duration: 150 }); return; }
+      if (e.key === '1') { fitView({ padding: 0.2, duration: 300 }); return; }
+      if (e.key === '2') {
+        const selNodes = useDiagramStore.getState().nodes.filter((nd) => nd.selected);
+        if (selNodes.length > 0) fitView({ nodes: selNodes.map((nd) => ({ id: nd.id })), padding: 0.2, duration: 300 });
+        return;
+      }
+
+      // Bare layer ordering: ] bring to front, [ send to back
+      if (e.key === ']') { useDiagramStore.getState().bringToFront(); return; }
+      if (e.key === '[') { useDiagramStore.getState().sendToBack(); return; }
+
+      const nextTool = SHORTCUTS[e.key.toLowerCase()];
+      if (nextTool) setTool(nextTool);
+    }
+
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.key === ' ') {
+        setTool(prevToolRef.current);
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, [deleteSelection, undo, redo, setTool, zoomIn, zoomOut, zoomTo, fitView, screenToFlowPosition, addNodes]);
+
+  return (
+    <div ref={wrapperRef} className="relative h-full w-full" onDoubleClick={onCanvasDoubleClick}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        onConnectEnd={onConnectEnd}
+        onPaneClick={onPaneClick}
+        onNodeClick={onNodeClick}
+        onNodeDragStart={onNodeDragStart}
+        connectionMode={ConnectionMode.Loose}
+        connectionRadius={30}
+        connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}
+        panOnDrag={tool === 'pan' ? true : [1, 2]}
+        selectionOnDrag={tool === 'select'}
+        nodesDraggable={tool !== 'connector'}
+        panOnScroll
+        zoomOnScroll={false}
+        zoomOnPinch
+        zoomOnDoubleClick={false}
+        minZoom={0.2}
+        maxZoom={2.5}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+        className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOLS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#D6D9E4" className="rf-canvas" />
+        <AlignmentGuides />
+      </ReactFlow>
+
+      <TopBar />
+      <LeftRail />
+      <FloatingToolbar />
+      <TextFormatBar />
+      <BottomBar />
+    </div>
+  );
+}
