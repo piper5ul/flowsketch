@@ -2,6 +2,8 @@
 
 A full-featured diagramming app inspired by Whimsical, built with React Flow, Zustand, and Tailwind CSS. Create flowcharts, mind maps, and diagrams with a clean, intuitive interface.
 
+![FlowSketch Demo](docs/screenshot.png)
+
 ## Features
 
 ### Shapes
