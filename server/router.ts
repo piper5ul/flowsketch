@@ -3,13 +3,21 @@ import { prisma } from './db.js';
 import { requireAuth } from './middleware.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
+import { authedUser } from './types.js';
+import {
+  createDiagramBody,
+  updateDiagramBody,
+  validateBody,
+  type CreateDiagramBody,
+  type UpdateDiagramBody,
+} from './validation.js';
 
 export const apiRouter = Router();
 
 apiRouter.use(requireAuth);
 
 apiRouter.get('/diagrams', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const diagrams = await prisma.diagram.findMany({
     where: { userId },
     select: { id: true, title: true, starred: true, updatedAt: true, thumbnail: true },
@@ -18,21 +26,27 @@ apiRouter.get('/diagrams', async (req, res) => {
   res.json(diagrams);
 });
 
-apiRouter.post('/diagrams', async (req, res) => {
-  const userId = (req as any).user.id;
-  const { title, data } = req.body;
-  const diagram = await prisma.diagram.create({
-    data: {
-      userId,
-      title: title || 'Untitled',
-      data: data || { nodes: [], edges: [] },
-    },
-  });
-  res.status(201).json(diagram);
-});
+// The explicit generics are what make `req.body` the parsed shape rather than
+// `any`; Express only infers them for a route with a single handler.
+apiRouter.post<Record<string, string>, unknown, CreateDiagramBody>(
+  '/diagrams',
+  validateBody(createDiagramBody),
+  async (req, res) => {
+    const userId = authedUser(req).id;
+    const { title, data } = req.body;
+    const diagram = await prisma.diagram.create({
+      data: {
+        userId,
+        title: title || 'Untitled',
+        data: data || { nodes: [], edges: [] },
+      },
+    });
+    res.status(201).json(diagram);
+  },
+);
 
 apiRouter.get('/diagrams/:id', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const diagram = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
   });
@@ -43,30 +57,34 @@ apiRouter.get('/diagrams/:id', async (req, res) => {
   res.json(diagram);
 });
 
-apiRouter.put('/diagrams/:id', async (req, res) => {
-  const userId = (req as any).user.id;
-  const existing = await prisma.diagram.findFirst({
-    where: { id: req.params.id, userId },
-    select: { id: true },
-  });
-  if (!existing) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-  const { title, data, starred } = req.body;
-  const updated = await prisma.diagram.update({
-    where: { id: req.params.id },
-    data: {
-      ...(title !== undefined && { title }),
-      ...(data !== undefined && { data }),
-      ...(starred !== undefined && { starred }),
-    },
-  });
-  res.json(updated);
-});
+apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
+  '/diagrams/:id',
+  validateBody(updateDiagramBody),
+  async (req, res) => {
+    const userId = authedUser(req).id;
+    const existing = await prisma.diagram.findFirst({
+      where: { id: req.params.id, userId },
+      select: { id: true },
+    });
+    if (!existing) {
+      res.status(404).json({ error: 'Not found' });
+      return;
+    }
+    const { title, data, starred } = req.body;
+    const updated = await prisma.diagram.update({
+      where: { id: req.params.id },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(data !== undefined && { data }),
+        ...(starred !== undefined && { starred }),
+      },
+    });
+    res.json(updated);
+  },
+);
 
 apiRouter.delete('/diagrams/:id', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const existing = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
     select: { id: true, data: true },
@@ -90,7 +108,7 @@ apiRouter.delete('/diagrams/:id', async (req, res) => {
 });
 
 apiRouter.patch('/diagrams/:id/star', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const diagram = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
     select: { id: true, starred: true },

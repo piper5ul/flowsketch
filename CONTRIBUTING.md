@@ -54,7 +54,7 @@ Some things no assertion captures. Before merging a change to the canvas, toolba
 
 ## Code conventions
 
-- TypeScript strict; `tsc -b` must pass with zero errors. No `any` outside `server/` request typing (which is itself on the roadmap to fix).
+- TypeScript strict; `tsc -b` must pass with zero errors. No `any` — the request user is typed in `server/types.ts` and read with `authedUser(req)`.
 - `oxlint` must report zero errors. Warnings are tolerated but should not grow.
 - Store actions that change nodes or edges must call `pushHistory` so they are undoable.
 - Edge arrowheads live on the top-level `markerStart` / `markerEnd`, not in `data` — always go through `computeMarkers`.

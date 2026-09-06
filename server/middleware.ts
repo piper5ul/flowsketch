@@ -1,6 +1,8 @@
 import type { Request, Response, NextFunction } from 'express';
 import { auth } from './auth.js';
 import { fromNodeHeaders } from 'better-auth/node';
+// Side-effect import: declares `user` and `session` on Express.Request.
+import './types.js';
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const session = await auth.api.getSession({
@@ -10,7 +12,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
-  (req as any).session = session.session;
-  (req as any).user = session.user;
+  req.session = session.session;
+  req.user = session.user;
   next();
 }

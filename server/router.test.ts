@@ -4,6 +4,7 @@ import request from 'supertest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { AuthUser } from './types.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-router-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -22,8 +23,19 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       deleteMany: vi.fn(),
     },
   },
-  authState: { user: null as { id: string } | null },
+  authState: { user: null as AuthUser | null },
 }));
+
+/** A stand-in for what BetterAuth would put on the request. */
+const testUser: AuthUser = {
+  id: 'u1',
+  name: 'User One',
+  email: 'u1@example.test',
+  emailVerified: true,
+  image: null,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
 
 vi.mock('./db.js', () => ({ prisma: prismaMock }));
 
@@ -33,7 +45,7 @@ vi.mock('./middleware.js', () => ({
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    (req as express.Request & { user: { id: string } }).user = authState.user;
+    req.user = authState.user;
     next();
   },
 }));
@@ -53,7 +65,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  authState.user = { id: 'u1' };
+  authState.user = testUser;
 });
 
 describe('auth gate', () => {
@@ -94,6 +106,13 @@ describe('POST /api/diagrams', () => {
     expect(res.body.title).toBe('Plan');
     expect(res.body.data.nodes).toHaveLength(1);
   });
+
+  it('rejects a title longer than 200 characters without touching the database', async () => {
+    const res = await request(app).post('/api/diagrams').send({ title: 'x'.repeat(201) }).expect(400);
+    expect(res.body).toMatchObject({ error: 'Invalid body' });
+    expect(res.body.issues[0]).toMatchObject({ path: 'title' });
+    expect(prismaMock.diagram.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/diagrams/:id', () => {
@@ -116,6 +135,19 @@ describe('PUT /api/diagrams/:id', () => {
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed' });
     await request(app).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { title: 'Renamed' } });
+  });
+
+  it('rejects a non-boolean starred before looking the diagram up', async () => {
+    const res = await request(app).put('/api/diagrams/d1').send({ starred: 'yes' }).expect(400);
+    expect(res.body).toMatchObject({ error: 'Invalid body' });
+    expect(res.body.issues[0]).toMatchObject({ path: 'starred' });
+    expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body with nothing to update', async () => {
+    await request(app).put('/api/diagrams/d1').send({}).expect(400);
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
   it('refuses to update a diagram the caller does not own', async () => {
