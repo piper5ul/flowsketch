@@ -13,6 +13,7 @@ import { requireAuth } from './middleware.js';
 import { extForMime, sniffImage } from './imageTypes.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { deleteImage, imagePath, writeImage } from './storage.js';
+import { authedUser } from './types.js';
 import type { ImageMeta } from '../shared/types.js';
 
 /** Upload ceiling. Kept separate from the 5 MB JSON limit in index.ts. */
@@ -21,10 +22,6 @@ const MAX_UPLOAD_BYTES = '10mb';
 export const imagesRouter = Router();
 
 imagesRouter.use(requireAuth);
-
-function userId(req: Request): string {
-  return (req as Request & { user: { id: string } }).user.id;
-}
 
 imagesRouter.post(
   '/',
@@ -39,7 +36,7 @@ imagesRouter.post(
       return;
     }
 
-    const owner = userId(req);
+    const owner = authedUser(req).id;
     const image = await prisma.image.create({
       data: {
         userId: owner,
@@ -71,7 +68,7 @@ imagesRouter.post(
 );
 
 imagesRouter.get('/:id', async (req, res) => {
-  const owner = userId(req);
+  const owner = authedUser(req).id;
   const image = await prisma.image.findFirst({ where: { id: req.params.id, userId: owner } });
   // 404 rather than 403 for someone else's image: ownership stays unobservable.
   if (!image) {
@@ -102,7 +99,7 @@ imagesRouter.get('/:id', async (req, res) => {
 });
 
 imagesRouter.delete('/:id', async (req, res) => {
-  const owner = userId(req);
+  const owner = authedUser(req).id;
   const image = await prisma.image.findFirst({
     where: { id: req.params.id, userId: owner },
     select: { id: true, mime: true },

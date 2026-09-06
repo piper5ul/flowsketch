@@ -4,6 +4,7 @@ import request from 'supertest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type { AuthUser } from './types.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -16,8 +17,19 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       delete: vi.fn(),
     },
   },
-  authState: { user: null as { id: string } | null },
+  authState: { user: null as AuthUser | null },
 }));
+
+/** A stand-in for what BetterAuth would put on the request. */
+const testUser: AuthUser = {
+  id: 'u1',
+  name: 'User One',
+  email: 'u1@example.test',
+  emailVerified: true,
+  image: null,
+  createdAt: new Date(0),
+  updatedAt: new Date(0),
+};
 
 vi.mock('./db.js', () => ({ prisma: prismaMock }));
 
@@ -27,7 +39,7 @@ vi.mock('./middleware.js', () => ({
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    (req as express.Request & { user: { id: string } }).user = authState.user;
+    req.user = authState.user;
     next();
   },
 }));
@@ -50,7 +62,7 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  authState.user = { id: 'u1' };
+  authState.user = testUser;
 });
 
 describe('auth gate', () => {

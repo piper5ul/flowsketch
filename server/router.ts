@@ -3,13 +3,14 @@ import { prisma } from './db.js';
 import { requireAuth } from './middleware.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
+import { authedUser } from './types.js';
 
 export const apiRouter = Router();
 
 apiRouter.use(requireAuth);
 
 apiRouter.get('/diagrams', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const diagrams = await prisma.diagram.findMany({
     where: { userId },
     select: { id: true, title: true, starred: true, updatedAt: true, thumbnail: true },
@@ -19,7 +20,7 @@ apiRouter.get('/diagrams', async (req, res) => {
 });
 
 apiRouter.post('/diagrams', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const { title, data } = req.body;
   const diagram = await prisma.diagram.create({
     data: {
@@ -32,7 +33,7 @@ apiRouter.post('/diagrams', async (req, res) => {
 });
 
 apiRouter.get('/diagrams/:id', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const diagram = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
   });
@@ -44,7 +45,7 @@ apiRouter.get('/diagrams/:id', async (req, res) => {
 });
 
 apiRouter.put('/diagrams/:id', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const existing = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
     select: { id: true },
@@ -66,7 +67,7 @@ apiRouter.put('/diagrams/:id', async (req, res) => {
 });
 
 apiRouter.delete('/diagrams/:id', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const existing = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
     select: { id: true, data: true },
@@ -90,7 +91,7 @@ apiRouter.delete('/diagrams/:id', async (req, res) => {
 });
 
 apiRouter.patch('/diagrams/:id/star', async (req, res) => {
-  const userId = (req as any).user.id;
+  const userId = authedUser(req).id;
   const diagram = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
     select: { id: true, starred: true },
