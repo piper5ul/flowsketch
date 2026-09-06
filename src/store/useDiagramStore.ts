@@ -16,6 +16,7 @@ import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
+import { alignNodes, type AlignMode, type ArrangePosition, type ArrangeRect } from '../lib/arrange';
 import { api } from '../lib/api';
 import { toastError } from './useToastStore';
 
@@ -140,6 +141,25 @@ function computeAlignmentSnap(
 export type ShapeNode = Node<ShapeData, 'shape'>;
 export type ConnectorEdge = Edge<ConnectorData, 'connector'>;
 
+/**
+ * A node's box. `width`/`height` are what the store sets; `measured` is what
+ * React Flow observed for a node whose size follows its content.
+ */
+function nodeWidth(node: ShapeNode): number {
+  return node.width ?? node.measured?.width ?? 0;
+}
+
+function nodeHeight(node: ShapeNode): number {
+  return node.height ?? node.measured?.height ?? 0;
+}
+
+/** The selection as plain rects, in node order, for the `arrange` helpers. */
+function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
+  return nodes
+    .filter((n) => n.selected)
+    .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
+}
+
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 // Toolbar interaction flag — prevents contentEditable blur from
@@ -228,6 +248,9 @@ interface DiagramState {
   toggleLock: () => void;
   updateSelectedNodesData: (patch: Partial<ShapeData>) => void;
 
+  /** Lines the selection up on its own bounding box. Needs two nodes to mean anything. */
+  alignSelected: (mode: AlignMode) => void;
+
   deleteSelection: () => void;
   undo: () => void;
   redo: () => void;
@@ -262,6 +285,31 @@ function pushSnapshot(snapshot: Snapshot) {
 
 function pushHistory(state: DiagramState) {
   pushSnapshot(snapshotOf(state));
+}
+
+/**
+ * Applies positions computed by one of the `arrange` helpers, as a single
+ * history entry — or none at all when nothing would actually move, so a command
+ * run on an already-aligned selection does not cost the user a ⌘Z. Locked nodes
+ * sit the move out the way they sit out a nudge, but they still counted towards
+ * the geometry, so locking a node makes it the anchor everything else lines up on.
+ */
+function commitArrangedPositions(positions: Record<string, ArrangePosition>) {
+  const state = useDiagramStore.getState();
+  const movedIds = new Set(
+    state.nodes
+      .filter((n) => {
+        const next = positions[n.id];
+        return !n.data.locked && next && (next.x !== n.position.x || next.y !== n.position.y);
+      })
+      .map((n) => n.id),
+  );
+  if (movedIds.size === 0) return;
+
+  pushHistory(state);
+  useDiagramStore.setState({
+    nodes: state.nodes.map((n) => (movedIds.has(n.id) ? { ...n, position: positions[n.id] } : n)),
+  });
 }
 
 /** The `ConnectorData` fields `computeMarkers` reads. */
@@ -814,6 +862,12 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set((s) => ({
       nodes: s.nodes.map((n) => (n.selected ? { ...n, data: { ...n.data, ...patch } } : n)),
     }));
+  },
+
+  alignSelected: (mode) => {
+    const rects = selectedRects(get().nodes);
+    if (rects.length < 2) return;
+    commitArrangedPositions(alignNodes(rects, mode));
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is

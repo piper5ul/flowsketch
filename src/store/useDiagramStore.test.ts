@@ -453,6 +453,115 @@ describe('z-order', () => {
   });
 });
 
+describe('alignSelected', () => {
+  /** A rectangle at an explicit position and size. */
+  function rect(x: number, y: number, w = 180, h = 100) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  const posOf = (id: string) => store().nodes.find((n) => n.id === id)!.position;
+
+  it('moves the selection onto the bounding box\'s left edge', () => {
+    const a = rect(0, 0);
+    const b = rect(120, 200);
+    select(a, b);
+    store().alignSelected('left');
+
+    expect(posOf(a).x).toBe(0);
+    expect(posOf(b).x).toBe(0);
+    // The other axis is left alone.
+    expect(posOf(b).y).toBe(200);
+  });
+
+  it('aligns tops, bottoms and both centre lines', () => {
+    const a = rect(0, 0, 100, 50);
+    const b = rect(200, 300, 100, 150);
+    select(a, b);
+
+    store().alignSelected('top');
+    expect(posOf(a).y).toBe(0);
+    expect(posOf(b).y).toBe(0);
+
+    store().alignSelected('bottom');
+    // Bounds now run 0 → 150, so the shorter rect drops to y = 100.
+    expect(posOf(a).y).toBe(100);
+    expect(posOf(b).y).toBe(0);
+
+    store().alignSelected('right');
+    expect(posOf(a).x).toBe(200);
+    expect(posOf(b).x).toBe(200);
+
+    store().alignSelected('centerX');
+    expect(posOf(a).x).toBe(200);
+    expect(posOf(b).x).toBe(200);
+
+    store().alignSelected('centerY');
+    expect(posOf(a).y).toBe(50);
+    expect(posOf(b).y).toBe(0);
+  });
+
+  it('leaves an unselected node alone', () => {
+    const a = rect(0, 0);
+    const b = rect(120, 200);
+    const outsider = rect(500, 500);
+    select(a, b);
+    store().alignSelected('left');
+
+    expect(posOf(outsider)).toEqual({ x: 500, y: 500 });
+  });
+
+  it('records exactly one history entry for the whole move', () => {
+    const a = rect(0, 0);
+    const b = rect(120, 200);
+    select(a, b);
+    store().alignSelected('left');
+
+    store().undo();
+    expect(posOf(b)).toEqual({ x: 120, y: 200 });
+    expect(posOf(a)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('does nothing with fewer than two nodes selected', () => {
+    const a = rect(50, 60);
+    select(a);
+    store().alignSelected('left');
+    expect(posOf(a)).toEqual({ x: 50, y: 60 });
+
+    // No selection at all, and no history entry either.
+    select();
+    store().alignSelected('left');
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('anchors on a locked node without moving it', () => {
+    const locked = rect(0, 0);
+    const free = rect(120, 200);
+    select(locked);
+    store().toggleLock();
+
+    select(locked, free);
+    store().alignSelected('left');
+
+    expect(posOf(locked)).toEqual({ x: 0, y: 0 });
+    expect(posOf(free).x).toBe(0);
+  });
+
+  it('records no history entry when the selection is already aligned', () => {
+    const a = rect(0, 0);
+    const b = rect(0, 200);
+    select(a, b);
+    store().alignSelected('left');
+
+    // The only entries are the two addShape calls, so two undos empty the canvas.
+    store().undo();
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+});
+
 describe('addConnectedShape', () => {
   it('places the neighbor to the right with a gap and connects it', () => {
     const a = store().addShape('rectangle', { x: 100, y: 100 });
