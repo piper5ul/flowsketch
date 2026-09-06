@@ -193,6 +193,25 @@ export function Canvas() {
     [tool, screenToFlowPosition, addShape, setEditingNodeId],
   );
 
+  // Dropping image files anywhere on the canvas inserts them where they
+  // landed. `onDragOver` must preventDefault or the browser takes over and
+  // navigates the tab to the dropped file.
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    if (!Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      const files = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+      if (files.length === 0) return;
+      event.preventDefault();
+      insertImages(files, { x: event.clientX, y: event.clientY });
+    },
+    [insertImages],
+  );
+
   // Dragging a connector out to empty canvas creates a new connected shape,
   // mirroring Whimsical's "drag to create" flow.
   const onConnectEnd = useCallback(
@@ -508,7 +527,13 @@ export function Canvas() {
   }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, insertImages]);
 
   return (
-    <div ref={wrapperRef} className="relative h-full w-full" onDoubleClick={onCanvasDoubleClick}>
+    <div
+      ref={wrapperRef}
+      className="relative h-full w-full"
+      onDoubleClick={onCanvasDoubleClick}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}
