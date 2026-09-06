@@ -12,7 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { prisma } from './db.js';
 import { getDiagramAccess, requireDiagramRole } from './access.js';
 import { sendImage } from './images.js';
-import { imageIdsInDiagram } from './imageRefs.js';
+import { isImageInSharedDiagram } from './diagramImages.js';
 import { createSharedLinkLimiter } from './rateLimit.js';
 import { authedUser } from './types.js';
 import { addMemberBody, validateBody, type AddMemberBody } from './validation.js';
@@ -191,16 +191,16 @@ sharedRouter.get('/:token', async (req, res) => {
 });
 
 /**
- * An image a shared diagram draws. The token is the credential and the
- * diagram's own JSON is the allow-list, so a token cannot be used to walk the
+ * An image a shared diagram draws. The token is the credential and what the
+ * diagram references is the allow-list, so a token cannot be used to walk the
  * owner's other uploads: an id the diagram does not reference is a 404.
+ *
+ * The allow-list is read from the `DiagramImage` index rather than from the
+ * diagram's JSON — same answer, one indexed lookup instead of loading a whole
+ * board to search it (see `server/diagramImages.ts`).
  */
 sharedRouter.get('/:token/images/:imageId', async (req, res) => {
-  const diagram = await prisma.diagram.findUnique({
-    where: { shareToken: req.params.token },
-    select: { data: true },
-  });
-  if (!diagram || !imageIdsInDiagram(diagram.data).includes(req.params.imageId)) {
+  if (!(await isImageInSharedDiagram(req.params.token, req.params.imageId))) {
     res.status(404).json({ error: 'Not found' });
     return;
   }

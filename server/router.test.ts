@@ -26,6 +26,12 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       findMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    diagramImage: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
     diagramMember: {
       findMany: vi.fn(),
       upsert: vi.fn(),
@@ -107,10 +113,46 @@ beforeEach(() => {
   // to `versions.test.ts`; here it only has to stay out of the way, so the
   // newest snapshot is always "just now" and the interval suppresses it.
   prismaMock.diagramVersion.findFirst.mockResolvedValue({ createdAt: new Date() });
-  // The orphan scan reads stored versions as well as live diagrams. A diagram
-  // with no history is the default; the case where one exists is asserted below.
+  // The orphan scan reads stored versions when the index does not already save
+  // an image. A diagram with no history is the default; the case where one
+  // exists is asserted below.
   prismaMock.diagramVersion.findMany.mockResolvedValue([]);
+  // Every write that carries `data` syncs the `DiagramImage` index. The two
+  // statements are issued as one transaction; the mock just runs them.
+  prismaMock.$transaction.mockImplementation(async (ops: unknown) => Promise.all(ops as unknown[]));
+  // Nothing is indexed unless a test says so, which is also what the GC's
+  // "no live diagram claims this image" case looks like.
+  prismaMock.diagramImage.findMany.mockResolvedValue([]);
+  mockImages({});
 });
+
+/**
+ * Both readers of `image.findMany`, told apart by their `select`: the index's
+ * "which of these ids do we hold a row for" (`known`) and the collector's
+ * lookup of the rows it is about to delete (`gc`).
+ */
+function mockImages(opts: { known?: string[]; gc?: { id: string; mime: string }[] }) {
+  prismaMock.image.findMany.mockImplementation(async (args: unknown) =>
+    (args as { select?: { mime?: boolean } }).select?.mime
+      ? (opts.gc ?? [])
+      : (opts.known ?? []).map((id) => ({ id })),
+  );
+}
+
+/**
+ * What `syncDiagramImages` was told this diagram now draws, from the one
+ * `createMany` it issues — `[]` when it inserted nothing.
+ */
+function indexedImageIds(diagramId = 'd1'): string[] {
+  const call = prismaMock.diagramImage.createMany.mock.calls.find(
+    (c) => (c[0] as { data: { diagramId: string }[] }).data[0]?.diagramId === diagramId,
+  );
+  if (!call) return [];
+  return (call[0] as { data: { imageId: string }[] }).data.map((row) => row.imageId);
+}
+
+/** The `image.findMany` the garbage collector issues, told apart from the index's. */
+const GC_IMAGE_LOOKUP = { select: { id: true, mime: true } };
 
 describe('auth gate', () => {
   it('rejects every route without a session', async () => {
@@ -321,15 +363,13 @@ describe('PUT /api/diagrams/:id', () => {
       memberRow('editor', { id: 'd1', data: { nodes: [node('dropped')], edges: [] } }),
     );
     prismaMock.diagram.update.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockResolvedValue([]);
-    prismaMock.image.findMany.mockResolvedValue([]);
 
     await request(server).put('/api/diagrams/d1').send({ data: { nodes: [], edges: [] } }).expect(200);
 
     // Scoped to `owner-user`, whose uploads they are — never to the editor.
-    expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
-      where: { userId: 'owner-user' },
-      select: { data: true },
+    expect(prismaMock.diagramImage.findMany).toHaveBeenCalledWith({
+      where: { imageId: { in: ['dropped'] }, diagram: { userId: 'owner-user' } },
+      select: { imageId: true },
     });
   });
 
@@ -467,11 +507,9 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
       data: { nodes: [nodeWithImage('n1', 'lonely'), nodeWithImage('n2', 'shared')], edges: [] },
     });
     prismaMock.diagram.delete.mockResolvedValue(owned);
-    // What is left after d1 is gone: d2 still references `shared`.
-    prismaMock.diagram.findMany.mockResolvedValue([
-      { data: { nodes: [nodeWithImage('n9', 'shared')], edges: [] } },
-    ]);
-    prismaMock.image.findMany.mockResolvedValue([{ id: 'lonely', mime: 'image/png' }]);
+    // What is left after d1's index rows cascade away: d2 still claims `shared`.
+    prismaMock.diagramImage.findMany.mockResolvedValue([{ imageId: 'shared' }]);
+    mockImages({ gc: [{ id: 'lonely', mime: 'image/png' }] });
     prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
 
     fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
@@ -489,27 +527,30 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
     expect(fs.existsSync(sharedFile)).toBe(true);
   });
 
-  it('scans the survivors only after the diagram row is gone', async () => {
+  it('asks the index only after the diagram row is gone', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({
       id: 'd1',
       userId: 'u1',
       data: { nodes: [nodeWithImage('n1', 'lonely')], edges: [] },
     });
     prismaMock.diagram.delete.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockResolvedValue([]);
-    prismaMock.image.findMany.mockResolvedValue([{ id: 'lonely', mime: 'image/png' }]);
+    mockImages({ gc: [{ id: 'lonely', mime: 'image/png' }] });
     prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
 
     await request(server).delete('/api/diagrams/d1').expect(204);
 
-    // Otherwise the diagram being deleted would count as a live reference to its own images.
+    // Otherwise d1's own index rows would still be there and it would count as
+    // a live reference to its own images.
     const deletedAt = prismaMock.diagram.delete.mock.invocationCallOrder[0];
-    const scannedAt = prismaMock.diagram.findMany.mock.invocationCallOrder[0];
-    expect(deletedAt).toBeLessThan(scannedAt);
-    expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
-      where: { userId: 'u1' },
-      select: { data: true },
+    const askedAt = prismaMock.diagramImage.findMany.mock.invocationCallOrder[0];
+    expect(deletedAt).toBeLessThan(askedAt);
+    // Scoped to the owner's own boards, and answered from the index rather than
+    // by reading every diagram's JSON.
+    expect(prismaMock.diagramImage.findMany).toHaveBeenCalledWith({
+      where: { imageId: { in: ['lonely'] }, diagram: { userId: 'u1' } },
+      select: { imageId: true },
     });
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 
   it('never deletes an image row belonging to another user', async () => {
@@ -519,9 +560,8 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
       data: { nodes: [nodeWithImage('n1', 'not-mine')], edges: [] },
     });
     prismaMock.diagram.delete.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockResolvedValue([]);
     // Ownership filter matches nothing: the id was in the JSON but the row is someone else's.
-    prismaMock.image.findMany.mockResolvedValue([]);
+    mockImages({ gc: [] });
 
     await request(server).delete('/api/diagrams/d1').expect(204);
 
@@ -539,7 +579,7 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
       data: { nodes: [nodeWithImage('n1', 'boom')], edges: [] },
     });
     prismaMock.diagram.delete.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
+    prismaMock.diagramImage.findMany.mockRejectedValue(new Error('database on fire'));
 
     await request(server).delete('/api/diagrams/d1').expect(204);
   });
@@ -561,9 +601,10 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
   it('deletes an image the edit removed from the canvas', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped', 'kept'));
     prismaMock.diagram.update.mockResolvedValue(owned);
-    // The survivor scan runs after the update, so d1 already reads back edited.
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith('kept').data }]);
-    prismaMock.image.findMany.mockResolvedValue([{ id: 'dropped', mime: 'image/png' }]);
+    // The index is synced before the collector reads it, so d1 no longer claims
+    // `dropped` and nothing else does either.
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
+    mockImages({ known: ['kept'], gc: [{ id: 'dropped', mime: 'image/png' }] });
     prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
 
     fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
@@ -582,11 +623,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('shared'));
     prismaMock.diagram.update.mockResolvedValue(owned);
     // d2 still uses `shared`, so removing it from d1 must not delete the file.
-    prismaMock.diagram.findMany.mockResolvedValue([
-      { data: bodyWith().data },
-      { data: bodyWith('shared').data },
-    ]);
-    prismaMock.image.findMany.mockResolvedValue([]);
+    prismaMock.diagramImage.findMany.mockResolvedValue([{ imageId: 'shared' }]);
 
     fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
     const sharedFile = imagePath('u1', 'shared', 'png');
@@ -594,7 +631,12 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
 
     await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
 
-    expect(prismaMock.image.findMany).not.toHaveBeenCalled();
+    // The index answered on its own: neither history nor the rows behind the
+    // delete were read.
+    expect(prismaMock.diagramVersion.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.findMany).not.toHaveBeenCalledWith(
+      expect.objectContaining(GC_IMAGE_LOOKUP),
+    );
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
     expect(fs.existsSync(sharedFile)).toBe(true);
   });
@@ -602,10 +644,11 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
   it('keeps a dropped image that only a stored version still draws', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('in-history'));
     prismaMock.diagram.update.mockResolvedValue(owned);
-    // Nothing on any live board references it any more…
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    // No index row, so nothing on any live board references it any more…
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
     // …but a snapshot of the owner's own diagram still does, and restoring that
-    // snapshot has to bring the picture back with it.
+    // snapshot has to bring the picture back with it. Versions are the one
+    // thing the index does not cover, so they are still scanned.
     prismaMock.diagramVersion.findMany.mockResolvedValue([{ data: bodyWith('in-history').data }]);
 
     fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
@@ -614,7 +657,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
 
     await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
 
-    // Scoped to the owner's own history, as the diagram scan is to their boards.
+    // Scoped to the owner's own history, as the index lookup is to their boards.
     expect(prismaMock.diagramVersion.findMany).toHaveBeenCalledWith({
       where: { diagram: { userId: 'u1' } },
       select: { data: true },
@@ -626,10 +669,10 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
   it('deletes a dropped image once no version references it either', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped'));
     prismaMock.diagram.update.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
     // History exists but draws something else, so it is no reason to keep it.
     prismaMock.diagramVersion.findMany.mockResolvedValue([{ data: bodyWith('other').data }]);
-    prismaMock.image.findMany.mockResolvedValue([{ id: 'dropped', mime: 'image/png' }]);
+    mockImages({ gc: [{ id: 'dropped', mime: 'image/png' }] });
     prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
 
     await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
@@ -639,46 +682,133 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     });
   });
 
-  it('scans the survivors only after the row is updated', async () => {
+  it('collects only after the row is updated and the index is current', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped'));
     prismaMock.diagram.update.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
-    prismaMock.image.findMany.mockResolvedValue([]);
 
     await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
 
-    // Otherwise the pre-edit JSON would still count as a live reference.
+    // Otherwise the pre-edit JSON — and the index row built from it — would
+    // still count as a live reference.
     const updatedAt = prismaMock.diagram.update.mock.invocationCallOrder[0];
-    const scannedAt = prismaMock.diagram.findMany.mock.invocationCallOrder[0];
-    expect(updatedAt).toBeLessThan(scannedAt);
+    const syncedAt = prismaMock.$transaction.mock.invocationCallOrder[0];
+    const collectedAt = prismaMock.diagramImage.findMany.mock.invocationCallOrder[0];
+    expect(updatedAt).toBeLessThan(syncedAt);
+    expect(syncedAt).toBeLessThan(collectedAt);
   });
 
-  it('does not scan when the edit drops no image', async () => {
+  it('does not collect when the edit drops no image', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('kept'));
     prismaMock.diagram.update.mockResolvedValue(owned);
 
     await request(server).put('/api/diagrams/d1').send(bodyWith('kept', 'added')).expect(200);
 
-    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.diagramImage.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('does not scan for a PUT that carries no data', async () => {
+  it('neither indexes nor collects for a PUT that carries no data', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('kept'));
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed' });
 
     await request(server).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
 
-    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(prismaMock.diagramImage.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
   });
 
   it('still returns 200 when cleanup fails, because the edit is already saved', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('boom'));
     prismaMock.diagram.update.mockResolvedValue(owned);
-    prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
+    prismaMock.diagramImage.findMany.mockRejectedValue(new Error('database on fire'));
 
     await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+  });
+
+  it('holds the collector back when the index sync fails', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.$transaction.mockRejectedValue(new Error('database on fire'));
+
+    // The edit is saved either way, but an index that may be stale is a reason
+    // to keep an image, never a reason to delete one.
+    await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    expect(prismaMock.diagramImage.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('the DiagramImage index', () => {
+  function nodeWithImage(id: string, imageId: string) {
+    return { id, type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } };
+  }
+  function dataWith(...imageIds: string[]) {
+    return { nodes: imageIds.map((i, n) => nodeWithImage(`n${n}`, i)), edges: [] };
+  }
+
+  it('writes a row per image a PUT leaves on the canvas, and drops the rest', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', data: dataWith('gone', 'kept') });
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    mockImages({ known: ['kept', 'added'] });
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
+
+    await request(server).put('/api/diagrams/d1').send({ data: dataWith('kept', 'added') }).expect(200);
+
+    expect(indexedImageIds()).toEqual(['kept', 'added']);
+    // Everything the diagram no longer draws goes, named by what is left rather
+    // than by what was there: the index has to match the JSON, not track it.
+    expect(prismaMock.diagramImage.deleteMany).toHaveBeenCalledWith({
+      where: { diagramId: 'd1', imageId: { notIn: ['kept', 'added'] } },
+    });
+  });
+
+  it('clears every row for a diagram whose last image was removed', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', data: dataWith('gone') });
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
+
+    await request(server).put('/api/diagrams/d1').send({ data: dataWith() }).expect(200);
+
+    expect(prismaMock.diagramImage.deleteMany).toHaveBeenCalledWith({ where: { diagramId: 'd1' } });
+    expect(prismaMock.diagramImage.createMany).not.toHaveBeenCalled();
+  });
+
+  it('never names an image this server holds no row for', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', data: dataWith() });
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    // The payload names two, one of which was never uploaded here — inserting
+    // it would fail the foreign key and take the whole sync with it.
+    mockImages({ known: ['real'] });
+
+    await request(server).put('/api/diagrams/d1').send({ data: dataWith('real', 'imaginary') }).expect(200);
+
+    expect(indexedImageIds()).toEqual(['real']);
+  });
+
+  it('indexes a diagram created with data, which is how an import arrives', async () => {
+    prismaMock.diagram.create.mockResolvedValue({ id: 'new1', userId: 'u1', data: dataWith('pic') });
+    mockImages({ known: ['pic'] });
+
+    await request(server).post('/api/diagrams').send({ title: 'Imported', data: dataWith('pic') }).expect(201);
+
+    expect(indexedImageIds('new1')).toEqual(['pic']);
+  });
+
+  it('copies the rows onto a duplicate, so the copy keeps the images alive', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({
+      userId: 'u1',
+      title: 'Mine',
+      data: dataWith('pic'),
+      thumbnail: null,
+    });
+    prismaMock.diagram.create.mockResolvedValue({ id: 'copy1', userId: 'u1', data: dataWith('pic') });
+    mockImages({ known: ['pic'] });
+
+    await request(server).post('/api/diagrams/d1/duplicate').expect(201);
+
+    expect(indexedImageIds('copy1')).toEqual(['pic']);
   });
 });
 

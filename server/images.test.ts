@@ -21,6 +21,9 @@ const { prismaMock, authState } = vi.hoisted(() => ({
     diagram: {
       findMany: vi.fn(),
     },
+    diagramImage: {
+      findFirst: vi.fn(),
+    },
   },
   authState: { user: null as AuthUser | null },
 }));
@@ -143,11 +146,6 @@ describe('POST /api/images', () => {
 });
 
 describe('GET /api/images/:id', () => {
-  /** A node drawing `/api/images/<imageId>`, as a diagram stores it. */
-  function nodeWithImage(imageId: string) {
-    return { id: 'n1', type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } };
-  }
-
   it('streams the bytes to the owner with an immutable private cache header', async () => {
     fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
     fs.writeFileSync(imagePath('u1', 'get1', 'png'), PNG_1X1);
@@ -163,8 +161,8 @@ describe('GET /api/images/:id', () => {
     expect(res.headers['cache-control']).toBe('private, max-age=31536000, immutable');
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
     expect(prismaMock.image.findUnique).toHaveBeenCalledWith({ where: { id: 'get1' } });
-    // The owner is answered from the row alone; no diagram is scanned.
-    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    // The owner is answered from the row alone; the index is not even consulted.
+    expect(prismaMock.diagramImage.findFirst).not.toHaveBeenCalled();
   });
 
   it('404s an image that does not exist', async () => {
@@ -181,15 +179,17 @@ describe('GET /api/images/:id', () => {
       mime: 'image/png',
       size: PNG_1X1.length,
     });
-    // Shared with the caller, but drawing something else.
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: { nodes: [nodeWithImage('unrelated')], edges: [] } }]);
+    // No diagram shared with the caller has an index row for this image.
+    prismaMock.diagramImage.findFirst.mockResolvedValue(null);
 
     await request(server).get('/api/images/theirs').expect(404);
 
-    expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
-      where: { members: { some: { userId: 'u1' } } },
-      select: { data: true },
+    expect(prismaMock.diagramImage.findFirst).toHaveBeenCalledWith({
+      where: { imageId: 'theirs', diagram: { members: { some: { userId: 'u1' } } } },
+      select: { diagramId: true },
     });
+    // Answered from the index: no diagram's JSON is read to find out.
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 
   it('serves another user\'s image when a diagram shared with the caller draws it', async () => {
@@ -201,11 +201,12 @@ describe('GET /api/images/:id', () => {
       mime: 'image/png',
       size: PNG_1X1.length,
     });
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: { nodes: [nodeWithImage('shared-pic')], edges: [] } }]);
+    prismaMock.diagramImage.findFirst.mockResolvedValue({ diagramId: 'd9' });
 
     const res = await request(server).get('/api/images/shared-pic').expect(200);
     // Read from the owner's directory, not the viewer's.
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 
   it('404s when the row exists but the file is gone', async () => {

@@ -12,6 +12,7 @@ import { prisma } from './db.js';
 import { requireAuth } from './middleware.js';
 import { extForMime, sniffImage } from './imageTypes.js';
 import { imageIdsInDiagram } from './imageRefs.js';
+import { imagesReferencedByLiveDiagrams, isImageInMemberDiagram } from './diagramImages.js';
 import { deleteImage, imagePath, writeImage } from './storage.js';
 import { createImageUploadLimiter } from './rateLimit.js';
 import { authedUser } from './types.js';
@@ -108,20 +109,13 @@ export async function sendImage(
  * Whether `viewerId` may see `imageId` without owning it: they may, if any
  * diagram they were invited to draws it.
  *
- * **Cost:** one query that reads the JSON of every diagram shared *with* this
- * user, because the reference lives inside `data` and Postgres cannot index an
- * arbitrary node's `imageSrc`. That set is small by construction — it is what
- * other people have invited you to, not the whole table — and the query only
- * runs for an image the caller does not own, which is the shared-diagram case
- * alone. If invitations ever get numerous, the fix is a join table of image
- * references written on save, not a wider scan here.
+ * **Cost:** one indexed lookup on `DiagramImage`. This used to read the JSON of
+ * every diagram shared with the caller and search it for the id — the join
+ * table (`server/diagramImages.ts`) is exactly the index Postgres could not
+ * build over an arbitrary node's `imageSrc`.
  */
 async function memberCanSeeImage(viewerId: string, imageId: string): Promise<boolean> {
-  const shared = await prisma.diagram.findMany({
-    where: { members: { some: { userId: viewerId } } },
-    select: { data: true },
-  });
-  return shared.some((d) => imageIdsInDiagram(d.data).includes(imageId));
+  return isImageInMemberDiagram(viewerId, imageId);
 }
 
 imagesRouter.get('/:id', async (req, res) => {
@@ -181,29 +175,27 @@ imagesRouter.use((err: unknown, _req: Request, res: Response, next: NextFunction
  * the node back pointing at a 404. Version history is part of what keeps an
  * image alive, so it is part of what decides one is dead.
  *
- * **Cost:** two queries, issued together — the same `data`-wide scan the image
- * routes already pay (documented at `memberCanSeeImage`), now over a second
- * table. Retention caps history at `MAX_VERSIONS` per diagram, so the version
- * scan is bounded by the same thing the diagram scan is.
+ * **Cost:** one indexed lookup for the live diagrams (`DiagramImage`), and the
+ * old `data`-wide scan of version history only for whatever the index did not
+ * already save — usually nothing, since an image being collected has just left
+ * the board it was on. Retention caps history at `MAX_VERSIONS` per diagram, so
+ * that scan is bounded even when it does run.
  */
 export async function deleteOrphanImages(ownerId: string, candidateIds: string[]): Promise<string[]> {
   if (candidateIds.length === 0) return [];
 
-  const [survivors, history] = await Promise.all([
-    prisma.diagram.findMany({
-      where: { userId: ownerId },
-      select: { data: true },
-    }),
-    prisma.diagramVersion.findMany({
-      where: { diagram: { userId: ownerId } },
-      select: { data: true },
-    }),
-  ]);
-  const stillReferenced = new Set([
-    ...survivors.flatMap((d) => imageIdsInDiagram(d.data)),
-    ...history.flatMap((v) => imageIdsInDiagram(v.data)),
-  ]);
-  const orphanIds = candidateIds.filter((id) => !stillReferenced.has(id));
+  const live = await imagesReferencedByLiveDiagrams(ownerId, candidateIds);
+  const unclaimed = candidateIds.filter((id) => !live.has(id));
+  if (unclaimed.length === 0) return [];
+
+  // Versions are deliberately not indexed row by row: this is the only place
+  // that asks about them, and only about images no live diagram claims.
+  const history = await prisma.diagramVersion.findMany({
+    where: { diagram: { userId: ownerId } },
+    select: { data: true },
+  });
+  const inHistory = new Set(history.flatMap((v) => imageIdsInDiagram(v.data)));
+  const orphanIds = unclaimed.filter((id) => !inHistory.has(id));
   if (orphanIds.length === 0) return [];
 
   // Scoped by userId so an id planted in the JSON cannot delete another

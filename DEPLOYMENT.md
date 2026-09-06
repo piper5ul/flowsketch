@@ -71,8 +71,19 @@ npm run db:migrate:deploy      # or: npx prisma migrate deploy
 | `20260906094058_sharing` | Adds `Diagram.shareToken` (nullable, unique) and the `DiagramMember` table, with cascading foreign keys to `Diagram` and `User` |
 | `20260906114233_version_history` | Adds the `DiagramVersion` table (snapshots of a diagram's `data` and `title`), indexed by `(diagramId, createdAt DESC)`; `ON DELETE CASCADE` from `Diagram`, `ON DELETE SET NULL` from `User` |
 | `20260906132915_comments` | Adds the `CommentThread` and `Comment` tables, indexed by `(diagramId, resolved)` and `(threadId, createdAt)`; `ON DELETE CASCADE` from `Diagram`, from the thread, and from `User` — a comment is a person speaking, so it goes when the account does |
+| `20260906154210_image_refs_index` | Adds the `DiagramImage` join table — which images each live diagram draws — keyed on `(diagramId, imageId)` and indexed by `imageId`; `ON DELETE CASCADE` from both sides. **Needs the one-time backfill below.** |
 
-Every migration after `init` is additive — a new nullable column and new tables — so they apply to a populated database without a backfill and without downtime. Existing diagrams come out unshared (`shareToken IS NULL`), with no members, with an empty history and with no comment threads; their first data-changing save records the state they were already in.
+Every migration after `init` is additive — a new nullable column and new tables — so they apply to a populated database without a backfill and without downtime, with the one exception noted next. Existing diagrams come out unshared (`shareToken IS NULL`), with no members, with an empty history and with no comment threads; their first data-changing save records the state they were already in.
+
+### Backfilling the image index (one-time, required)
+
+`20260906154210_image_refs_index` creates the table empty, and the server writes to it only when a diagram is saved. Until an existing diagram is indexed it looks like a board that draws no images at all: a member or a share link 404s on a picture plainly on the canvas, and the image garbage collector counts that picture as unreferenced. **Run the backfill in the same window as the migration, before the app takes traffic:**
+
+```bash
+npx tsx scripts/reindex-images.ts            # --dry-run to see the counts first
+```
+
+It reads diagrams a page at a time and makes each one's index rows match its JSON, so it is idempotent — a second run is a no-op, and an interrupted run can simply be repeated. Run it once per database (the shared dev database and the production LXC's both qualify). A database created empty after this migration needs nothing.
 
 ### Version history and storage
 
