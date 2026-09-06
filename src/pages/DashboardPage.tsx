@@ -12,6 +12,15 @@ export function DashboardPage() {
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  // Set to a diagram id while its menu is showing the delete confirmation.
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+
+  // Opening or closing a menu always drops any confirmation it was showing, so
+  // a menu never reopens mid-confirm.
+  const openMenu = useCallback((id: string | null) => {
+    setMenuOpen(id);
+    setConfirmingDelete(null);
+  }, []);
 
   useEffect(() => {
     api.listDiagrams().then((d) => {
@@ -34,8 +43,8 @@ export function DashboardPage() {
   const deleteDiagram = useCallback(async (id: string) => {
     await api.deleteDiagram(id);
     setDiagrams((prev) => prev.filter((d) => d.id !== id));
-    setMenuOpen(null);
-  }, []);
+    openMenu(null);
+  }, [openMenu]);
 
   const handleSignOut = useCallback(async () => {
     await signOut();
@@ -87,9 +96,12 @@ export function DashboardPage() {
                   key={d.id}
                   diagram={d}
                   menuOpen={menuOpen === d.id}
+                  confirmingDelete={confirmingDelete === d.id}
                   onOpen={() => navigate(`/d/${d.id}`)}
                   onToggleStar={(e) => toggleStar(d.id, e)}
-                  onMenuToggle={() => setMenuOpen(menuOpen === d.id ? null : d.id)}
+                  onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
+                  onRequestDelete={() => setConfirmingDelete(d.id)}
+                  onCancelDelete={() => openMenu(null)}
                   onDelete={() => deleteDiagram(d.id)}
                 />
               ))}
@@ -104,16 +116,22 @@ export function DashboardPage() {
 function DiagramCard({
   diagram,
   menuOpen,
+  confirmingDelete,
   onOpen,
   onToggleStar,
   onMenuToggle,
+  onRequestDelete,
+  onCancelDelete,
   onDelete,
 }: {
   diagram: DiagramMeta;
   menuOpen: boolean;
+  confirmingDelete: boolean;
   onOpen: () => void;
   onToggleStar: (e: React.MouseEvent) => void;
   onMenuToggle: () => void;
+  onRequestDelete: () => void;
+  onCancelDelete: () => void;
   onDelete: () => void;
 }) {
   const timeAgo = formatRelativeTime(diagram.updatedAt);
@@ -141,6 +159,7 @@ function DiagramCard({
             </button>
             <div className="relative">
               <button
+                aria-label="Diagram actions"
                 onClick={(e) => { e.stopPropagation(); onMenuToggle(); }}
                 className="flex h-6 w-6 items-center justify-center rounded text-ink-600/40 opacity-0 transition group-hover:opacity-100 hover:text-ink-900"
               >
@@ -148,15 +167,36 @@ function DiagramCard({
               </button>
               {menuOpen && (
                 <div
-                  className="absolute right-0 top-7 z-50 w-36 rounded-lg bg-white py-1 shadow-lg ring-1 ring-black/[0.08]"
+                  className="absolute right-0 top-7 z-50 w-44 rounded-lg bg-white py-1 shadow-lg ring-1 ring-black/[0.08]"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <button
-                    onClick={onDelete}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
-                  >
-                    <Trash2 size={13} /> Delete
-                  </button>
+                  {confirmingDelete ? (
+                    <div className="px-3 py-2">
+                      <p className="mb-2 text-sm text-ink-900">Delete this diagram?</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          aria-label="Confirm delete"
+                          onClick={onDelete}
+                          className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-red-700"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={onCancelDelete}
+                          className="rounded-md px-2.5 py-1 text-xs font-medium text-ink-600 transition hover:bg-black/[0.04] hover:text-ink-900"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={onRequestDelete}
+                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 size={13} /> Delete
+                    </button>
+                  )}
                 </div>
               )}
             </div>

@@ -36,10 +36,20 @@ export const api = {
       `/api/diagrams/${id}`,
     ),
 
-  saveDiagram: (id: string, payload: { title?: string; data?: unknown; starred?: boolean }) =>
+  /**
+   * `keepalive` lets the request outlive the page that started it, which is
+   * what the autosave flush on `pagehide` needs — without it the browser
+   * cancels the save as the tab goes away.
+   */
+  saveDiagram: (
+    id: string,
+    payload: { title?: string; data?: unknown; starred?: boolean },
+    options?: { keepalive?: boolean },
+  ) =>
     request(`/api/diagrams/${id}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
+      keepalive: options?.keepalive,
     }),
 
   deleteDiagram: (id: string) =>
