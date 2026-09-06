@@ -106,6 +106,9 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `⌘]` | Bring selection forward |
 | `⌘[` | Send selection backward |
 | `⌘⇧L` | Lock / unlock selection |
+| `⌥⇧` + arrows | Align the selection left / right / top / bottom (needs 2 shapes) |
+| `⌥⇧H` / `⌥⇧V` | Align the selection on its horizontal / vertical centre line |
+| `⌘⌥⇧H` / `⌘⌥⇧V` | Distribute the selection horizontally / vertically (needs 3 shapes) |
 
 ### Clipboard & style
 

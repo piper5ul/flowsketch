@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRegistry, formatShortcut } from './registry';
 import { bindingsOf, commands, registry } from './commands';
-import type { Command, Keybinding } from './types';
+import type { Command, CommandContext, Keybinding } from './types';
 
 /** A key event as the registry sees it — the fields it reads, nothing else. */
 function key(
@@ -215,6 +215,72 @@ describe('the FlowSketch command set', () => {
   it('tags the context-menu commands with a target', () => {
     for (const id of ['edit.delete', 'edit.duplicate', 'clipboard.paste', 'select.all', 'view.fitView']) {
       expect(registry.find(id)?.contextMenu, `${id} is not tagged`).toBeDefined();
+    }
+  });
+});
+
+describe('the align and distribute shortcuts', () => {
+  /**
+   * A context holding `n` selected nodes. The align/distribute gates only read
+   * the selection, so the rest of the real context is never reached.
+   */
+  function withSelection(n: number): CommandContext {
+    const nodes = Array.from({ length: n }, (_, i) => ({ id: `n${i}`, selected: true }));
+    return { store: { getState: () => ({ nodes, edges: [] }) } } as unknown as CommandContext;
+  }
+
+  /**
+   * The keystroke each command answers to. ⌥ rewrites `event.key` on macOS
+   * (⌥⇧H arrives as "Ó"), so the letters are pressed the way the browser
+   * actually reports them — mangled key, real `code`.
+   */
+  const ALIGN: [string, ReturnType<typeof key>][] = [
+    ['arrange.alignLeft', key('ArrowLeft', { alt: true, shift: true })],
+    ['arrange.alignRight', key('ArrowRight', { alt: true, shift: true })],
+    ['arrange.alignTop', key('ArrowUp', { alt: true, shift: true })],
+    ['arrange.alignBottom', key('ArrowDown', { alt: true, shift: true })],
+    ['arrange.alignCenterX', key('Ó', { alt: true, shift: true, code: 'KeyH' })],
+    ['arrange.alignCenterY', key('◊', { alt: true, shift: true, code: 'KeyV' })],
+  ];
+
+  const DISTRIBUTE: [string, ReturnType<typeof key>][] = [
+    ['arrange.distributeX', key('Ó', { meta: true, alt: true, shift: true, code: 'KeyH' })],
+    ['arrange.distributeY', key('◊', { meta: true, alt: true, shift: true, code: 'KeyV' })],
+  ];
+
+  it('binds every align command to its own keystroke', () => {
+    for (const [id, event] of ALIGN) {
+      expect(registry.matchEvent(event, withSelection(2))?.id, id).toBe(id);
+    }
+  });
+
+  it('binds every distribute command to its own keystroke', () => {
+    for (const [id, event] of DISTRIBUTE) {
+      expect(registry.matchEvent(event, withSelection(3))?.id, id).toBe(id);
+    }
+  });
+
+  it('needs two nodes to align and three to distribute', () => {
+    for (const [, event] of ALIGN) {
+      expect(registry.matchEvent(event, withSelection(1))).toBeUndefined();
+    }
+    for (const [, event] of DISTRIBUTE) {
+      expect(registry.matchEvent(event, withSelection(2))).toBeUndefined();
+    }
+  });
+
+  it('leaves the ⌘⌥ style shortcuts alone', () => {
+    // Distribute carries ⇧ precisely so it cannot shadow paste-style, which
+    // this registry cannot tell apart from a ⌃⌥V press.
+    expect(registry.matchEvent(key('◊', { meta: true, alt: true, code: 'KeyV' }), withSelection(3))?.id)
+      .toBe('style.paste');
+    expect(registry.matchEvent(key('ç', { meta: true, alt: true, code: 'KeyC' }), withSelection(3))?.id)
+      .toBe('style.copy');
+  });
+
+  it('offers align and distribute on the shape right-click menu', () => {
+    for (const [id] of [...ALIGN, ...DISTRIBUTE]) {
+      expect(registry.find(id)?.contextMenu, `${id} is not tagged`).toBe('node');
     }
   });
 });
