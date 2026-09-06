@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
+import { useToastStore } from './useToastStore';
+import { api } from '../lib/api';
+
+vi.mock('../lib/api', () => ({
+  api: { saveDiagram: vi.fn(async () => undefined) },
+}));
+
+const saveDiagram = vi.mocked(api.saveDiagram);
 
 const store = () => useDiagramStore.getState();
 
@@ -592,5 +600,41 @@ describe('serializeDiagram', () => {
     store().addConnectedShape(a, 'right');
     const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges)));
     expect(migrateDiagramData(saved)).toEqual(saved);
+  });
+});
+
+describe('saveDiagram', () => {
+  beforeEach(() => {
+    saveDiagram.mockClear();
+    saveDiagram.mockResolvedValue(undefined);
+    useToastStore.getState().clear();
+  });
+
+  it('does nothing without a diagram id', async () => {
+    useDiagramStore.setState({ diagramId: null });
+    await store().saveDiagram();
+    expect(saveDiagram).not.toHaveBeenCalled();
+  });
+
+  it('marks the diagram saved once the request resolves', async () => {
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith('test', expect.anything(), undefined);
+    expect(store().saveStatus).toBe('saved');
+  });
+
+  it('reports a failed save with a toast as well as the status', async () => {
+    saveDiagram.mockRejectedValueOnce(new Error('offline'));
+    await store().saveDiagram();
+    expect(store().saveStatus).toBe('error');
+    expect(useToastStore.getState().toasts).toMatchObject([
+      { kind: 'error', message: 'Save failed — retrying on your next change' },
+    ]);
+  });
+
+  it('does not stack a toast per failed attempt while the save is still broken', async () => {
+    saveDiagram.mockRejectedValue(new Error('offline'));
+    await store().saveDiagram();
+    await store().saveDiagram();
+    expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 });

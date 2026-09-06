@@ -17,6 +17,7 @@ import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { api } from '../lib/api';
+import { toastError } from './useToastStore';
 
 // Re-exported here because this is where the rest of the app reaches for it.
 export { computeMarkers };
@@ -356,8 +357,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges } = get();
+    const { diagramId, title, nodes, edges, saveStatus } = get();
     if (!diagramId) return;
+    const wasFailing = saveStatus === 'error';
     set({ saveStatus: 'saving' });
     try {
       await api.saveDiagram(
@@ -368,6 +370,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       set({ saveStatus: 'saved' });
     } catch {
       set({ saveStatus: 'error' });
+      // Autosave retries on the next edit, so a broken connection would
+      // otherwise stack one toast per keystroke. Only the first failure of a
+      // run is announced; the SaveIndicator carries the state after that.
+      if (!wasFailing) toastError('Save failed — retrying on your next change');
     }
   },
 
