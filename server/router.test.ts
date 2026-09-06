@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthUser } from './types.js';
+import { MAX_THUMBNAIL_CHARS, THUMBNAIL_DATA_URL_PREFIX } from '../shared/types.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-router-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -54,7 +55,9 @@ const { apiRouter } = await import('./router.js');
 const { imagePath } = await import('./storage.js');
 
 const app = express();
-app.use('/api', express.json());
+// The same body limit `server/index.ts` mounts, so a body the real server
+// would parse (a 200 KB thumbnail) is not turned into a 413 by the harness.
+app.use('/api', express.json({ limit: '5mb' }));
 app.use('/api', apiRouter);
 
 const owned = { id: 'd1', userId: 'u1', title: 'Mine', starred: false, data: { nodes: [], edges: [] } };
@@ -153,6 +156,37 @@ describe('PUT /api/diagrams/:id', () => {
   it('refuses to update a diagram the caller does not own', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
     await request(app).put('/api/diagrams/d1').send({ title: 'Hijack' }).expect(404);
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('writes a thumbnail without touching the diagram itself', async () => {
+    const thumbnail = `${THUMBNAIL_DATA_URL_PREFIX}iVBORw0KGgo=`;
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, thumbnail });
+    await request(app).put('/api/diagrams/d1').send({ thumbnail }).expect(200);
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { thumbnail } });
+  });
+
+  it('clears the thumbnail when it is sent as null', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, thumbnail: null });
+    await request(app).put('/api/diagrams/d1').send({ thumbnail: null }).expect(200);
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { thumbnail: null } });
+  });
+
+  it('rejects a thumbnail that is not a PNG data URL', async () => {
+    const res = await request(app)
+      .put('/api/diagrams/d1')
+      .send({ thumbnail: 'data:image/svg+xml;base64,PHN2Zz4=' })
+      .expect(400);
+    expect(res.body.issues[0]).toMatchObject({ path: 'thumbnail' });
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized thumbnail before it reaches the database', async () => {
+    const huge = THUMBNAIL_DATA_URL_PREFIX + 'A'.repeat(MAX_THUMBNAIL_CHARS);
+    await request(app).put('/api/diagrams/d1').send({ thumbnail: huge }).expect(400);
+    expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 });

@@ -43,7 +43,7 @@ export const api = {
    */
   saveDiagram: (
     id: string,
-    payload: { title?: string; data?: unknown; starred?: boolean },
+    payload: { title?: string; data?: unknown; starred?: boolean; thumbnail?: string | null },
     options?: { keepalive?: boolean },
   ) =>
     request(`/api/diagrams/${id}`, {

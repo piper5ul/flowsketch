@@ -70,13 +70,14 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    const { title, data, starred } = req.body;
+    const { title, data, starred, thumbnail } = req.body;
     const updated = await prisma.diagram.update({
       where: { id: req.params.id },
       data: {
         ...(title !== undefined && { title }),
         ...(data !== undefined && { data }),
         ...(starred !== undefined && { starred }),
+        ...(thumbnail !== undefined && { thumbnail }),
       },
     });
     res.json(updated);

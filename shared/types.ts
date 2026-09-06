@@ -47,3 +47,14 @@ export interface DiagramMeta {
   updatedAt: string;
   thumbnail: string | null;
 }
+
+/**
+ * A dashboard thumbnail is stored inline on the diagram row rather than in the
+ * image table: it is derived, disposable, and wanted by the same query that
+ * lists the cards. Both ends agree on the format so the client never spends an
+ * upload on a value the server is going to reject.
+ */
+export const THUMBNAIL_DATA_URL_PREFIX = 'data:image/png;base64,';
+
+/** Ceiling on a stored thumbnail data URL, in characters (~200 KB). */
+export const MAX_THUMBNAIL_CHARS = 200 * 1024;

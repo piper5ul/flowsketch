@@ -111,7 +111,19 @@ async function waitForSelectionCleared(): Promise<void> {
  * diagram so callers can skip downloading a blank image.
  */
 export async function renderDiagramPng(
-  options: { pixelRatio?: number; background?: string } = {},
+  options: {
+    pixelRatio?: number;
+    background?: string;
+    maxSide?: number;
+    /**
+     * Keeps the user's selection on screen during the capture. Clearing it is
+     * right for an export the user asked for, but a background capture (the
+     * dashboard thumbnail) must not make the selection ring and the floating
+     * toolbar blink mid-edit — a ring baked into a 480 px preview is the
+     * cheaper of the two costs.
+     */
+    preserveSelection?: boolean;
+  } = {},
 ): Promise<string | null> {
   const { nodes, edges } = useDiagramStore.getState();
   if (nodes.length === 0) return null;
@@ -123,6 +135,7 @@ export async function renderDiagramPng(
   const { width, height, viewport } = computeExportViewport(getNodesBounds(nodes), {
     padding: EXPORT_PADDING,
     pixelRatio,
+    maxSide: options.maxSide,
   });
 
   // Selection rings and the handles they reveal are UI, not diagram. Clear the
@@ -130,7 +143,8 @@ export async function renderDiagramPng(
   // export never costs the user an undo step.
   const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
   const selectedEdgeIds = new Set(edges.filter((e) => e.selected).map((e) => e.id));
-  const hadSelection = selectedNodeIds.size > 0 || selectedEdgeIds.size > 0;
+  const hadSelection =
+    !options.preserveSelection && (selectedNodeIds.size > 0 || selectedEdgeIds.size > 0);
 
   // Shapes transition their box-shadow, so a selection ring fades out over
   // several frames and would be captured mid-fade. Freeze transitions first,

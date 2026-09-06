@@ -173,8 +173,19 @@ function DiagramCard({
       className="group cursor-pointer rounded-xl bg-white shadow-[0_1px_3px_rgba(20,20,50,0.08)] ring-1 ring-black/[0.04] transition hover:shadow-[0_4px_12px_rgba(20,20,50,0.12)] hover:ring-accent-500/30"
     >
       {/* Thumbnail */}
-      <div className="flex h-36 items-center justify-center rounded-t-xl bg-gradient-to-br from-canvas to-white">
-        <FileText size={32} className="text-ink-600/30" />
+      <div className="flex h-36 items-center justify-center overflow-hidden rounded-t-xl bg-gradient-to-br from-canvas to-white">
+        {diagram.thumbnail ? (
+          <img
+            src={diagram.thumbnail}
+            alt=""
+            // `contain`, so a wide board and a tall one are both shown whole
+            // rather than cropped to the card.
+            className="h-full w-full object-contain"
+            draggable={false}
+          />
+        ) : (
+          <FileText size={32} className="text-ink-600/30" />
+        )}
       </div>
 
       {/* Info */}
