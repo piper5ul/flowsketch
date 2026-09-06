@@ -303,7 +303,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const lockedIds = new Set(get().nodes.filter((n) => n.data.locked).map((n) => n.id));
     if (lockedIds.size > 0) {
       changes = changes.filter((c) => {
-        if (c.type === 'add' || c.type === 'reset') return true;
+        if (c.type === 'add') return true;
         if (!lockedIds.has(c.id)) return true;
         if (c.type === 'select' || c.type === 'remove') return true;
         if (c.type === 'dimensions' && !c.resizing) return true;
