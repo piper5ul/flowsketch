@@ -71,21 +71,23 @@ imagesRouter.post(
   },
 );
 
-imagesRouter.get('/:id', async (req, res) => {
-  const owner = authedUser(req).id;
-  const image = await prisma.image.findFirst({ where: { id: req.params.id, userId: owner } });
-  // 404 rather than 403 for someone else's image: ownership stays unobservable.
-  if (!image) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
+/**
+ * Streams an image row's bytes, or 404s when the file behind it is not there
+ * (a row whose mime we cannot name an extension for is the same case). Shared
+ * with the tokened route in `sharing.ts`, which reaches the same files through
+ * a different gate.
+ */
+export async function sendImage(
+  res: Response,
+  image: { id: string; userId: string; mime: string; size: number },
+): Promise<void> {
   const ext = extForMime(image.mime);
   if (!ext) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
 
-  const file = imagePath(owner, image.id, ext);
+  const file = imagePath(image.userId, image.id, ext);
   try {
     await fs.access(file);
   } catch {
@@ -100,6 +102,42 @@ imagesRouter.get('/:id', async (req, res) => {
   const stream = createReadStream(file);
   stream.on('error', () => res.destroy());
   stream.pipe(res);
+}
+
+/**
+ * Whether `viewerId` may see `imageId` without owning it: they may, if any
+ * diagram they were invited to draws it.
+ *
+ * **Cost:** one query that reads the JSON of every diagram shared *with* this
+ * user, because the reference lives inside `data` and Postgres cannot index an
+ * arbitrary node's `imageSrc`. That set is small by construction — it is what
+ * other people have invited you to, not the whole table — and the query only
+ * runs for an image the caller does not own, which is the shared-diagram case
+ * alone. If invitations ever get numerous, the fix is a join table of image
+ * references written on save, not a wider scan here.
+ */
+async function memberCanSeeImage(viewerId: string, imageId: string): Promise<boolean> {
+  const shared = await prisma.diagram.findMany({
+    where: { members: { some: { userId: viewerId } } },
+    select: { data: true },
+  });
+  return shared.some((d) => imageIdsInDiagram(d.data).includes(imageId));
+}
+
+imagesRouter.get('/:id', async (req, res) => {
+  const viewer = authedUser(req).id;
+  const image = await prisma.image.findUnique({ where: { id: req.params.id } });
+  // 404 rather than 403 for an image they may not see: ownership, and the
+  // existence of the row itself, both stay unobservable.
+  if (!image) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  if (image.userId !== viewer && !(await memberCanSeeImage(viewer, image.id))) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  await sendImage(res, image);
 });
 
 imagesRouter.delete('/:id', async (req, res) => {

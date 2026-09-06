@@ -23,6 +23,8 @@ model User {
   accounts Account[]
   diagrams Diagram[]
   images   Image[]
+  /// Diagrams owned by *someone else* that this user has been invited to.
+  memberships DiagramMember[]
 }
 
 model Session {
@@ -76,12 +78,39 @@ model Diagram {
   data      Json
   thumbnail String?
   starred   Boolean  @default(false)
+  /// Public read-only link token. `null` means the diagram is not shared;
+  /// a value makes it readable at `/s/<token>` with no session at all, so it
+  /// is unguessable (24 bytes of `crypto.randomBytes`) rather than derived
+  /// from the id.
+  shareToken String? @unique
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members DiagramMember[]
 
   @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// A user who has been invited to a diagram they do not own.
+///
+/// The owner is *not* a row here — ownership is `Diagram.userId` — so a
+/// diagram's full access list is its owner plus these rows. `role` is one of
+/// `DiagramRole` from `shared/types.ts` ('editor' | 'viewer'); it is a String
+/// rather than an enum so adding a role is a code change, not a migration that
+/// has to be applied before the code that writes it.
+model DiagramMember {
+  id        String   @id @default(cuid())
+  diagramId String
+  userId    String
+  role      String
+  createdAt DateTime @default(now())
+
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([diagramId, userId])
+  @@index([userId])
 }
 
 /// Metadata for an uploaded image. The bytes live on disk under

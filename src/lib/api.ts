@@ -1,4 +1,11 @@
-import type { DiagramData, DiagramMeta } from '../../shared/types';
+import type {
+  DiagramData,
+  DiagramMemberInfo,
+  DiagramMemberRole,
+  DiagramMeta,
+  DiagramRole,
+  SharedDiagram,
+} from '../../shared/types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -92,10 +99,18 @@ export const api = {
 
   // `data` is deliberately `unknown`: it is a free-form JSON column that may
   // hold any version the app has ever written. `migrateDiagramData` types it.
+  // `role` says what this user may do with it; `shareToken` is only sent to
+  // the owner, and is `null` when the public link is off.
   getDiagram: (id: string) =>
-    request<{ id: string; title: string; starred: boolean; data: unknown; updatedAt: string }>(
-      `/api/diagrams/${id}`,
-    ),
+    request<{
+      id: string;
+      title: string;
+      starred: boolean;
+      data: unknown;
+      updatedAt: string;
+      role: DiagramRole;
+      shareToken?: string | null;
+    }>(`/api/diagrams/${id}`),
 
   /**
    * `keepalive` lets the request outlive the page that started it, which is
@@ -131,4 +146,41 @@ export const api = {
 
   toggleStar: (id: string) =>
     request<{ starred: boolean }>(`/api/diagrams/${id}/star`, { method: 'PATCH' }),
+
+  /**
+   * Turns the public read-only link on, or returns the one already there —
+   * calling it twice never invalidates a URL the user has handed out. `url` is
+   * app-relative (`/s/<token>`); the caller pairs it with `location.origin`.
+   */
+  shareDiagram: (id: string) =>
+    request<{ shareToken: string; url: string }>(`/api/diagrams/${id}/share`, { method: 'POST' }),
+
+  /** Turns the public link off. A later `shareDiagram` mints a different one. */
+  unshareDiagram: (id: string) =>
+    request(`/api/diagrams/${id}/share`, { method: 'DELETE' }),
+
+  /**
+   * Reads a diagram through its share token. The only call here that needs no
+   * session, so a 404 is the ordinary answer for a link that was revoked.
+   */
+  getSharedDiagram: (token: string) =>
+    request<SharedDiagram>(`/api/shared/${encodeURIComponent(token)}`),
+
+  /** Everyone with access, owner first. Readable by the owner and by editors. */
+  listMembers: (id: string) =>
+    request<DiagramMemberInfo[]>(`/api/diagrams/${id}/members`),
+
+  /**
+   * Invites an existing account, or changes the role of one already invited.
+   * An address with no account behind it rejects with `API error: 404`.
+   */
+  addMember: (id: string, email: string, role: DiagramMemberRole) =>
+    request<DiagramMemberInfo>(`/api/diagrams/${id}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    }),
+
+  /** Removes a member. Allowed to the owner, and to that member themselves. */
+  removeMember: (id: string, userId: string) =>
+    request(`/api/diagrams/${id}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
 };

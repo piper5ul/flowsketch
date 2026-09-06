@@ -53,6 +53,39 @@ export interface ImageMeta {
   height: number | null;
 }
 
+/**
+ * What a user may do with a diagram, weakest first.
+ *
+ * `owner` is `Diagram.userId` and is never a `DiagramMember` row; `editor` and
+ * `viewer` are. The order is total — a check is "at least this role" — so a new
+ * role has to be given a rank in `server/access.ts` rather than just a name.
+ */
+export type DiagramRole = 'owner' | 'editor' | 'viewer';
+
+/** The roles an invitation can grant. Ownership is not transferable today. */
+export type DiagramMemberRole = Exclude<DiagramRole, 'owner'>;
+
+/** One entry of `GET /api/diagrams/:id/members` — the owner included, first. */
+export interface DiagramMemberInfo {
+  userId: string;
+  name: string;
+  email: string;
+  role: DiagramRole;
+}
+
+/**
+ * `GET /api/shared/:token`: a diagram behind a public link, read with no
+ * session at all. Deliberately narrower than the authenticated read — no
+ * owner, no members, no `shareToken`, nothing a viewer of the link has not
+ * been given.
+ */
+export interface SharedDiagram {
+  id: string;
+  title: string;
+  data: unknown;
+  updatedAt: string;
+}
+
 export interface DiagramMeta {
   id: string;
   title: string;
@@ -60,6 +93,15 @@ export interface DiagramMeta {
   createdAt: string;
   updatedAt: string;
   thumbnail: string | null;
+  /** What the *listing* user may do with it. Their own diagrams are `owner`. */
+  role: DiagramRole;
+  /** Who owns it, when that is somebody else. Absent on an owned diagram. */
+  ownerName?: string;
+}
+
+/** The path a share token is served at. The client route mirrors it. */
+export function sharedDiagramPath(token: string): string {
+  return `/s/${token}`;
 }
 
 /**

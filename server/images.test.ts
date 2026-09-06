@@ -13,8 +13,12 @@ const { prismaMock, authState } = vi.hoisted(() => ({
   prismaMock: {
     image: {
       findFirst: vi.fn(),
+      findUnique: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
+    },
+    diagram: {
+      findMany: vi.fn(),
     },
   },
   authState: { user: null as AuthUser | null },
@@ -73,6 +77,7 @@ describe('auth gate', () => {
     await request(app).delete('/api/images/i1').expect(401);
     expect(prismaMock.image.create).not.toHaveBeenCalled();
     expect(prismaMock.image.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.image.findUnique).not.toHaveBeenCalled();
   });
 });
 
@@ -135,10 +140,15 @@ describe('POST /api/images', () => {
 });
 
 describe('GET /api/images/:id', () => {
+  /** A node drawing `/api/images/<imageId>`, as a diagram stores it. */
+  function nodeWithImage(imageId: string) {
+    return { id: 'n1', type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } };
+  }
+
   it('streams the bytes to the owner with an immutable private cache header', async () => {
     fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
     fs.writeFileSync(imagePath('u1', 'get1', 'png'), PNG_1X1);
-    prismaMock.image.findFirst.mockResolvedValue({
+    prismaMock.image.findUnique.mockResolvedValue({
       id: 'get1',
       userId: 'u1',
       mime: 'image/png',
@@ -149,16 +159,54 @@ describe('GET /api/images/:id', () => {
     expect(res.headers['content-type']).toBe('image/png');
     expect(res.headers['cache-control']).toBe('private, max-age=31536000, immutable');
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
-    expect(prismaMock.image.findFirst).toHaveBeenCalledWith({ where: { id: 'get1', userId: 'u1' } });
+    expect(prismaMock.image.findUnique).toHaveBeenCalledWith({ where: { id: 'get1' } });
+    // The owner is answered from the row alone; no diagram is scanned.
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 
-  it('404s an image owned by another user, indistinguishably from a missing one', async () => {
-    prismaMock.image.findFirst.mockResolvedValue(null);
-    await request(app).get('/api/images/someone-elses').expect(404);
+  it('404s an image that does not exist', async () => {
+    prismaMock.image.findUnique.mockResolvedValue(null);
+    await request(app).get('/api/images/nope').expect(404);
+  });
+
+  it('404s another user\'s image when no diagram shared with the caller draws it', async () => {
+    fs.mkdirSync(path.join(uploadDir, 'u2'), { recursive: true });
+    fs.writeFileSync(imagePath('u2', 'theirs', 'png'), PNG_1X1);
+    prismaMock.image.findUnique.mockResolvedValue({
+      id: 'theirs',
+      userId: 'u2',
+      mime: 'image/png',
+      size: PNG_1X1.length,
+    });
+    // Shared with the caller, but drawing something else.
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: { nodes: [nodeWithImage('unrelated')], edges: [] } }]);
+
+    await request(app).get('/api/images/theirs').expect(404);
+
+    expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
+      where: { members: { some: { userId: 'u1' } } },
+      select: { data: true },
+    });
+  });
+
+  it('serves another user\'s image when a diagram shared with the caller draws it', async () => {
+    fs.mkdirSync(path.join(uploadDir, 'u2'), { recursive: true });
+    fs.writeFileSync(imagePath('u2', 'shared-pic', 'png'), PNG_1X1);
+    prismaMock.image.findUnique.mockResolvedValue({
+      id: 'shared-pic',
+      userId: 'u2',
+      mime: 'image/png',
+      size: PNG_1X1.length,
+    });
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: { nodes: [nodeWithImage('shared-pic')], edges: [] } }]);
+
+    const res = await request(app).get('/api/images/shared-pic').expect(200);
+    // Read from the owner's directory, not the viewer's.
+    expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
   });
 
   it('404s when the row exists but the file is gone', async () => {
-    prismaMock.image.findFirst.mockResolvedValue({
+    prismaMock.image.findUnique.mockResolvedValue({
       id: 'ghost',
       userId: 'u1',
       mime: 'image/png',

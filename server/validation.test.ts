@@ -3,7 +3,9 @@ import express from 'express';
 import request from 'supertest';
 import {
   MAX_ELEMENTS,
+  MAX_EMAIL_CHARS,
   MAX_TITLE_CHARS,
+  addMemberBody,
   copyTitle,
   createDiagramBody,
   diagramData,
@@ -185,5 +187,31 @@ describe('validateBody', () => {
       .send({ data: { nodes: [{ id: 'n1', position: { x: 'nope', y: 0 } }], edges: [] } })
       .expect(400);
     expect(res.body.issues[0].path).toBe('data.nodes.0.position.x');
+  });
+});
+
+describe('addMemberBody', () => {
+  it('normalises the address the way accounts store it', () => {
+    const parsed = addMemberBody.parse({ email: '  U2@Example.Test ', role: 'editor' });
+    expect(parsed).toEqual({ email: 'u2@example.test', role: 'editor' });
+  });
+
+  it('rejects an address that is not one, or is longer than the RFC allows', () => {
+    expect(addMemberBody.safeParse({ email: 'not-an-email', role: 'viewer' }).success).toBe(false);
+    const long = `${'a'.repeat(MAX_EMAIL_CHARS)}@example.test`;
+    expect(addMemberBody.safeParse({ email: long, role: 'viewer' }).success).toBe(false);
+  });
+
+  it('accepts only the roles an invitation can grant', () => {
+    expect(addMemberBody.safeParse({ email: 'a@b.test', role: 'editor' }).success).toBe(true);
+    expect(addMemberBody.safeParse({ email: 'a@b.test', role: 'viewer' }).success).toBe(true);
+    // Ownership is not transferable, so it is not something to invite someone as.
+    expect(addMemberBody.safeParse({ email: 'a@b.test', role: 'owner' }).success).toBe(false);
+  });
+
+  it('requires both fields, and refuses any extra one', () => {
+    expect(addMemberBody.safeParse({ email: 'a@b.test' }).success).toBe(false);
+    expect(addMemberBody.safeParse({ role: 'viewer' }).success).toBe(false);
+    expect(addMemberBody.safeParse({ email: 'a@b.test', role: 'viewer', diagramId: 'x' }).success).toBe(false);
   });
 });
