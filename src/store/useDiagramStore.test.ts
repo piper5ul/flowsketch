@@ -783,6 +783,12 @@ describe('updateEdgeData', () => {
     expect(store().edges[0].markerStart).toBeDefined();
   });
 
+  it('resizes the arrowheads when the line thickens', () => {
+    const id = edgeId();
+    store().updateEdgeData(id, { strokeWidth: 3 });
+    expect(store().edges[0].markerEnd).toMatchObject({ width: 14, height: 14 });
+  });
+
   it('leaves the markers alone for a patch that cannot affect them', () => {
     const id = edgeId();
     const before = store().edges[0].markerEnd;

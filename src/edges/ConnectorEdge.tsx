@@ -10,7 +10,7 @@ import {
 } from '../lib/edgeGeometry';
 import { buildConnectorPath, controlThrough, type Point } from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
-import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
+import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
@@ -289,7 +289,8 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const strokeStyle = data?.strokeStyle ?? 'solid';
   const connectorType = data?.connectorType ?? 'elbow';
   const waypoint = data?.waypoint ?? null;
-  const strokeWidth = selected ? 3 : 2.5;
+  // Selection thickens the line by a hair on top of whatever width it is set to.
+  const strokeWidth = CONNECTOR_STROKE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH] + (selected ? 0.5 : 0);
 
   // Only an elbow is routed around the other shapes; the other two kinds run
   // straight from anchor to anchor and need nothing from the router.

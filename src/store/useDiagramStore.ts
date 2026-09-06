@@ -353,7 +353,7 @@ function commitArrangedSizes(sizes: Record<string, ArrangeSize>) {
 }
 
 /** The `ConnectorData` fields `computeMarkers` reads. */
-const MARKER_KEYS = ['stroke', 'startArrow', 'endArrow'] as const satisfies readonly (keyof ConnectorData)[];
+const MARKER_KEYS = ['stroke', 'startArrow', 'endArrow', 'strokeWidth'] as const satisfies readonly (keyof ConnectorData)[];
 
 /** True when a connector patch changes something the arrowheads are derived from. */
 function touchesMarkers(patch: Partial<ConnectorData>): boolean {

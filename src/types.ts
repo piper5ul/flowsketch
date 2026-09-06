@@ -5,6 +5,8 @@
 export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'sticky' | 'text' | 'pill' | 'triangle' | 'hexagon' | 'cylinder' | 'image';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
+/** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
+export type StrokeWidth = 1 | 2 | 3;
 export type Direction = 'top' | 'right' | 'bottom' | 'left';
 export type Tool =
   | 'select'
@@ -58,6 +60,8 @@ export interface ConnectorData {
   connectorType: ConnectorKind;
   stroke: string;
   strokeStyle: StrokeStyle;
+  /** Absent on connectors saved before widths existed; they read as regular. */
+  strokeWidth?: StrokeWidth;
   label: string;
   labelFontSize?: FontSize;
   labelBold?: boolean;

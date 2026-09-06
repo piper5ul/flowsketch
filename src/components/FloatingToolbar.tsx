@@ -22,8 +22,8 @@ import { ArrangeMenu } from './ArrangeMenu';
 import { TextFormatControls } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
-import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
-import type { ConnectorKind, StrokeStyle } from '../types';
+import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
+import type { ConnectorKind, StrokeStyle, StrokeWidth } from '../types';
 
 /** The toolbar's icon button. */
 const BUTTON_CLASS =
@@ -36,6 +36,12 @@ const CONNECTOR_KINDS: [ConnectorKind, LucideIcon, string][] = [
   ['straight', ArrowRight, 'Straight line'],
   ['elbow', CornerDownRight, 'Elbow line'],
   ['curved', Spline, 'Curved line'],
+];
+
+const STROKE_WIDTHS: [StrokeWidth, string][] = [
+  [1, 'Thin line'],
+  [2, 'Regular line'],
+  [3, 'Bold line'],
 ];
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
@@ -56,6 +62,22 @@ function StrokeStyleIcon({ style }: { style: StrokeStyle }) {
         strokeWidth="2"
         strokeLinecap="round"
         strokeDasharray={STROKE_STYLE_DASH[style]}
+      />
+    </svg>
+  );
+}
+
+function StrokeWidthIcon({ width }: { width: StrokeWidth }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18">
+      <line
+        x1="2"
+        y1="9"
+        x2="16"
+        y2="9"
+        stroke="currentColor"
+        strokeWidth={CONNECTOR_STROKE_PX[width]}
+        strokeLinecap="round"
       />
     </svg>
   );
@@ -152,6 +174,7 @@ export function FloatingToolbar() {
     : selectedNodes[0]?.data?.stroke ?? DEFAULT_SWATCH.stroke;
   const connectorType = selectedEdges[0]?.data?.connectorType ?? 'elbow';
   const strokeStyle = selectedEdges[0]?.data?.strokeStyle ?? 'solid';
+  const strokeWidth = selectedEdges[0]?.data?.strokeWidth ?? DEFAULT_STROKE_WIDTH;
   const startArrow = selectedEdges[0]?.data?.startArrow ?? false;
   const endArrow = selectedEdges[0]?.data?.endArrow ?? true;
   // Only a dragged bend can be reset, so the button is dead weight without one.
@@ -203,12 +226,21 @@ export function FloatingToolbar() {
               <Tooltip key={s} label={s[0].toUpperCase() + s.slice(1)} side="top">
                 <button
                   onClick={() => updateSelectedEdgesStyle({ strokeStyle: s })}
-                  className={clsx(
-                    'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                    strokeStyle === s && 'bg-accent-500 text-white hover:bg-accent-500',
-                  )}
+                  className={clsx(BUTTON_CLASS, strokeStyle === s && ACTIVE_BUTTON_CLASS)}
                 >
                   <StrokeStyleIcon style={s} />
+                </button>
+              </Tooltip>
+            ))}
+
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            {STROKE_WIDTHS.map(([width, label]) => (
+              <Tooltip key={width} label={label} side="top">
+                <button
+                  onClick={() => updateSelectedEdgesStyle({ strokeWidth: width })}
+                  className={clsx(BUTTON_CLASS, strokeWidth === width && ACTIVE_BUTTON_CLASS)}
+                >
+                  <StrokeWidthIcon width={width} />
                 </button>
               </Tooltip>
             ))}
