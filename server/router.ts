@@ -5,6 +5,7 @@ import { publicDiagram, requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { sharingRouter } from './sharing.js';
+import { commentsRouter } from './comments.js';
 import { recordVersionIfDue, versionsRouter } from './versions.js';
 import { authedUser } from './types.js';
 import type { DiagramMeta, DiagramRole } from '../shared/types.js';
@@ -279,3 +280,7 @@ apiRouter.use(sharingRouter);
 // half: a share token grants a look at the diagram as it is now, not at every
 // state it has ever been in.
 apiRouter.use(versionsRouter);
+
+// Comment threads, also behind `requireAuth` and also with no unauthenticated
+// half: a discussion needs names against it, and a public link has none.
+apiRouter.use(commentsRouter);
