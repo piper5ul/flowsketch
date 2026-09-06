@@ -38,14 +38,14 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
-        className="panel-in flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-[0_30px_80px_-20px_rgba(10,10,25,0.5)]"
+        className="panel-in flex max-h-[80vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-panel shadow-[0_30px_80px_-20px_rgba(10,10,25,0.5)]"
       >
-        <div className="flex items-center justify-between border-b border-black/[0.06] px-6 py-4">
+        <div className="flex items-center justify-between border-b border-line px-6 py-4">
           <h2 className="text-[15px] font-semibold text-ink-900">Keyboard shortcuts</h2>
           <button
             onClick={onClose}
             aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-black/[0.04]"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-hover"
           >
             <X size={16} />
           </button>
@@ -65,7 +65,7 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
                       {shortcutLabels(command.shortcut, platform).map((label, index) => (
                         <kbd
                           key={`${command.id}-${index}`}
-                          className="rounded bg-black/[0.05] px-1.5 py-0.5 font-sans text-[11px] font-semibold text-ink-700"
+                          className="rounded bg-hover-strong px-1.5 py-0.5 font-sans text-[11px] font-semibold text-ink-700"
                         >
                           {label}
                         </kbd>

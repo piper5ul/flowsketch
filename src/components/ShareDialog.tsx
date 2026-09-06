@@ -175,15 +175,15 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="Share"
-        className="panel-in flex w-full max-w-lg flex-col gap-5 rounded-2xl bg-white p-5 shadow-[0_24px_60px_-12px_rgba(10,10,25,0.45)] ring-1 ring-black/[0.06]"
+        className="panel-in flex w-full max-w-lg flex-col gap-5 rounded-2xl bg-panel p-5 shadow-[0_24px_60px_-12px_rgba(10,10,25,0.45)] ring-1 ring-line"
       >
         <div className="flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold text-ink-950">Share</h2>
+          <h2 className="text-[15px] font-semibold text-ink-900">Share</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close share dialog"
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-black/[0.04] hover:text-ink-700"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
           >
             <X size={15} />
           </button>
@@ -261,7 +261,7 @@ function PublicLinkSection({
             value={shareUrl(token)}
             aria-label="Public link"
             onFocus={(event) => event.currentTarget.select()}
-            className="min-w-0 flex-1 rounded-lg bg-black/[0.03] px-2.5 py-1.5 text-[13px] text-ink-700 ring-1 ring-black/[0.05] outline-none"
+            className="min-w-0 flex-1 rounded-lg bg-hover-soft px-2.5 py-1.5 text-[13px] text-ink-700 ring-1 ring-line outline-none"
           />
           <button
             type="button"
@@ -276,7 +276,7 @@ function PublicLinkSection({
             type="button"
             onClick={() => onToggle(false)}
             disabled={busy}
-            className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-ink-600 transition hover:bg-black/[0.04] hover:text-ink-900 disabled:opacity-60"
+            className="rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-ink-600 transition hover:bg-hover hover:text-ink-900 disabled:opacity-60"
           >
             Turn off
           </button>
@@ -326,7 +326,7 @@ function MemberList({
                     disabled={busy}
                     aria-label={`Role for ${member.email}`}
                     onChange={(event) => onChangeRole(member, event.target.value as DiagramMemberRole)}
-                    className="rounded-lg bg-white px-2 py-1 text-[12px] text-ink-900 ring-1 ring-black/[0.08] outline-none focus:ring-accent-500/40"
+                    className="rounded-lg bg-panel px-2 py-1 text-[12px] text-ink-900 ring-1 ring-line-strong outline-none focus:ring-accent-500/40"
                   >
                     {MEMBER_ROLES.map((option) => (
                       <option key={option.value} value={option.value}>
@@ -339,7 +339,7 @@ function MemberList({
                     onClick={() => onRemove(member)}
                     disabled={busy}
                     aria-label={`Remove ${member.email}`}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-60"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-danger-wash hover:text-danger-ink disabled:opacity-60"
                   >
                     <X size={14} />
                   </button>
@@ -382,7 +382,7 @@ function InviteForm({
   );
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-2 border-t border-black/[0.06] pt-4">
+    <form onSubmit={submit} className="flex flex-col gap-2 border-t border-line pt-4">
       <h3 className="text-[13px] font-semibold text-ink-900">Invite by email</h3>
       <div className="flex items-center gap-2">
         <input
@@ -394,13 +394,13 @@ function InviteForm({
           }}
           aria-label="Invite by email"
           placeholder="name@example.com"
-          className="min-w-0 flex-1 rounded-lg bg-white px-2.5 py-1.5 text-[13px] text-ink-900 ring-1 ring-black/[0.08] outline-none placeholder:text-ink-600/40 focus:ring-accent-500/40"
+          className="min-w-0 flex-1 rounded-lg bg-panel px-2.5 py-1.5 text-[13px] text-ink-900 ring-1 ring-line-strong outline-none placeholder:text-ink-600/40 focus:ring-accent-500/40"
         />
         <select
           value={role}
           aria-label="Invite as"
           onChange={(event) => setRole(event.target.value as DiagramMemberRole)}
-          className="rounded-lg bg-white px-2 py-1.5 text-[12px] text-ink-900 ring-1 ring-black/[0.08] outline-none focus:ring-accent-500/40"
+          className="rounded-lg bg-panel px-2 py-1.5 text-[12px] text-ink-900 ring-1 ring-line-strong outline-none focus:ring-accent-500/40"
         >
           {MEMBER_ROLES.map((option) => (
             <option key={option.value} value={option.value}>
@@ -417,7 +417,7 @@ function InviteForm({
         </button>
       </div>
       {error && (
-        <p role="alert" className="text-[12px] font-medium text-red-600">
+        <p role="alert" className="text-[12px] font-medium text-danger-ink">
           {error}
         </p>
       )}

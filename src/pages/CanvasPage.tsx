@@ -217,7 +217,7 @@ export function CanvasPage() {
         <div className="max-w-md text-sm text-ink-600">{loadError}</div>
         <button
           type="button"
-          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-ink-700 hover:bg-gray-50"
+          className="rounded-md border border-line-strong bg-panel px-3 py-1.5 text-sm text-ink-700 transition hover:bg-hover"
           onClick={() => navigate('/')}
         >
           Back to diagrams

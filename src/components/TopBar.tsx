@@ -31,11 +31,11 @@ export function TopBar() {
   return (
     <>
     <div className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-center justify-between">
-      <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-white/95 py-1.5 pl-2 pr-2 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+      <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-panel/95 py-1.5 pl-2 pr-2 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <Tooltip label="Back to dashboard" side="bottom">
           <button
             onClick={() => navigate('/')}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-black/[0.04] hover:text-ink-700"
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
           >
             <ArrowLeft size={15} />
           </button>
@@ -57,7 +57,7 @@ export function TopBar() {
           <Tooltip label={starred ? 'Unstar' : 'Star'} side="bottom">
             <button
               onClick={toggleStar}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-black/[0.04] hover:text-ink-700"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
             >
               <Star size={15} className={clsx(starred && 'fill-yellow-400 text-yellow-400')} />
             </button>
@@ -90,10 +90,10 @@ function HistoryButton() {
 
   return (
     <div className="pointer-events-auto">
-      <div className="flex items-center gap-2 rounded-2xl bg-white/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+      <div className="flex items-center gap-2 rounded-2xl bg-panel/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-black/[0.04]"
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-hover"
         >
           <History size={15} /> History
         </button>
@@ -109,10 +109,10 @@ function ShareButton() {
 
   return (
     <div className="pointer-events-auto">
-      <div className="flex items-center gap-2 rounded-2xl bg-white/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+      <div className="flex items-center gap-2 rounded-2xl bg-panel/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <button
           onClick={() => setOpen(true)}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-black/[0.04]"
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-hover"
         >
           <Users size={15} /> Share
         </button>
@@ -165,9 +165,9 @@ function ConflictBanner() {
   return (
     <div
       role="alert"
-      className="pointer-events-auto absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-amber-50 px-3.5 py-2 text-[13px] text-amber-900 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.35)] ring-1 ring-amber-500/30"
+      className="pointer-events-auto absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-warn-wash px-3.5 py-2 text-[13px] text-warn-ink shadow-[0_10px_30px_-10px_rgba(20,20,50,0.35)] ring-1 ring-warn-ink/25"
     >
-      <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+      <AlertTriangle size={15} className="shrink-0 text-warn-ink" />
       <span>This diagram changed in another tab.</span>
       <button
         type="button"
@@ -181,7 +181,7 @@ function ConflictBanner() {
         type="button"
         onClick={overwrite}
         disabled={busy}
-        className="rounded-lg px-2.5 py-1 text-[13px] font-medium text-amber-900 underline-offset-2 transition hover:underline disabled:opacity-60"
+        className="rounded-lg px-2.5 py-1 text-[13px] font-medium text-warn-ink underline-offset-2 transition hover:underline disabled:opacity-60"
       >
         Overwrite
       </button>
@@ -253,10 +253,10 @@ function ExportMenu() {
 
   return (
     <div ref={menuRef} className="pointer-events-auto relative">
-      <div className="flex items-center gap-2 rounded-2xl bg-white/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+      <div className="flex items-center gap-2 rounded-2xl bg-panel/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-black/[0.04]"
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-hover"
         >
           <Download size={15} /> Export
         </button>
@@ -299,7 +299,7 @@ function ExportMenu() {
  */
 export function ViewOnlyPill() {
   return (
-    <span className="ml-1 flex items-center gap-1.5 rounded-full bg-ink-950/[0.06] px-2 py-0.5 text-xs font-medium text-ink-700">
+    <span className="ml-1 flex items-center gap-1.5 rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
       <Eye size={12} /> View only
     </span>
   );

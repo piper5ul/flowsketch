@@ -188,16 +188,16 @@ export function DashboardPage() {
     <TooltipProvider>
       <div className="min-h-screen bg-canvas">
         {/* Header */}
-        <header className="border-b border-black/[0.06] bg-white/80 backdrop-blur">
+        <header className="border-b border-line bg-panel/80 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-            <h1 className="text-lg font-bold text-ink-950">Whimsy</h1>
+            <h1 className="text-lg font-bold text-ink-900">Whimsy</h1>
             <div className="flex items-center gap-3">
               <span className="text-sm text-ink-600">{session?.user?.name || session?.user?.email}</span>
               <Tooltip label="Sign out" side="bottom">
                 <button
                   onClick={handleSignOut}
                   aria-label="Sign out"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-black/[0.04] hover:text-ink-900"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-hover hover:text-ink-900"
                 >
                   <LogOut size={16} />
                 </button>
@@ -225,7 +225,7 @@ export function DashboardPage() {
               />
               <button
                 onClick={() => fileInput.current?.click()}
-                className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-ink-700 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] transition hover:text-ink-900"
+                className="flex items-center gap-2 rounded-lg bg-panel px-4 py-2 text-sm font-semibold text-ink-700 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle transition hover:text-ink-900"
               >
                 <Upload size={16} />
                 Import
@@ -253,14 +253,14 @@ export function DashboardPage() {
                   onChange={(e) => setQuery(e.target.value)}
                   aria-label="Search diagrams"
                   placeholder="Search diagrams"
-                  className="w-full rounded-lg bg-white py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
+                  className="w-full rounded-lg bg-panel py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
                 />
               </div>
               <select
                 value={sort}
                 onChange={(e) => setSort(e.target.value as DiagramSort)}
                 aria-label="Sort diagrams"
-                className="rounded-lg bg-white px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] outline-none focus:ring-accent-500/40"
+                className="rounded-lg bg-panel px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none focus:ring-accent-500/40"
               >
                 {DIAGRAM_SORTS.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -340,10 +340,10 @@ function DiagramCard({
     <div
       // A card being renamed must not open the diagram under the input.
       onClick={renaming ? undefined : onOpen}
-      className="group cursor-pointer rounded-xl bg-white shadow-[0_1px_3px_rgba(20,20,50,0.08)] ring-1 ring-black/[0.04] transition hover:shadow-[0_4px_12px_rgba(20,20,50,0.12)] hover:ring-accent-500/30"
+      className="group cursor-pointer rounded-xl bg-panel shadow-[0_1px_3px_rgba(20,20,50,0.08)] ring-1 ring-line-subtle transition hover:shadow-[0_4px_12px_rgba(20,20,50,0.12)] hover:ring-accent-500/30"
     >
       {/* Thumbnail */}
-      <div className="flex h-36 items-center justify-center overflow-hidden rounded-t-xl bg-gradient-to-br from-canvas to-white">
+      <div className="flex h-36 items-center justify-center overflow-hidden rounded-t-xl bg-gradient-to-br from-canvas to-panel">
         {diagram.thumbnail ? (
           <img
             src={diagram.thumbnail}
@@ -368,7 +368,7 @@ function DiagramCard({
           )}
           <div className="flex shrink-0 items-center gap-0.5">
             {!isOwner && (
-              <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-[11px] font-medium text-ink-600">
+              <span className="rounded-full bg-hover-strong px-2 py-0.5 text-[11px] font-medium text-ink-600">
                 {diagram.role === 'editor' ? 'Can edit' : 'Can view'}
               </span>
             )}
@@ -395,7 +395,7 @@ function DiagramCard({
               </button>
               {menuOpen && (
                 <div
-                  className="absolute right-0 top-7 z-50 w-44 rounded-lg bg-white py-1 shadow-lg ring-1 ring-black/[0.08]"
+                  className="absolute right-0 top-7 z-50 w-44 rounded-lg bg-panel py-1 shadow-lg ring-1 ring-line-strong"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {confirmingDelete ? (
@@ -411,7 +411,7 @@ function DiagramCard({
                         </button>
                         <button
                           onClick={onCancelDelete}
-                          className="rounded-md px-2.5 py-1 text-xs font-medium text-ink-600 transition hover:bg-black/[0.04] hover:text-ink-900"
+                          className="rounded-md px-2.5 py-1 text-xs font-medium text-ink-600 transition hover:bg-hover hover:text-ink-900"
                         >
                           Cancel
                         </button>
@@ -421,19 +421,19 @@ function DiagramCard({
                     <>
                       <button
                         onClick={onRequestRename}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-black/[0.04]"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-hover"
                       >
                         <Pencil size={13} /> Rename
                       </button>
                       <button
                         onClick={onDuplicate}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-black/[0.04]"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-hover"
                       >
                         <Copy size={13} /> Duplicate
                       </button>
                       <button
                         onClick={onRequestDelete}
-                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-danger-ink hover:bg-danger-wash"
                       >
                         <Trash2 size={13} /> Delete
                       </button>
@@ -490,7 +490,7 @@ function RenameInput({
         }
       }}
       onBlur={() => (cancelled.current ? onCancel() : onCommit(value))}
-      className="min-w-0 flex-1 rounded border border-accent-500/40 bg-white px-1 py-0.5 text-sm font-medium text-ink-900 outline-none"
+      className="min-w-0 flex-1 rounded border border-accent-500/40 bg-panel px-1 py-0.5 text-sm font-medium text-ink-900 outline-none"
     />
   );
 }
@@ -503,11 +503,11 @@ function SkeletonGrid() {
   return (
     <div className={CARD_GRID} aria-hidden="true">
       {Array.from({ length: SKELETON_COUNT }, (_, i) => (
-        <div key={i} className="animate-pulse rounded-xl bg-white ring-1 ring-black/[0.04]">
-          <div className="h-36 rounded-t-xl bg-black/[0.05]" />
+        <div key={i} className="animate-pulse rounded-xl bg-panel ring-1 ring-line-subtle">
+          <div className="h-36 rounded-t-xl bg-hover-strong" />
           <div className="space-y-2 px-3 py-3">
-            <div className="h-3 w-2/3 rounded bg-black/[0.06]" />
-            <div className="h-2.5 w-1/3 rounded bg-black/[0.04]" />
+            <div className="h-3 w-2/3 rounded bg-hover-strong" />
+            <div className="h-2.5 w-1/3 rounded bg-hover" />
           </div>
         </div>
       ))}

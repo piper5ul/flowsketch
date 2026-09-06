@@ -140,31 +140,31 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
     <aside
       role="dialog"
       aria-label="Version history"
-      className="panel-in pointer-events-auto fixed right-0 top-0 z-30 flex h-screen w-[22rem] flex-col border-l border-black/[0.06] bg-white/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
+      className="panel-in pointer-events-auto fixed right-0 top-0 z-30 flex h-screen w-[22rem] flex-col border-l border-line bg-panel/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
     >
-      <header className="flex shrink-0 items-center justify-between border-b border-black/[0.06] px-4 py-3">
-        <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ink-950">
+      <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
+        <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ink-900">
           <History size={15} /> Version history
         </h2>
         <button
           type="button"
           onClick={onClose}
           aria-label="Close history"
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-black/[0.04] hover:text-ink-700"
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
         >
           <X size={15} />
         </button>
       </header>
 
       {!readOnly && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 py-3">
+        <div className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
           <input
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             maxLength={MAX_VERSION_LABEL_CHARS}
             aria-label="Snapshot label"
             placeholder="Label (optional)"
-            className="min-w-0 flex-1 rounded-lg bg-white px-2.5 py-1.5 text-[13px] text-ink-900 ring-1 ring-black/[0.08] outline-none placeholder:text-ink-600/40 focus:ring-accent-500/40"
+            className="min-w-0 flex-1 rounded-lg bg-panel px-2.5 py-1.5 text-[13px] text-ink-900 ring-1 ring-line-strong outline-none placeholder:text-ink-600/40 focus:ring-accent-500/40"
           />
           <button
             type="button"
@@ -235,7 +235,7 @@ function VersionRow({
   onRestore: () => void;
 }) {
   return (
-    <li className="rounded-lg px-2 py-2 transition hover:bg-black/[0.03]">
+    <li className="rounded-lg px-2 py-2 transition hover:bg-hover-soft">
       <p className="text-[13px] font-medium text-ink-900">{describeVersion(version)}</p>
       <p className="truncate text-[12px] text-ink-600/70">{version.title}</p>
       <div className="mt-1.5 flex items-center gap-2">
@@ -243,7 +243,7 @@ function VersionRow({
           type="button"
           onClick={onPreview}
           aria-expanded={previewOpen}
-          className="rounded-md px-2 py-0.5 text-[12px] font-medium text-ink-700 ring-1 ring-black/[0.08] transition hover:bg-black/[0.04]"
+          className="rounded-md px-2 py-0.5 text-[12px] font-medium text-ink-700 ring-1 ring-line-strong transition hover:bg-hover"
         >
           Preview
         </button>
@@ -251,7 +251,7 @@ function VersionRow({
           <button
             type="button"
             onClick={onRequestRestore}
-            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-ink-700 ring-1 ring-black/[0.08] transition hover:bg-black/[0.04]"
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-ink-700 ring-1 ring-line-strong transition hover:bg-hover"
           >
             <RotateCcw size={11} /> Restore
           </button>
@@ -259,11 +259,11 @@ function VersionRow({
       </div>
 
       {confirming && (
-        <div className="mt-2 rounded-lg bg-amber-50 px-2.5 py-2 ring-1 ring-amber-500/25">
+        <div className="mt-2 rounded-lg bg-warn-wash px-2.5 py-2 ring-1 ring-warn-ink/25">
           {/* Said out loud because it is the reassurance that makes the button
               pressable: the restore snapshots what it replaces before it
               writes, so this is never a one-way door. */}
-          <p className="mb-2 text-[12px] text-amber-900">
+          <p className="mb-2 text-[12px] text-warn-ink">
             Restore this version? Your current state is saved first.
           </p>
           <div className="flex items-center gap-2">
@@ -278,7 +278,7 @@ function VersionRow({
             <button
               type="button"
               onClick={onCancelRestore}
-              className="rounded-md px-2 py-0.5 text-[12px] font-medium text-amber-900 transition hover:bg-amber-100"
+              className="rounded-md px-2 py-0.5 text-[12px] font-medium text-warn-ink transition hover:bg-warn-ink/15"
             >
               Cancel
             </button>
@@ -292,7 +292,7 @@ function VersionRow({
 }
 
 /** Every preview draws in this box; the `viewBox` does the scaling. */
-const PREVIEW_CLASS = 'mt-2 flex h-40 items-center justify-center rounded-lg bg-canvas ring-1 ring-black/[0.06]';
+const PREVIEW_CLASS = 'mt-2 flex h-40 items-center justify-center rounded-lg bg-canvas ring-1 ring-line';
 
 /**
  * The version's own board, drawn small — boxes and centre-to-centre lines,
