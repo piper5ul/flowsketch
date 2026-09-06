@@ -17,6 +17,7 @@ import { useDiagramStore } from '../store/useDiagramStore';
 import { ColorPalette } from './ColorPalette';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
 import type { StrokeStyle } from '../types';
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
@@ -126,7 +127,7 @@ export function FloatingToolbar() {
 
   const isEdgeMode = selectedNodes.length === 0 && selectedEdges.length > 0;
   const activeStroke = isEdgeMode
-    ? selectedEdges[0]?.data?.stroke ?? '#6B7080'
+    ? selectedEdges[0]?.data?.stroke ?? DEFAULT_EDGE_STROKE
     : selectedNodes[0]?.data?.stroke ?? DEFAULT_SWATCH.stroke;
   const connectorType = selectedEdges[0]?.data?.connectorType ?? 'elbow';
   const strokeStyle = selectedEdges[0]?.data?.strokeStyle ?? 'solid';

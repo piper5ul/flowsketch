@@ -9,7 +9,7 @@ import {
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
-import type { ConnectorData } from '../types';
+import { makeEdgeData } from '../lib/defaults';
 import { renderDiagramPng } from '../lib/exportImage';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
@@ -73,7 +73,8 @@ export function Canvas() {
   const onNodeDragStart = useCallback(
     (event: MouseEvent | TouchEvent) => {
       if (!('altKey' in event) || !event.altKey) return;
-      useDiagramStore.getState().duplicateSelectedInPlace();
+      // Leave a copy behind and keep dragging the originals.
+      useDiagramStore.getState().duplicateSelection({ offset: 0, select: false });
     },
     [],
   );
@@ -91,14 +92,7 @@ export function Canvas() {
 
       if (connectorSourceRef.current === node.id) return;
 
-      const edgeData: ConnectorData = {
-        connectorType: defaultConnector,
-        stroke: '#6B7080',
-        strokeStyle: 'solid',
-        label: '',
-        startArrow: false,
-        endArrow: true,
-      };
+      const edgeData = makeEdgeData(defaultConnector);
       addEdges({
         id: nanoid(8),
         source: connectorSourceRef.current,
@@ -140,14 +134,7 @@ export function Canvas() {
             data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
           },
         ]);
-        const edgeData: ConnectorData = {
-          connectorType: defaultConnector,
-          stroke: '#6B7080',
-          strokeStyle: 'solid',
-          label: '',
-          startArrow: false,
-          endArrow: true,
-        };
+        const edgeData = makeEdgeData(defaultConnector);
         addEdges({
           id: nanoid(8),
           source: startId,
@@ -225,14 +212,7 @@ export function Canvas() {
         height,
         data: { label: '', shape: 'rectangle', fill: '#DCEAFB', stroke: '#3B82F6' },
       });
-      const edgeData: ConnectorData = {
-        connectorType: defaultConnector,
-        stroke: '#6B7080',
-        strokeStyle: 'solid',
-        label: '',
-        startArrow: false,
-        endArrow: true,
-      };
+      const edgeData = makeEdgeData(defaultConnector);
       addEdges({
         id: nanoid(8),
         source: connectionState.fromNode.id,

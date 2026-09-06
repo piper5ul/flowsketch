@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeMarkers, useDiagramStore } from './useDiagramStore';
+import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
+import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 
 const store = () => useDiagramStore.getState();
 
@@ -225,6 +226,33 @@ describe('nudgeSelected', () => {
     store().undo();
     expect(store().nodes).toHaveLength(0);
   });
+
+  it('leaves a locked node where it is', () => {
+    const locked = store().addShape('rectangle', { x: 0, y: 0 });
+    const free = store().addShape('rectangle', { x: 100, y: 100 });
+    select(locked);
+    store().toggleLock();
+
+    select(locked, free);
+    store().nudgeSelected(5, 5);
+
+    expect(store().nodes.find((n) => n.id === locked)!.position).toEqual({ x: 0, y: 0 });
+    expect(store().nodes.find((n) => n.id === free)!.position).toEqual({ x: 105, y: 105 });
+  });
+
+  it('records no history entry when every selected node is locked', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    store().toggleLock();
+
+    store().nudgeSelected(1, 0);
+    expect(store().nodes[0].position).toEqual({ x: 0, y: 0 });
+
+    // toggleLock pushed the last entry, so one undo must unlock the node
+    // rather than spend itself on a nudge that moved nothing.
+    store().undo();
+    expect(store().nodes[0].data.locked).toBeFalsy();
+  });
 });
 
 describe('duplicateSelection', () => {
@@ -257,6 +285,42 @@ describe('duplicateSelection', () => {
 
     store().undo();
     expect(store().nodes).toHaveLength(1);
+  });
+
+  // ⌥-drag duplicates in place: the clone is left behind, unselected and
+  // underneath, while the still-selected originals travel with the pointer.
+  describe('with { offset: 0, select: false }', () => {
+    it('clones selected nodes and the edges between them with fresh ids', () => {
+      const a = store().addShape('rectangle', { x: 0, y: 0 });
+      const b = store().addConnectedShape(a, 'right')!;
+      select(a, b);
+      store().duplicateSelection({ offset: 0, select: false });
+
+      expect(store().nodes).toHaveLength(4);
+      expect(store().edges).toHaveLength(2);
+      const allIds = new Set(store().nodes.map((n) => n.id));
+      expect(allIds.size).toBe(4);
+
+      const clonedEdge = store().edges.find((e) => e.source !== a)!;
+      expect(clonedEdge.source).not.toBe(a);
+      expect(clonedEdge.target).not.toBe(b);
+      expect(allIds.has(clonedEdge.source)).toBe(true);
+      expect(allIds.has(clonedEdge.target)).toBe(true);
+    });
+
+    it('leaves the clones unselected and behind the originals', () => {
+      const a = store().addShape('rectangle', { x: 40, y: 40 });
+      select(a);
+      store().duplicateSelection({ offset: 0, select: false });
+
+      const clone = store().nodes.find((n) => n.id !== a)!;
+      expect(clone.position).toEqual({ x: 40, y: 40 });
+      expect(clone.selected).toBe(false);
+      // Selection stays on the original so the drag that triggered this keeps
+      // moving it, and the clone renders underneath (earlier in the array).
+      expect(store().nodes.find((n) => n.id === a)!.selected).toBe(true);
+      expect(store().nodes[0].id).toBe(clone.id);
+    });
   });
 });
 
@@ -402,23 +466,35 @@ describe('addConnectedShape', () => {
   });
 });
 
-describe('duplicateSelectedInPlace', () => {
-  it('clones selected nodes and the edges between them with fresh ids', () => {
+describe('updateEdgeData', () => {
+  /** An edge with the default styling, plus the id of its source shape. */
+  function edgeId() {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
-    const b = store().addConnectedShape(a, 'right')!;
-    select(a, b);
-    store().duplicateSelectedInPlace();
+    store().addConnectedShape(a, 'right');
+    return store().edges[0].id;
+  }
 
-    expect(store().nodes).toHaveLength(4);
-    expect(store().edges).toHaveLength(2);
-    const allIds = new Set(store().nodes.map((n) => n.id));
-    expect(allIds.size).toBe(4);
+  it('recolors the arrowheads when the stroke changes', () => {
+    const id = edgeId();
+    store().updateEdgeData(id, { stroke: '#FF0000' });
+    expect(store().edges[0].markerEnd).toMatchObject({ color: '#FF0000' });
+  });
 
-    const clonedEdge = store().edges.find((e) => e.source !== a)!;
-    expect(clonedEdge.source).not.toBe(a);
-    expect(clonedEdge.target).not.toBe(b);
-    expect(allIds.has(clonedEdge.source)).toBe(true);
-    expect(allIds.has(clonedEdge.target)).toBe(true);
+  it('adds and removes arrowheads as the arrow flags change', () => {
+    const id = edgeId();
+    store().updateEdgeData(id, { startArrow: true });
+    expect(store().edges[0].markerStart).toBeDefined();
+
+    store().updateEdgeData(id, { endArrow: false });
+    expect(store().edges[0].markerEnd).toBeUndefined();
+    expect(store().edges[0].markerStart).toBeDefined();
+  });
+
+  it('leaves the markers alone for a patch that cannot affect them', () => {
+    const id = edgeId();
+    const before = store().edges[0].markerEnd;
+    store().updateEdgeData(id, { label: 'yes' });
+    expect(store().edges[0].markerEnd).toBe(before);
   });
 });
 
@@ -485,5 +561,36 @@ describe('loadDiagram', () => {
     expect(store().title).toBe('D');
     expect(store().starred).toBe(true);
     expect(store().edges[0].markerEnd).toMatchObject({ color: '#123456' });
+  });
+
+  it('runs the payload through the migrations', () => {
+    // A v0 node with no `type` — React Flow needs one to pick a renderer.
+    store().loadDiagram('d', 'D', false, { nodes: [{ id: 'n1', position: { x: 0, y: 0 } }], edges: [] });
+    expect(store().nodes[0].type).toBe('shape');
+  });
+
+  it('rejects a diagram from a newer version without touching the current one', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    expect(() =>
+      store().loadDiagram('d', 'D', false, { version: CURRENT_DIAGRAM_VERSION + 1, nodes: [], edges: [] }),
+    ).toThrow(/newer version/i);
+    expect(store().nodes.map((n) => n.id)).toEqual([id]);
+    expect(store().diagramId).toBe('test');
+  });
+});
+
+describe('serializeDiagram', () => {
+  it('stamps the saved JSON with the current format version', () => {
+    const id = store().addShape('rectangle', { x: 1, y: 2 });
+    const data = serializeDiagram(store().nodes, store().edges);
+    expect(data.version).toBe(CURRENT_DIAGRAM_VERSION);
+    expect(data.nodes).toMatchObject([{ id, type: 'shape', position: { x: 1, y: 2 } }]);
+  });
+
+  it('round-trips through the migration unchanged', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges)));
+    expect(migrateDiagramData(saved)).toEqual(saved);
   });
 });

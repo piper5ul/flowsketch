@@ -13,6 +13,7 @@ export function CanvasPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const loadDiagram = useDiagramStore((s) => s.loadDiagram);
 
   useEffect(() => {
@@ -22,15 +23,23 @@ export function CanvasPage() {
     // id moved on, and makes StrictMode's double-invocation harmless.
     let cancelled = false;
     setLoading(true);
+    setLoadError(null);
 
     api.getDiagram(id)
       .then((diagram) => {
         if (cancelled) return;
+        // Throws when the row was written by a newer build of the app; that is
+        // worth telling the user about rather than bouncing them silently.
         loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data);
         setLoading(false);
       })
-      .catch(() => {
+      .catch((err: unknown) => {
         if (cancelled) return;
+        if (err instanceof Error && err.message.includes('newer version')) {
+          setLoadError(err.message);
+          setLoading(false);
+          return;
+        }
         navigate('/', { replace: true });
       });
 
@@ -38,7 +47,7 @@ export function CanvasPage() {
   }, [id, loadDiagram, navigate]);
 
   useEffect(() => {
-    if (loading || !id) return;
+    if (loading || loadError || !id) return;
 
     const autosaver = createAutosaver({
       save: () => useDiagramStore.getState().saveDiagram(),
@@ -66,7 +75,25 @@ export function CanvasPage() {
       // Navigating away inside the debounce window must not drop the edit.
       void autosaver.flush();
     };
-  }, [loading, id]);
+  }, [loading, loadError, id]);
+
+  // Autosave is never armed in this branch, so the unreadable diagram cannot be
+  // overwritten by this build.
+  if (loadError) {
+    return (
+      <div className="flex h-screen w-screen flex-col items-center justify-center gap-3 bg-canvas px-6 text-center">
+        <div className="text-sm font-medium text-ink-900">This diagram was saved by a newer version</div>
+        <div className="max-w-md text-sm text-ink-600">{loadError}</div>
+        <button
+          type="button"
+          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-ink-700 hover:bg-gray-50"
+          onClick={() => navigate('/')}
+        >
+          Back to diagrams
+        </button>
+      </div>
+    );
+  }
 
   if (loading) {
     return (

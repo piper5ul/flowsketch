@@ -1,4 +1,9 @@
 export interface DiagramData {
+  /**
+   * Format version, written by `CURRENT_DIAGRAM_VERSION`. Absent on rows
+   * saved before versioning existed — `migrateDiagramData` reads those as v0.
+   */
+  version?: number;
   nodes: SerializedNode[];
   edges: SerializedEdge[];
 }
