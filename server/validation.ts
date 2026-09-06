@@ -9,6 +9,7 @@
  */
 import { z } from 'zod';
 import type { NextFunction, Request, Response } from 'express';
+import { MAX_THUMBNAIL_CHARS, THUMBNAIL_DATA_URL_PREFIX } from '../shared/types.js';
 
 /** Ceiling on `nodes` and `edges` per diagram. Well past any hand-drawn board. */
 export const MAX_ELEMENTS = 5000;
@@ -61,6 +62,18 @@ export const diagramData = z.object({
 
 const title = z.string().trim().min(1).max(MAX_TITLE_CHARS);
 
+/**
+ * A dashboard thumbnail, as the base64 PNG data URL the client renders. Kept
+ * to one format on purpose: the value is echoed straight into an `<img src>`,
+ * so anything the browser would treat as markup (an SVG data URL) or fetch
+ * from elsewhere (an http URL) has no business being stored here.
+ */
+const thumbnail = z
+  .string()
+  .max(MAX_THUMBNAIL_CHARS)
+  .startsWith(THUMBNAIL_DATA_URL_PREFIX, `Expected a ${THUMBNAIL_DATA_URL_PREFIX} data URL`)
+  .nullable();
+
 /** `POST /api/diagrams`. Both fields have server-side defaults. */
 export const createDiagramBody = z.strictObject({
   title: title.optional(),
@@ -73,10 +86,24 @@ export const updateDiagramBody = z
     title: title.optional(),
     data: diagramData.optional(),
     starred: z.boolean().optional(),
+    thumbnail: thumbnail.optional(),
   })
   .refine((body) => Object.keys(body).length > 0, {
-    error: 'Expected at least one of title, data or starred',
+    error: 'Expected at least one of title, data, starred or thumbnail',
   });
+
+/** Appended by `POST /api/diagrams/:id/duplicate`. */
+export const COPY_SUFFIX = ' (copy)';
+
+/**
+ * Names the copy a duplicate produces. Duplicating a diagram whose title is
+ * already at the limit must not create a row the API would then refuse to
+ * accept back, so the original is trimmed to make room for the suffix.
+ */
+export function copyTitle(title: string): string {
+  const room = MAX_TITLE_CHARS - COPY_SUFFIX.length;
+  return `${title.length > room ? title.slice(0, room).trimEnd() : title}${COPY_SUFFIX}`;
+}
 
 export type CreateDiagramBody = z.infer<typeof createDiagramBody>;
 export type UpdateDiagramBody = z.infer<typeof updateDiagramBody>;

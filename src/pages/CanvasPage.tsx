@@ -7,6 +7,8 @@ import { TooltipProvider } from '../components/Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { api } from '../lib/api';
 import { createAutosaver } from '../lib/autosave';
+import { renderDiagramPng } from '../lib/exportImage';
+import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
 
 const AUTOSAVE_DELAY_MS = 2000;
 
@@ -55,9 +57,27 @@ export function CanvasPage() {
       delayMs: AUTOSAVE_DELAY_MS,
     });
 
+    // The dashboard card's preview. Rate-limited rather than debounced: one
+    // rasterisation of the whole canvas per interval, not one per edit.
+    //
+    // A capture reads whatever canvas is on screen, so /d/A -> /d/B (which
+    // re-runs this effect rather than remounting) could otherwise render B and
+    // store it as A's thumbnail. Both ends of the capture check the store still
+    // holds this diagram.
+    const isCurrent = () => useDiagramStore.getState().diagramId === id;
+    const thumbnails = createThumbnailScheduler({
+      render: () =>
+        isCurrent()
+          ? renderDiagramPng({ pixelRatio: 1, maxSide: THUMBNAIL_MAX_SIDE, preserveSelection: true })
+          : Promise.resolve(null),
+      save: (thumbnail) => (isCurrent() ? api.saveDiagram(id, { thumbnail }) : Promise.resolve()),
+    });
+
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
       if (state.nodes === prev.nodes && state.edges === prev.edges && state.title === prev.title) return;
       autosaver.schedule();
+      // A retitle does not change the picture, so only shape edits mark it stale.
+      if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
     });
 
     // The tab can go away without unmounting the page (close, back/forward
@@ -75,6 +95,11 @@ export function CanvasPage() {
       unsubscribe();
       // Navigating away inside the debounce window must not drop the edit.
       void autosaver.flush();
+      // Best-effort: the capture reads the live canvas, so it only produces a
+      // thumbnail while the viewport is still mounted. `renderDiagramPng`
+      // returns null once it is gone, which the scheduler treats as "nothing
+      // to save" rather than an error.
+      void thumbnails.flush();
     };
   }, [loading, loadError, id]);
 

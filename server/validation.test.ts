@@ -4,11 +4,13 @@ import request from 'supertest';
 import {
   MAX_ELEMENTS,
   MAX_TITLE_CHARS,
+  copyTitle,
   createDiagramBody,
   diagramData,
   updateDiagramBody,
   validateBody,
 } from './validation.js';
+import { MAX_THUMBNAIL_CHARS, THUMBNAIL_DATA_URL_PREFIX } from '../shared/types.js';
 
 /** The shape the client actually serializes (see `serializeNodes` in the store). */
 const node = { id: 'n1', type: 'shape', position: { x: 1, y: 2 }, width: 120, height: 60, data: { label: 'Hi' } };
@@ -106,6 +108,55 @@ describe('updateDiagramBody', () => {
 
   it('rejects a non-boolean starred', () => {
     expect(updateDiagramBody.safeParse({ starred: 'yes' }).success).toBe(false);
+  });
+});
+
+describe('updateDiagramBody — thumbnail', () => {
+  const png = `${THUMBNAIL_DATA_URL_PREFIX}iVBORw0KGgo=`;
+
+  it('accepts a PNG data URL', () => {
+    expect(updateDiagramBody.safeParse({ thumbnail: png }).success).toBe(true);
+  });
+
+  it('accepts null, which clears the stored thumbnail', () => {
+    expect(updateDiagramBody.safeParse({ thumbnail: null }).success).toBe(true);
+  });
+
+  it('rejects anything that is not a base64 PNG data URL', () => {
+    for (const thumbnail of [
+      'data:image/jpeg;base64,/9j/4AAQ',
+      'data:image/svg+xml;base64,PHN2Zz4=',
+      'https://example.test/thumb.png',
+      'iVBORw0KGgo=',
+      7,
+    ]) {
+      expect(updateDiagramBody.safeParse({ thumbnail }).success).toBe(false);
+    }
+  });
+
+  it(`rejects a thumbnail longer than ${MAX_THUMBNAIL_CHARS} characters`, () => {
+    const pad = MAX_THUMBNAIL_CHARS - THUMBNAIL_DATA_URL_PREFIX.length;
+    const atLimit = THUMBNAIL_DATA_URL_PREFIX + 'A'.repeat(pad);
+    expect(updateDiagramBody.safeParse({ thumbnail: atLimit }).success).toBe(true);
+    expect(updateDiagramBody.safeParse({ thumbnail: `${atLimit}A` }).success).toBe(false);
+  });
+});
+
+describe('copyTitle', () => {
+  it('suffixes the original title', () => {
+    expect(copyTitle('Roadmap')).toBe('Roadmap (copy)');
+  });
+
+  it('suffixes a copy again rather than collapsing the chain', () => {
+    expect(copyTitle('Roadmap (copy)')).toBe('Roadmap (copy) (copy)');
+  });
+
+  it('trims the original so the copy still fits the title limit', () => {
+    const copy = copyTitle('x'.repeat(MAX_TITLE_CHARS));
+    expect(copy).toHaveLength(MAX_TITLE_CHARS);
+    expect(copy.endsWith(' (copy)')).toBe(true);
+    // And the result is a title the API would accept back.
+    expect(createDiagramBody.safeParse({ title: copy }).success).toBe(true);
   });
 });
 

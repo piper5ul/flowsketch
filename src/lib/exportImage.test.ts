@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeExportViewport } from './exportImage';
+import { computeExportViewport, insertSvgBackground } from './exportImage';
 
 const opts = { padding: 20, pixelRatio: 2 };
 
@@ -59,5 +59,28 @@ describe('computeExportViewport', () => {
     const { width, viewport } = computeExportViewport(big, { padding: 0, pixelRatio: 4, maxSide: 20000 });
     expect(viewport.zoom).toBeLessThan(1);
     expect(width * 4).toBeLessThanOrEqual(16384);
+  });
+});
+
+describe('insertSvgBackground', () => {
+  const url = (svg: string) => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+  const decode = (dataUrl: string) =>
+    decodeURIComponent(dataUrl.replace('data:image/svg+xml;charset=utf-8,', ''));
+
+  it('paints a full-size rect as the first child of the root', () => {
+    const painted = decode(insertSvgBackground(url('<svg width="10" height="5"><g/></svg>'), '#f6f7fb'));
+    expect(painted).toBe('<svg width="10" height="5"><rect width="100%" height="100%" fill="#f6f7fb"/><g/></svg>');
+  });
+
+  it('keeps the attributes the root tag came with', () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 5"><foreignObject/></svg>';
+    expect(decode(insertSvgBackground(url(svg), 'red'))).toContain(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 5"><rect width="100%" height="100%" fill="red"/>',
+    );
+  });
+
+  it('leaves a data URL it does not understand alone', () => {
+    expect(insertSvgBackground('data:image/png;base64,AAAA', 'red')).toBe('data:image/png;base64,AAAA');
+    expect(insertSvgBackground(url('not markup'), 'red')).toBe(url('not markup'));
   });
 });

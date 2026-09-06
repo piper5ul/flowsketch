@@ -1,5 +1,6 @@
 import { getNodesBounds } from '@xyflow/react';
-import { toPng } from 'html-to-image';
+import { toPng, toSvg } from 'html-to-image';
+import type { Options as HtmlToImageOptions } from 'html-to-image/lib/types';
 import { useDiagramStore } from '../store/useDiagramStore';
 
 export interface Rect {
@@ -105,14 +106,30 @@ async function waitForSelectionCleared(): Promise<void> {
   }
 }
 
+export interface CaptureOptions {
+  pixelRatio?: number;
+  background?: string;
+  maxSide?: number;
+  /**
+   * Keeps the user's selection on screen during the capture. Clearing it is
+   * right for an export the user asked for, but a background capture (the
+   * dashboard thumbnail) must not make the selection ring and the floating
+   * toolbar blink mid-edit — a ring baked into a 480 px preview is the
+   * cheaper of the two costs.
+   */
+  preserveSelection?: boolean;
+}
+
+/** `toPng` / `toSvg`: what the shared capture hands the framed viewport to. */
+type Renderer = (node: HTMLElement, options: HtmlToImageOptions) => Promise<string>;
+
 /**
- * Renders the whole diagram to a PNG data URL, framed to its content rather
- * than to whatever the viewport happens to show. Returns null for an empty
- * diagram so callers can skip downloading a blank image.
+ * Frames the whole diagram by its content rather than by whatever the viewport
+ * happens to show, hides the editing chrome, and hands the result to `render`.
+ * Returns null for an empty diagram, so callers can skip downloading a blank
+ * image. Every format goes through here, so they all frame identically.
  */
-export async function renderDiagramPng(
-  options: { pixelRatio?: number; background?: string } = {},
-): Promise<string | null> {
+async function captureDiagram(render: Renderer, options: CaptureOptions): Promise<string | null> {
   const { nodes, edges } = useDiagramStore.getState();
   if (nodes.length === 0) return null;
 
@@ -123,6 +140,7 @@ export async function renderDiagramPng(
   const { width, height, viewport } = computeExportViewport(getNodesBounds(nodes), {
     padding: EXPORT_PADDING,
     pixelRatio,
+    maxSide: options.maxSide,
   });
 
   // Selection rings and the handles they reveal are UI, not diagram. Clear the
@@ -130,7 +148,8 @@ export async function renderDiagramPng(
   // export never costs the user an undo step.
   const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
   const selectedEdgeIds = new Set(edges.filter((e) => e.selected).map((e) => e.id));
-  const hadSelection = selectedNodeIds.size > 0 || selectedEdgeIds.size > 0;
+  const hadSelection =
+    !options.preserveSelection && (selectedNodeIds.size > 0 || selectedEdgeIds.size > 0);
 
   // Shapes transition their box-shadow, so a selection ring fades out over
   // several frames and would be captured mid-fade. Freeze transitions first,
@@ -146,7 +165,7 @@ export async function renderDiagramPng(
   }
 
   try {
-    return await toPng(viewportEl, {
+    return await render(viewportEl, {
       width,
       height,
       backgroundColor: options.background ?? DEFAULT_BACKGROUND,
@@ -167,4 +186,47 @@ export async function renderDiagramPng(
       }));
     }
   }
+}
+
+/** The diagram as a PNG data URL. */
+export function renderDiagramPng(options: CaptureOptions = {}): Promise<string | null> {
+  return captureDiagram(toPng, options);
+}
+
+/** The data URL prefix `html-to-image`'s `toSvg` produces. */
+const SVG_DATA_URL_PREFIX = 'data:image/svg+xml;charset=utf-8,';
+
+/**
+ * Paints `color` behind an SVG data URL.
+ *
+ * `toSvg` puts `backgroundColor` on the cloned node, which the export then
+ * translates and scales to frame the diagram — so the fill lands somewhere
+ * inside the image instead of behind all of it. A `<rect>` in the SVG's own
+ * coordinate system covers the document however the contents are transformed.
+ */
+export function insertSvgBackground(dataUrl: string, color: string): string {
+  if (!dataUrl.startsWith(SVG_DATA_URL_PREFIX)) return dataUrl;
+  const svg = decodeURIComponent(dataUrl.slice(SVG_DATA_URL_PREFIX.length));
+  const rootTagEnd = svg.indexOf('>');
+  if (!svg.startsWith('<svg') || rootTagEnd === -1) return dataUrl;
+  const painted =
+    svg.slice(0, rootTagEnd + 1) +
+    `<rect width="100%" height="100%" fill="${color}"/>` +
+    svg.slice(rootTagEnd + 1);
+  return SVG_DATA_URL_PREFIX + encodeURIComponent(painted);
+}
+
+/**
+ * The diagram as an SVG data URL.
+ *
+ * `html-to-image` builds this by wrapping the cloned DOM in a `foreignObject`,
+ * so it is a browser-renderable document rather than editable vector art —
+ * good for embedding in a page or a wiki, not for opening in Illustrator.
+ */
+export async function renderDiagramSvg(options: CaptureOptions = {}): Promise<string | null> {
+  // The capture leaves the background off and it is painted in afterwards, in
+  // the SVG's own coordinates. See `insertSvgBackground`.
+  const dataUrl = await captureDiagram(toSvg, { ...options, background: 'transparent' });
+  if (dataUrl === null) return null;
+  return insertSvgBackground(dataUrl, options.background ?? DEFAULT_BACKGROUND);
 }

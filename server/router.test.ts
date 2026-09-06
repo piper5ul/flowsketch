@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthUser } from './types.js';
+import { MAX_THUMBNAIL_CHARS, THUMBNAIL_DATA_URL_PREFIX } from '../shared/types.js';
+import { MAX_TITLE_CHARS } from './validation.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-router-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -54,7 +56,9 @@ const { apiRouter } = await import('./router.js');
 const { imagePath } = await import('./storage.js');
 
 const app = express();
-app.use('/api', express.json());
+// The same body limit `server/index.ts` mounts, so a body the real server
+// would parse (a 200 KB thumbnail) is not turned into a 413 by the harness.
+app.use('/api', express.json({ limit: '5mb' }));
 app.use('/api', apiRouter);
 
 const owned = { id: 'd1', userId: 'u1', title: 'Mine', starred: false, data: { nodes: [], edges: [] } };
@@ -77,6 +81,7 @@ describe('auth gate', () => {
     await request(app).put('/api/diagrams/d1').send({}).expect(401);
     await request(app).delete('/api/diagrams/d1').expect(401);
     await request(app).patch('/api/diagrams/d1/star').expect(401);
+    await request(app).post('/api/diagrams/d1/duplicate').expect(401);
     expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 });
@@ -90,6 +95,13 @@ describe('GET /api/diagrams', () => {
     expect(prismaMock.diagram.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { userId: 'u1' }, orderBy: { updatedAt: 'desc' } }),
     );
+  });
+
+  it('includes createdAt, which the dashboard offers as a sort order', async () => {
+    prismaMock.diagram.findMany.mockResolvedValue([]);
+    await request(app).get('/api/diagrams').expect(200);
+    const [{ select }] = prismaMock.diagram.findMany.mock.calls[0] as [{ select: object }];
+    expect(select).toMatchObject({ createdAt: true });
   });
 });
 
@@ -153,6 +165,37 @@ describe('PUT /api/diagrams/:id', () => {
   it('refuses to update a diagram the caller does not own', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
     await request(app).put('/api/diagrams/d1').send({ title: 'Hijack' }).expect(404);
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('writes a thumbnail without touching the diagram itself', async () => {
+    const thumbnail = `${THUMBNAIL_DATA_URL_PREFIX}iVBORw0KGgo=`;
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, thumbnail });
+    await request(app).put('/api/diagrams/d1').send({ thumbnail }).expect(200);
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { thumbnail } });
+  });
+
+  it('clears the thumbnail when it is sent as null', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, thumbnail: null });
+    await request(app).put('/api/diagrams/d1').send({ thumbnail: null }).expect(200);
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { thumbnail: null } });
+  });
+
+  it('rejects a thumbnail that is not a PNG data URL', async () => {
+    const res = await request(app)
+      .put('/api/diagrams/d1')
+      .send({ thumbnail: 'data:image/svg+xml;base64,PHN2Zz4=' })
+      .expect(400);
+    expect(res.body.issues[0]).toMatchObject({ path: 'thumbnail' });
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized thumbnail before it reaches the database', async () => {
+    const huge = THUMBNAIL_DATA_URL_PREFIX + 'A'.repeat(MAX_THUMBNAIL_CHARS);
+    await request(app).put('/api/diagrams/d1').send({ thumbnail: huge }).expect(400);
+    expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 });
@@ -263,6 +306,51 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
 
     await request(app).delete('/api/diagrams/d1').expect(204);
+  });
+});
+
+describe('POST /api/diagrams/:id/duplicate', () => {
+  const source = {
+    title: 'Roadmap',
+    data: { nodes: [{ id: 'n1' }], edges: [] },
+    thumbnail: `${THUMBNAIL_DATA_URL_PREFIX}iVBORw0KGgo=`,
+  };
+
+  it('creates an unstarred copy of the diagram, thumbnail included', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(source);
+    prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'd2', ...data }));
+
+    const res = await request(app).post('/api/diagrams/d1/duplicate').expect(201);
+
+    expect(res.body).toMatchObject({ id: 'd2', title: 'Roadmap (copy)', data: source.data });
+    expect(prismaMock.diagram.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'u1',
+        title: 'Roadmap (copy)',
+        data: source.data,
+        thumbnail: source.thumbnail,
+        starred: false,
+      },
+    });
+  });
+
+  it('looks the source up under the caller, so another user\'s diagram is a 404', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(null);
+    await request(app).post('/api/diagrams/someone-elses/duplicate').expect(404);
+    expect(prismaMock.diagram.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'someone-elses', userId: 'u1' } }),
+    );
+    expect(prismaMock.diagram.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps the copied title inside the length the API accepts', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ ...source, title: 'x'.repeat(MAX_TITLE_CHARS) });
+    prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'd2', ...data }));
+
+    const res = await request(app).post('/api/diagrams/d1/duplicate').expect(201);
+
+    expect(res.body.title).toHaveLength(MAX_TITLE_CHARS);
+    expect(res.body.title.endsWith(' (copy)')).toBe(true);
   });
 });
 

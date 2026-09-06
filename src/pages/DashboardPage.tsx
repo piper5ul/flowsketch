@@ -1,21 +1,54 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Star, Trash2, LogOut, MoreHorizontal, FileText } from 'lucide-react';
+import {
+  Plus,
+  Star,
+  Trash2,
+  LogOut,
+  MoreHorizontal,
+  FileText,
+  RotateCw,
+  Copy,
+  Pencil,
+  Search,
+  Upload,
+} from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
-import type { DiagramMeta } from '../../shared/types';
+import { DIAGRAM_SORTS, filterDiagrams, loadDiagrams, sortDiagrams, type DiagramSort } from '../lib/diagramList';
+import { parseDiagramExport } from '../lib/diagramFile';
+import { migrateDiagramData } from '../lib/diagramMigrations';
+import type { DiagramData, DiagramMeta } from '../../shared/types';
 import { Tooltip, TooltipProvider } from '../components/Tooltip';
 import { Toasts } from '../components/Toasts';
 import { toastError } from '../store/useToastStore';
+
+/** How many placeholder cards fill the grid while the list is loading. */
+const SKELETON_COUNT = 8;
+
+/** Shared by the real cards and their loading placeholders. */
+const CARD_GRID = 'grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4';
+
+type ListState = 'loading' | 'ready' | 'error';
 
 export function DashboardPage() {
   const { data: session } = useSession();
   const navigate = useNavigate();
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [listState, setListState] = useState<ListState>('loading');
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   // Set to a diagram id while its menu is showing the delete confirmation.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  // Set to a diagram id while its title is being edited in place.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<DiagramSort>('updated');
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const visible = useMemo(
+    () => sortDiagrams(filterDiagrams(diagrams, query), sort),
+    [diagrams, query, sort],
+  );
 
   // Opening or closing a menu always drops any confirmation it was showing, so
   // a menu never reopens mid-confirm.
@@ -24,16 +57,46 @@ export function DashboardPage() {
     setConfirmingDelete(null);
   }, []);
 
-  useEffect(() => {
-    api.listDiagrams().then((d) => {
-      setDiagrams(d);
-      setLoading(false);
-    });
+  const refresh = useCallback(async () => {
+    setListState('loading');
+    const result = await loadDiagrams();
+    if (!result.ok) {
+      setListState('error');
+      return;
+    }
+    setDiagrams(result.diagrams);
+    setListState('ready');
   }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const createDiagram = useCallback(async () => {
     const diagram = await api.createDiagram();
     navigate(`/d/${diagram.id}`);
+  }, [navigate]);
+
+  const importDiagram = useCallback(async (file: File) => {
+    let title: string;
+    let data: DiagramData;
+    try {
+      const parsed = parseDiagramExport(await file.text());
+      title = parsed.title;
+      // The same door every stored diagram comes through: an older file is
+      // upgraded, one from a newer build is refused with its own message.
+      data = migrateDiagramData(parsed.data);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Could not read that file.');
+      return;
+    }
+
+    try {
+      const created = await api.createDiagram(title, data);
+      navigate(`/d/${created.id}`);
+    } catch {
+      toastError('Could not import the diagram. Please try again.');
+    }
   }, [navigate]);
 
   const toggleStar = useCallback(async (id: string, e: React.MouseEvent) => {
@@ -55,6 +118,33 @@ export function DashboardPage() {
     }
     openMenu(null);
   }, [openMenu]);
+
+  const duplicateDiagram = useCallback(async (id: string) => {
+    openMenu(null);
+    try {
+      const copy = await api.duplicateDiagram(id);
+      setDiagrams((prev) => [copy, ...prev]);
+    } catch {
+      toastError('Could not duplicate the diagram. Please try again.');
+    }
+  }, [openMenu]);
+
+  /** Commits an inline rename. An unchanged or emptied title is left alone. */
+  const renameDiagram = useCallback(async (id: string, title: string) => {
+    setRenaming(null);
+    const next = title.trim();
+    const current = diagrams.find((d) => d.id === id);
+    if (!current || next === '' || next === current.title) return;
+    // Optimistic: the card is being typed into, so it has to follow the
+    // keystrokes rather than the round trip.
+    setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, title: next } : d)));
+    try {
+      await api.saveDiagram(id, { title: next });
+    } catch {
+      setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, title: current.title } : d)));
+      toastError('Could not rename the diagram. Please try again.');
+    }
+  }, [diagrams]);
 
   const handleSignOut = useCallback(async () => {
     await signOut();
@@ -86,33 +176,94 @@ export function DashboardPage() {
         <main className="mx-auto max-w-6xl px-6 py-8">
           <div className="mb-6 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-ink-900">My Diagrams</h2>
-            <button
-              onClick={createDiagram}
-              className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
-            >
-              <Plus size={16} />
-              New Diagram
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInput}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  // Cleared so picking the same file twice fires `change` again.
+                  e.target.value = '';
+                  if (file) void importDiagram(file);
+                }}
+              />
+              <button
+                onClick={() => fileInput.current?.click()}
+                className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-ink-700 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] transition hover:text-ink-900"
+              >
+                <Upload size={16} />
+                Import
+              </button>
+              <button
+                onClick={createDiagram}
+                className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
+              >
+                <Plus size={16} />
+                New Diagram
+              </button>
+            </div>
           </div>
 
-          {loading ? (
-            <div className="py-20 text-center text-sm text-ink-600">Loading...</div>
+          {listState === 'ready' && diagrams.length > 0 && (
+            <div className="mb-4 flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  size={14}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-600/50"
+                />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="Search diagrams"
+                  placeholder="Search diagrams"
+                  className="w-full rounded-lg bg-white py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
+                />
+              </div>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as DiagramSort)}
+                aria-label="Sort diagrams"
+                className="rounded-lg bg-white px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] outline-none focus:ring-accent-500/40"
+              >
+                {DIAGRAM_SORTS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {listState === 'loading' ? (
+            <SkeletonGrid />
+          ) : listState === 'error' ? (
+            <ErrorState onRetry={refresh} />
           ) : diagrams.length === 0 ? (
             <EmptyState onCreate={createDiagram} />
+          ) : visible.length === 0 ? (
+            <p className="py-20 text-center text-sm text-ink-600">No diagrams match “{query.trim()}”.</p>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-              {diagrams.map((d) => (
+            <div className={CARD_GRID}>
+              {visible.map((d) => (
                 <DiagramCard
                   key={d.id}
                   diagram={d}
                   menuOpen={menuOpen === d.id}
                   confirmingDelete={confirmingDelete === d.id}
+                  renaming={renaming === d.id}
                   onOpen={() => navigate(`/d/${d.id}`)}
                   onToggleStar={(e) => toggleStar(d.id, e)}
                   onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
                   onRequestDelete={() => setConfirmingDelete(d.id)}
                   onCancelDelete={() => openMenu(null)}
                   onDelete={() => deleteDiagram(d.id)}
+                  onDuplicate={() => duplicateDiagram(d.id)}
+                  onRequestRename={() => { openMenu(null); setRenaming(d.id); }}
+                  onCommitRename={(title) => renameDiagram(d.id, title)}
+                  onCancelRename={() => setRenaming(null)}
                 />
               ))}
             </div>
@@ -129,39 +280,65 @@ function DiagramCard({
   diagram,
   menuOpen,
   confirmingDelete,
+  renaming,
   onOpen,
   onToggleStar,
   onMenuToggle,
   onRequestDelete,
   onCancelDelete,
   onDelete,
+  onDuplicate,
+  onRequestRename,
+  onCommitRename,
+  onCancelRename,
 }: {
   diagram: DiagramMeta;
   menuOpen: boolean;
   confirmingDelete: boolean;
+  renaming: boolean;
   onOpen: () => void;
   onToggleStar: (e: React.MouseEvent) => void;
   onMenuToggle: () => void;
   onRequestDelete: () => void;
   onCancelDelete: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
+  onRequestRename: () => void;
+  onCommitRename: (title: string) => void;
+  onCancelRename: () => void;
 }) {
   const timeAgo = formatRelativeTime(diagram.updatedAt);
 
   return (
     <div
-      onClick={onOpen}
+      // A card being renamed must not open the diagram under the input.
+      onClick={renaming ? undefined : onOpen}
       className="group cursor-pointer rounded-xl bg-white shadow-[0_1px_3px_rgba(20,20,50,0.08)] ring-1 ring-black/[0.04] transition hover:shadow-[0_4px_12px_rgba(20,20,50,0.12)] hover:ring-accent-500/30"
     >
       {/* Thumbnail */}
-      <div className="flex h-36 items-center justify-center rounded-t-xl bg-gradient-to-br from-canvas to-white">
-        <FileText size={32} className="text-ink-600/30" />
+      <div className="flex h-36 items-center justify-center overflow-hidden rounded-t-xl bg-gradient-to-br from-canvas to-white">
+        {diagram.thumbnail ? (
+          <img
+            src={diagram.thumbnail}
+            alt=""
+            // `contain`, so a wide board and a tall one are both shown whole
+            // rather than cropped to the card.
+            className="h-full w-full object-contain"
+            draggable={false}
+          />
+        ) : (
+          <FileText size={32} className="text-ink-600/30" />
+        )}
       </div>
 
       {/* Info */}
       <div className="px-3 py-2.5">
         <div className="flex items-center justify-between">
-          <p className="truncate text-sm font-medium text-ink-900">{diagram.title}</p>
+          {renaming ? (
+            <RenameInput title={diagram.title} onCommit={onCommitRename} onCancel={onCancelRename} />
+          ) : (
+            <p className="truncate text-sm font-medium text-ink-900">{diagram.title}</p>
+          )}
           <div className="flex shrink-0 items-center gap-0.5">
             <button
               onClick={onToggleStar}
@@ -202,12 +379,26 @@ function DiagramCard({
                       </div>
                     </div>
                   ) : (
-                    <button
-                      onClick={onRequestDelete}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 size={13} /> Delete
-                    </button>
+                    <>
+                      <button
+                        onClick={onRequestRename}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-black/[0.04]"
+                      >
+                        <Pencil size={13} /> Rename
+                      </button>
+                      <button
+                        onClick={onDuplicate}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-black/[0.04]"
+                      >
+                        <Copy size={13} /> Duplicate
+                      </button>
+                      <button
+                        onClick={onRequestDelete}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -216,6 +407,84 @@ function DiagramCard({
         </div>
         <p className="mt-0.5 text-xs text-ink-600/60">{timeAgo}</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The card title, in place, while it is being renamed.
+ *
+ * Enter and Escape both leave through blur, so there is exactly one commit
+ * path however the edit ends — clicking elsewhere included.
+ */
+function RenameInput({
+  title,
+  onCommit,
+  onCancel,
+}: {
+  title: string;
+  onCommit: (title: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(title);
+  // A ref, not state: `blur()` dispatches its event synchronously, so a state
+  // update made just before it would not be visible to the blur handler.
+  const cancelled = useRef(false);
+
+  return (
+    <input
+      autoFocus
+      value={value}
+      aria-label="Diagram title"
+      onChange={(e) => setValue(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
+          cancelled.current = true;
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={() => (cancelled.current ? onCancel() : onCommit(value))}
+      className="min-w-0 flex-1 rounded border border-accent-500/40 bg-white px-1 py-0.5 text-sm font-medium text-ink-900 outline-none"
+    />
+  );
+}
+
+/**
+ * Card-shaped placeholders in the same grid the real cards land in, so the
+ * layout does not jump once the list arrives.
+ */
+function SkeletonGrid() {
+  return (
+    <div className={CARD_GRID} aria-hidden="true">
+      {Array.from({ length: SKELETON_COUNT }, (_, i) => (
+        <div key={i} className="animate-pulse rounded-xl bg-white ring-1 ring-black/[0.04]">
+          <div className="h-36 rounded-t-xl bg-black/[0.05]" />
+          <div className="space-y-2 px-3 py-3">
+            <div className="h-3 w-2/3 rounded bg-black/[0.06]" />
+            <div className="h-2.5 w-1/3 rounded bg-black/[0.04]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center py-20">
+      <h3 className="mb-1 text-base font-semibold text-ink-900">Could not load your diagrams</h3>
+      <p className="mb-5 text-sm text-ink-600">The server did not answer. Your work is safe.</p>
+      <button
+        onClick={onRetry}
+        className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
+      >
+        <RotateCw size={16} />
+        Retry
+      </button>
     </div>
   );
 }

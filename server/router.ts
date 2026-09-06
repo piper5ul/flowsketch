@@ -5,6 +5,7 @@ import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { authedUser } from './types.js';
 import {
+  copyTitle,
   createDiagramBody,
   updateDiagramBody,
   validateBody,
@@ -20,7 +21,14 @@ apiRouter.get('/diagrams', async (req, res) => {
   const userId = authedUser(req).id;
   const diagrams = await prisma.diagram.findMany({
     where: { userId },
-    select: { id: true, title: true, starred: true, updatedAt: true, thumbnail: true },
+    select: {
+      id: true,
+      title: true,
+      starred: true,
+      createdAt: true,
+      updatedAt: true,
+      thumbnail: true,
+    },
     orderBy: { updatedAt: 'desc' },
   });
   res.json(diagrams);
@@ -70,13 +78,14 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    const { title, data, starred } = req.body;
+    const { title, data, starred, thumbnail } = req.body;
     const updated = await prisma.diagram.update({
       where: { id: req.params.id },
       data: {
         ...(title !== undefined && { title }),
         ...(data !== undefined && { data }),
         ...(starred !== undefined && { starred }),
+        ...(thumbnail !== undefined && { thumbnail }),
       },
     });
     res.json(updated);
@@ -105,6 +114,31 @@ apiRouter.delete('/diagrams/:id', async (req, res) => {
     console.error(`Orphan image cleanup failed for diagram ${req.params.id}:`, err);
   }
   res.status(204).end();
+});
+
+apiRouter.post('/diagrams/:id/duplicate', async (req, res) => {
+  const userId = authedUser(req).id;
+  const source = await prisma.diagram.findFirst({
+    where: { id: req.params.id, userId },
+    select: { title: true, data: true, thumbnail: true },
+  });
+  if (!source) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+  const copy = await prisma.diagram.create({
+    data: {
+      userId,
+      title: copyTitle(source.title),
+      data: source.data ?? {},
+      // The thumbnail is already rendered and the copy looks identical, so
+      // carrying it over saves the new card a trip through the icon.
+      thumbnail: source.thumbnail,
+      // A copy is not what the user starred.
+      starred: false,
+    },
+  });
+  res.status(201).json(copy);
 });
 
 apiRouter.patch('/diagrams/:id/star', async (req, res) => {
