@@ -101,6 +101,20 @@ function nearestTOnPolyline(
 
 // ---------------------------------------------------------------------------
 
+/**
+ * Records the one history entry a pointer drag is worth. Deferring it to the
+ * first move (rather than pointerdown) keeps a click that never turns into a
+ * drag from leaving an empty undo step behind.
+ */
+function historyOnce(): () => void {
+  let started = false;
+  return () => {
+    if (started) return;
+    started = true;
+    useDiagramStore.getState().beginInteraction();
+  };
+}
+
 const BORDER_RADIUS = 10;
 
 function smoothStepPath(points: { x: number; y: number }[]): string {
@@ -157,6 +171,8 @@ function cleanPath(pts: { x: number; y: number }[]): { x: number; y: number }[] 
 export function ConnectorEdge({ id, source, target, data, selected, markerStart, markerEnd }: EdgeProps<ConnectorEdgeType>) {
   const nodes = useDiagramStore((s) => s.nodes);
   const updateEdgeData = useDiagramStore((s) => s.updateEdgeData);
+  const updateEdgeDataTransient = useDiagramStore((s) => s.updateEdgeDataTransient);
+  const moveNodesTransient = useDiagramStore((s) => s.moveNodesTransient);
   const reconnectEdgeEndpoint = useDiagramStore((s) => s.reconnectEdgeEndpoint);
   const editingEdgeId = useDiagramStore((s) => s.editingEdgeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
@@ -183,9 +199,11 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     (e: React.PointerEvent) => {
       e.stopPropagation();
       e.preventDefault();
+      const begin = historyOnce();
       const onMove = (ev: PointerEvent) => {
+        begin();
         const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
-        updateEdgeData(id, { waypoint: { x: flow.x, y: flow.y } });
+        updateEdgeDataTransient(id, { waypoint: { x: flow.x, y: flow.y } });
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -194,7 +212,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [id, screenToFlowPosition, updateEdgeData],
+    [id, screenToFlowPosition, updateEdgeDataTransient],
   );
 
   const onEndpointPointerDown = useCallback(
@@ -203,8 +221,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       e.preventDefault();
       const otherId = end === 'source' ? target : source;
       const candidates = nodes.filter((n) => n.id !== otherId);
+      const begin = historyOnce();
       const onMove = (ev: PointerEvent) => {
         if (candidates.length === 0) return;
+        begin();
         const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
         let best = candidates[0];
         let bestDist = Infinity;
@@ -235,13 +255,15 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       const startX = e.clientX;
       const startY = e.clientY;
       let dragging = false;
+      const begin = historyOnce();
       const onMove = (ev: PointerEvent) => {
         if (!dragging && Math.hypot(ev.clientX - startX, ev.clientY - startY) < 3) return;
         dragging = true;
+        begin();
         ev.preventDefault();
         const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
         const t = nearestTOnPolyline(pathPointsRef.current, flow.x, flow.y);
-        updateEdgeData(id, { labelT: t });
+        updateEdgeDataTransient(id, { labelT: t });
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -250,7 +272,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [id, editing, screenToFlowPosition, updateEdgeData],
+    [id, editing, screenToFlowPosition, updateEdgeDataTransient],
   );
 
   const sourceNode = nodes.find((n) => n.id === source);
@@ -272,17 +294,16 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       const srcPos = { x: srcX, y: srcY };
       const tgtPos = { x: tgtX, y: tgtY };
 
+      const begin = historyOnce();
       const onMove = (ev: PointerEvent) => {
+        begin();
         const pos = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
         const dx = pos.x - startPos.x;
         const dy = pos.y - startPos.y;
-        useDiagramStore.setState((s) => ({
-          nodes: s.nodes.map((n) => {
-            if (n.id === source) return { ...n, position: { x: srcPos.x + dx, y: srcPos.y + dy } };
-            if (n.id === target) return { ...n, position: { x: tgtPos.x + dx, y: tgtPos.y + dy } };
-            return n;
-          }),
-        }));
+        moveNodesTransient({
+          [source]: { x: srcPos.x + dx, y: srcPos.y + dy },
+          [target]: { x: tgtPos.x + dx, y: tgtPos.y + dy },
+        });
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -291,7 +312,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [source, target, srcX, srcY, tgtX, tgtY, screenToFlowPosition],
+    [source, target, srcX, srcY, tgtX, tgtY, screenToFlowPosition, moveNodesTransient],
   );
 
   if (!sourceNode || !targetNode) return null;

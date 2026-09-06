@@ -34,6 +34,8 @@ export function BottomBar() {
   const { zoomIn, zoomOut, setViewport, getViewport } = useReactFlow();
   const undo = useDiagramStore((s) => s.undo);
   const redo = useDiagramStore((s) => s.redo);
+  const canUndo = useDiagramStore((s) => s.canUndo);
+  const canRedo = useDiagramStore((s) => s.canRedo);
   const zoom = useStore((s) => s.transform[2]);
   const [percent, setPercent] = useState(80);
 
@@ -49,10 +51,10 @@ export function BottomBar() {
   return (
     <div className="pointer-events-none absolute bottom-5 right-5 z-20 flex items-center gap-2">
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
-        <IconButton onClick={undo} label="Undo" shortcut="⌘Z">
+        <IconButton onClick={undo} disabled={!canUndo} label="Undo" shortcut="⌘Z">
           <Undo2 size={17} />
         </IconButton>
-        <IconButton onClick={redo} label="Redo" shortcut="⌘⇧Z">
+        <IconButton onClick={redo} disabled={!canRedo} label="Redo" shortcut="⌘⇧Z">
           <Redo2 size={17} />
         </IconButton>
       </div>

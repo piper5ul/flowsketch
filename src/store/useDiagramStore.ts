@@ -161,6 +161,12 @@ export function consumeSuppressBlur(): boolean {
   return false;
 }
 
+/** A clipboard payload — what ⌘C captured, and what `pasteClipboard` returns. */
+export interface ClipboardPayload {
+  nodes: ShapeNode[];
+  edges: ConnectorEdge[];
+}
+
 interface DiagramState {
   diagramId: string | null;
   title: string;
@@ -175,6 +181,9 @@ interface DiagramState {
   defaultFill: string;
   defaultStroke: string;
   defaultConnector: ConnectorKind;
+  /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
+  canUndo: boolean;
+  canRedo: boolean;
 
   loadDiagram: (id: string, title: string, starred: boolean, data: { nodes: unknown[]; edges: unknown[] }) => void;
   saveDiagram: () => Promise<void>;
@@ -197,6 +206,16 @@ interface DiagramState {
   updateSelectedEdgesStyle: (patch: Partial<ConnectorData>) => void;
   reconnectEdgeEndpoint: (edgeId: string, end: 'source' | 'target', nodeId: string, anchor: EdgeAnchor) => void;
 
+  // Continuous interactions: `beginInteraction` records the one entry, the
+  // transient updaters then run per pointermove without touching history.
+  beginInteraction: () => void;
+  updateEdgeDataTransient: (id: string, data: Partial<ConnectorData>) => void;
+  moveNodesTransient: (positions: Record<string, { x: number; y: number }>) => void;
+
+  nudgeSelected: (dx: number, dy: number) => void;
+  duplicateSelection: (offset?: number) => void;
+  pasteClipboard: (clip: ClipboardPayload, offset?: number) => ClipboardPayload;
+
   setDefaultStyle: (patch: { fill?: string; stroke?: string; connector?: ConnectorKind }) => void;
 
   bringToFront: () => void;
@@ -213,19 +232,65 @@ interface DiagramState {
 }
 
 // ---- tiny undo/redo history (snapshot-based, good enough for a diagram tool) ----
+// The stacks stay module-level so they never reach the serialized diagram; the
+// `canUndo` / `canRedo` booleans in the store are the UI's view of them.
 type Snapshot = { nodes: ShapeNode[]; edges: ConnectorEdge[] };
 let past: Snapshot[] = [];
 let future: Snapshot[] = [];
 let suppressHistory = false;
 
+/** Consecutive arrow-key nudges inside this window share one history entry. */
+const NUDGE_COALESCE_MS = 500;
+let lastNudgeAt = 0;
+
 function snapshotOf(state: DiagramState): Snapshot {
   return { nodes: state.nodes, edges: state.edges };
+}
+
+function historyFlags() {
+  return { canUndo: past.length > 0, canRedo: future.length > 0 };
 }
 
 function pushHistory(state: DiagramState) {
   if (suppressHistory) return;
   past = [...past.slice(-49), snapshotOf(state)];
   future = [];
+  useDiagramStore.setState(historyFlags());
+}
+
+/**
+ * True when every key in `patch` already holds that exact value — a commit that
+ * would leave the diagram untouched and so must not cost the user a ⌘Z.
+ */
+function isNoOpPatch<T extends object>(current: T, patch: Partial<T>): boolean {
+  return (Object.keys(patch) as (keyof T)[]).every((key) => Object.is(current[key], patch[key]));
+}
+
+/** Clone nodes/edges with fresh ids, offset positions, and edges remapped onto the clones. */
+function cloneSubgraph(
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+  offset: number,
+): { nodes: ShapeNode[]; edges: ConnectorEdge[] } {
+  const idMap = new Map<string, string>();
+  const clonedNodes = nodes.map((n) => {
+    const newId = nanoid(8);
+    idMap.set(n.id, newId);
+    return {
+      ...n,
+      id: newId,
+      position: { x: n.position.x + offset, y: n.position.y + offset },
+      selected: true,
+    };
+  });
+  const clonedEdges = edges.map((e) => ({
+    ...e,
+    id: nanoid(8),
+    source: idMap.get(e.source) ?? e.source,
+    target: idMap.get(e.target) ?? e.target,
+    selected: true,
+  }));
+  return { nodes: clonedNodes, edges: clonedEdges };
 }
 
 function serializeNodes(nodes: ShapeNode[]) {
@@ -258,11 +323,14 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   defaultFill: DEFAULT_SWATCH.fill,
   defaultStroke: DEFAULT_SWATCH.stroke,
   defaultConnector: 'elbow',
+  canUndo: false,
+  canRedo: false,
 
   loadDiagram: (id, title, starred, data) => {
     past = [];
     future = [];
     suppressHistory = false;
+    lastNudgeAt = 0;
     const edges = ((data.edges || []) as ConnectorEdge[]).map((e) => ({
       ...e,
       ...(e.data ? computeMarkers(e.data) : {}),
@@ -274,6 +342,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       saveStatus: 'idle',
       nodes: (data.nodes || []) as ShapeNode[],
       edges,
+      ...historyFlags(),
     });
   },
 
@@ -490,7 +559,12 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     return id;
   },
 
+  // A discrete edit (label commit, formatting, link, …). Undoable, unless the
+  // patch is a no-op — committing unchanged text must not add a history entry.
   updateNodeData: (id, data) => {
+    const node = get().nodes.find((n) => n.id === id);
+    if (!node || isNoOpPatch(node.data, data)) return;
+    pushHistory(get());
     set((s) => ({
       nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...data } } : n)),
     }));
@@ -506,8 +580,31 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   updateEdgeData: (id, data) => {
+    const edge = get().edges.find((e) => e.id === id);
+    if (!edge || (edge.data && isNoOpPatch(edge.data, data))) return;
+    pushHistory(get());
     set((s) => ({
       edges: s.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, ...data } } : e)),
+    }));
+  },
+
+  // ---- continuous interactions ----------------------------------------------
+  // A pointer drag records one entry up front via `beginInteraction`, then runs
+  // its per-move updates through a transient action that skips history.
+
+  beginInteraction: () => {
+    pushHistory(get());
+  },
+
+  updateEdgeDataTransient: (id, data) => {
+    set((s) => ({
+      edges: s.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, ...data } } : e)),
+    }));
+  },
+
+  moveNodesTransient: (positions) => {
+    set((s) => ({
+      nodes: s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n)),
     }));
   },
 
@@ -641,6 +738,60 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
+  // Arrow-key nudge. A burst of key repeats is one edit as far as the user is
+  // concerned, so entries coalesce until the keyboard goes quiet.
+  nudgeSelected: (dx, dy) => {
+    const state = get();
+    const selectedIds = new Set(state.nodes.filter((n) => n.selected).map((n) => n.id));
+    if (selectedIds.size === 0) return;
+
+    const now = Date.now();
+    if (now - lastNudgeAt > NUDGE_COALESCE_MS) pushHistory(state);
+    lastNudgeAt = now;
+
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        selectedIds.has(n.id)
+          ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
+          : n,
+      ),
+    }));
+  },
+
+  duplicateSelection: (offset = 30) => {
+    const state = get();
+    const selNodes = state.nodes.filter((n) => n.selected);
+    if (selNodes.length === 0) return;
+    pushHistory(state);
+
+    const selIds = new Set(selNodes.map((n) => n.id));
+    const selEdges = state.edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
+    const clones = cloneSubgraph(selNodes, selEdges, offset);
+
+    set((s) => ({
+      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...clones.nodes],
+      edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...clones.edges],
+    }));
+  },
+
+  // Returns what was pasted (deselected) so the caller can make it the next
+  // clipboard, which is how repeated ⌘V keeps stepping away from the original.
+  pasteClipboard: (clip, offset = 30) => {
+    if (clip.nodes.length === 0) return { nodes: [], edges: [] };
+    pushHistory(get());
+
+    const pasted = cloneSubgraph(clip.nodes, clip.edges, offset);
+    set((s) => ({
+      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...pasted.nodes],
+      edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...pasted.edges],
+    }));
+
+    return {
+      nodes: pasted.nodes.map((n) => ({ ...n, selected: false })),
+      edges: pasted.edges.map((e) => ({ ...e, selected: false })),
+    };
+  },
+
   deleteSelection: () => {
     pushHistory(get());
     set((s) => {
@@ -659,7 +810,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     past = past.slice(0, -1);
     future = [snapshotOf(state), ...future];
     suppressHistory = true;
-    set({ nodes: previous.nodes, edges: previous.edges });
+    lastNudgeAt = 0;
+    set({ nodes: previous.nodes, edges: previous.edges, ...historyFlags() });
     suppressHistory = false;
   },
 
@@ -670,7 +822,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     future = future.slice(1);
     past = [...past, snapshotOf(state)];
     suppressHistory = true;
-    set({ nodes: next.nodes, edges: next.edges });
+    lastNudgeAt = 0;
+    set({ nodes: next.nodes, edges: next.edges, ...historyFlags() });
     suppressHistory = false;
   },
 }));
