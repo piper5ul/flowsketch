@@ -328,6 +328,24 @@ test('a diagram can be renamed, duplicated and found again by searching', async 
   await expect(page.getByText('Roadmap', { exact: true })).toHaveCount(0);
 });
 
+test('a diagram card offers its star by name, and the star sticks', async ({ page }) => {
+  await signUp(page);
+  await newDiagram(page);
+  await page.getByRole('button', { name: 'Back to dashboard' }).click();
+  await expect(page.getByRole('heading', { name: 'My Diagrams' })).toBeVisible();
+
+  // Icon-only, so the accessible name is all a screen reader (or this test) has
+  // to go on.
+  const star = page.getByRole('button', { name: /star/i }).first();
+  await expect(star).toHaveAttribute('aria-pressed', 'false');
+
+  await star.click();
+  await expect(page.getByRole('button', { name: /unstar/i }).first()).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: /star/i }).first()).toHaveAttribute('aria-pressed', 'true');
+});
+
 test('a diagram exported as JSON can be imported back from the dashboard', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);
