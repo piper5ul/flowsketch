@@ -21,7 +21,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Three line thicknesses: thin, regular, bold — arrowheads scale to match
 - Five arrowhead styles per end: none, arrow, open, circle, diamond
 - Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter)
-- Draggable bend-point handles, and a Reset route button to undo one
+- Draggable bend points — drag a segment to add one, double-click a bend to remove it — and a Reset route button to clear them all
 - Free-standing arrows that can be placed and dragged anywhere
 
 ### Text & Formatting
