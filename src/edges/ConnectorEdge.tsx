@@ -19,6 +19,7 @@ import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
+import { useSearchHighlight } from '../store/useSearchStore';
 import type { FontSize } from '../types';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 11, medium: 12, large: 15 };
@@ -155,6 +156,9 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const { screenToFlowPosition } = useReactFlow();
   const editing = editingEdgeId === id;
+  // A connector is found by what is written on it, so its label is what wears
+  // the search ring — the line itself has no box to draw one round.
+  const searchHit = useSearchHighlight('edge', id);
   const labelRef = useRef<HTMLDivElement>(null);
   const pathPointsRef = useRef<Point[]>([]);
 
@@ -504,6 +508,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
               ref={labelRef}
               contentEditable={editing}
               suppressContentEditableWarning
+              data-search-hit={searchHit}
               onBlur={commit}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') {

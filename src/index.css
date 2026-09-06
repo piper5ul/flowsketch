@@ -415,6 +415,27 @@ a:focus-visible {
   pointer-events: all;
 }
 
+/* What the find bar (⌘F) marks on the board — a shape's wrapper, or the label
+   a connector was found by. `data-search-hit` is written by ShapeNode and
+   ConnectorEdge from `useSearchHighlight`, and the attribute is ours alone, so
+   this needs no further scoping.
+
+   Chrome, not diagram: the accent reads the same in both themes. An `outline`
+   rather than a border or a ring, because it is drawn outside the element's own
+   box — a hit shape keeps exactly the size, fill and stroke the user gave it,
+   and a connector's label is not nudged along its path. Dashed for a hit, solid
+   for the active one: the active hit also carries the selection, and the two
+   rings are what tells "this is one of your matches" from "this is the one you
+   are on". */
+[data-search-hit] {
+  outline: 2px dashed var(--color-accent-500);
+  outline-offset: 3px;
+}
+
+[data-search-hit='active'] {
+  outline-style: solid;
+}
+
 /* Edge selection joint handles (endpoint markers + draggable bend point) */
 /* White in both themes on purpose: a joint is chrome drawn on top of the user's
    own colours, so it has to read against any fill *and* against either canvas.

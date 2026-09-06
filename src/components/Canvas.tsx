@@ -28,6 +28,7 @@ import { TopBar } from './TopBar';
 import { AlignmentGuides } from './AlignmentGuides';
 import { CanvasMiniMap } from './CanvasMiniMap';
 import { TextFormatBar } from './TextFormatBar';
+import { SearchBar } from './SearchBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import type { ShapeData, ShapeKind, Tool } from '../types';
@@ -532,6 +533,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         </>
       )}
       <BottomBar onRunCommand={runCommand} />
+      {/* Rendered whether or not the board can be edited: ⌘F is a way of
+          reading a diagram, and the public share page mounts this too. */}
+      <SearchBar belowTopBar={topBar} />
 
       {contextMenu && (
         <ContextMenu state={contextMenu} ctx={commandContext} onClose={closeContextMenu} />
