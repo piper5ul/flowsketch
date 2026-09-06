@@ -238,6 +238,13 @@ body {
   background: var(--color-accent-500);
 }
 
+/* Exporting clears the selection and captures the DOM immediately after, so
+   transitions must settle in one step rather than fading across frames. */
+.is-exporting-image * {
+  transition: none !important;
+  animation: none !important;
+}
+
 /* Click target that appears on a selected connector with no label yet */
 .connector-label-target {
   display: block;
