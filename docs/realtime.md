@@ -1,6 +1,6 @@
 # Real-time collaboration
 
-Status: **design accepted 2026-09-06; phases 1 and 2 shipped.** Tracked on the FlowSketch Roadmap as `realtime-p1` … `realtime-p4`.
+Status: **design accepted 2026-09-06; phases 1, 2 and 3 shipped.** Tracked on the FlowSketch Roadmap as `realtime-p1` … `realtime-p4`.
 
 ## Why
 
@@ -32,7 +32,7 @@ Considered and rejected: Server-Sent Events + POST for presence only (cheap, but
 - `@hocuspocus/provider` `HocuspocusProvider` per open diagram (cookie auth, so no token); `src/lib/collab/binding.ts` is the two-way binding between the Y.Doc and the Zustand store:
   - doc → store: `observe` on both maps → `setState` (no undo entry, marked as remote so the autosave path ignores it).
   - store → doc: the ~15 mutating actions call into the binding inside one `doc.transact(…, origin)` per action; transient drags stay local and commit on release (one transaction).
-- **Undo** becomes `Y.UndoManager` scoped to this client's transaction origin: undo reverts *your* edits only, never a collaborator's. The snapshot history (`past`/`future`, `beginInteraction`) is removed for collaborative diagrams.
+- **Undo** becomes `Y.UndoManager` scoped to this client's transaction origin: undo reverts *your* edits only, never a collaborator's. The snapshot history (`past`/`future`, `beginInteraction`) is removed for collaborative diagrams. *(Shipped in phase 3, with the boundaries still decided by the store — see "What phase 3 did differently".)*
 - Autosave, retry, `ifUnmodifiedSince` and the conflict banner are unnecessary once the doc is the source of truth (Hocuspocus persistence *is* the save); the JSON snapshot writer replaces them. Save status becomes connection status ("Live", "Reconnecting…", "Offline — changes will sync").
 - Cursors and selections of others render through `ViewportPortal` (like comment pins); a "who's here" avatar strip lives in the TopBar.
 
@@ -40,7 +40,7 @@ Considered and rejected: Server-Sent Events + POST for presence only (cheap, but
 
 1. ✅ **`realtime-p1` Infra + presence.** Hocuspocus attached to Express with cookie auth and role checks; awareness-based cursors, selections and "who's here"; no document sync yet (the doc is connected but empty — nothing reads it). Deliverable: two users see each other live. *No data-model change.*
 2. ✅ **`realtime-p2` Document sync.** `DiagramDoc` table + migration, database extension with lazy upgrade, the client binding, JSON snapshot rendering, `syncDiagramImages` on store; simultaneous editing works; the conflict banner and `ifUnmodifiedSince` are bypassed for collaborative diagrams. Import/restore/backfill write through the doc.
-3. **`realtime-p3` Undo + cleanup.** `Y.UndoManager`, removal of the now-dead autosave/retry/conflict code paths and their tests, connection-status indicator, docs (README, CLAUDE.md, DEPLOYMENT.md: nothing to deploy beyond the app, but note the WebSocket upgrade path if a reverse proxy is ever put in front).
+3. ✅ **`realtime-p3` Undo + cleanup.** `Y.UndoManager` scoped to this client's origin; the autosave loop, its retry backoff, `ifUnmodifiedSince` and the conflict banner stop running for a bound diagram; the save indicator becomes a connection indicator; docs.
 4. **`realtime-p4` Offline (optional).** `y-indexeddb` so a dropped connection keeps working and merges on reconnect.
 
 ## What phase 2 did differently
@@ -53,10 +53,69 @@ Three departures from the plan above, all made while building it:
 
 One thing the design left open: the **viewport** is written into the document's `meta` (the snapshot needs it, so a diagram reopens where it was left) but is deliberately never read back out, because a peer scrolling their own window must not move yours.
 
-Two limitations phase 2 ships with, both listed against later phases:
+Two limitations phase 2 shipped with, both listed against later phases:
 
-- **Undo is still the snapshot stack**, so ⌘Z can walk back over a collaborator's edit. That is phase 3's `Y.UndoManager`.
+- **Undo is still the snapshot stack**, so ⌘Z can walk back over a collaborator's edit. That is phase 3's `Y.UndoManager` — done, below.
 - **A diagram whose socket will not open cannot be edited.** The document is the save, so a browser that reaches `/api` but not `/collab` (a proxy that will not upgrade, say) falls back to the JSON `PUT`, which the server refuses with `409` once the diagram has a document — the conflict banner's "Reload" is the way out, and the edits made in the meantime are lost. Making that survivable is phase 4's `y-indexeddb`.
+
+## What phase 3 did differently
+
+**Undo boundaries come from the store, not from a clock.** The plan's
+`captureTimeout` is infinite instead. Yjs merges transactions into one stack
+item while they arrive inside that window, which would have made a drag the user
+paused in the middle of two undo steps and would have coalesced arrow-key nudges
+on a 150 ms rule where `nudgeSelected` has always used 500 ms. So the boundary is
+the one the app already knew: `pushHistory` — the call every mutating action
+makes and the thing the snapshot stack pushed on — now passes a `beginEntry()`
+through to `UndoManager.stopCapturing()` for a bound diagram, and the binding
+opens one more at the first frame of a gesture (the store cannot, because a drag
+pushes history on the *release*). Every existing `pushHistory` call site was
+therefore already in the right place, and the two models split a session into the
+same steps.
+
+**`meta` is not tracked.** The design says the manager covers `nodes`, `edges`
+and `meta`. `meta` holds the viewport, which is written for the snapshot's sake
+and deliberately never read back out — so tracking it would have given the user
+an undo entry for *panning* that changes nothing they can see. Nodes and edges
+only. (A transaction touching only `meta` creates no stack item at all, which is
+what makes that work.)
+
+**Selection is restored after an undo.** It is not in the document, so without
+this an undo would put a shape back somewhere off screen with nothing to say
+where it went. The binding notes which element ids the undo's transaction
+changed and selects them.
+
+**The snapshot history is kept, not removed.** The design says it "is removed for
+collaborative diagrams", and it is — for those. But a diagram whose socket was
+refused is still a real state (no session, a proxy that will not upgrade, the
+public page), and there the `past` / `future` stacks, the debounced `PUT`, its
+retry backoff, `ifUnmodifiedSince` and the conflict banner are still the whole of
+how that board is kept. Nothing was deleted; `CanvasPage` arms the autosave
+effect only while the diagram is unbound, and `useDiagramStore` dispatches
+`undo` / `redo` to whichever history is in force.
+
+**"Live" needed a second signal for the tests.** The indicator reports the
+connection, which is the right thing to show a user and *not* the same claim as
+"everything you typed has arrived". The end-to-end tests need the second one
+before they reload a page, so `useCollabStore.synced` answers it — the provider
+has nothing left to send *and* the binding is not holding the last frame of a
+gesture — and rides on the indicator as `data-collab-sync`, the way the presence
+dot already carries `data-collab-status`.
+
+One thing that came out of retiring the autosave: the two-second debounce was
+accidentally covering the lag between the document and the JSON snapshot the
+server renders from it. Without it, the public `/s/:token` page really can be a
+second behind the board its owner is looking at, which is what the design always
+said and is now what the test says too.
+
+Two things phase 3 does **not** fix, both pre-existing:
+
+- **A session that expires under a bound diagram is not offered the re-auth
+  dialog.** That dialog is shown off `saveStatus === 'unauthorized'`, which only
+  the JSON `PUT` can produce; the socket's answer to a dead session is a
+  connection that will not open, so the bar says "Reconnecting…" and the user has
+  to reload. Phase 2 made that true; phase 3 leaves it.
+- **A diagram whose socket will not open** is still the phase-2 limitation above.
 
 ## Risks
 
@@ -68,7 +127,7 @@ Two limitations phase 2 ships with, both listed against later phases:
 
 - Unit: binding round-trips (store ↔ doc), concurrent edits on different keys merge, same-key last-writer, `render` ↔ `migrateDiagramData` round-trip, awareness state shape, auth hook decisions (no access / viewer read-only / editor).
 - Integration: Hocuspocus started in-process on `127.0.0.1` (via `server/testServer.ts`), two `HocuspocusProvider`s in Node (`ws` polyfill), edit on one, observe on the other; persistence extension writes the snapshot.
-- E2E: two browser contexts on one diagram — cursors visible both ways (phase 1); both drag different shapes at once and both pages end equal, one page reloads and sees the same (phase 2); undo reverts only your own move (phase 3).
+- E2E: two browser contexts on one diagram — cursors visible both ways (phase 1); both drag different shapes at once and both pages end equal, one page reloads and sees the same (phase 2); undo reverts only your own move, and a dropped socket says so and comes back with the edit made while it was gone (phase 3). Dropping the socket is `page.routeWebSocket`, not `context.setOffline`: Chromium's offline emulation refuses new connections and leaves an established WebSocket alone.
 
 ## Versions (2026-09-06)
 
