@@ -1245,3 +1245,93 @@ test('⌘F finds shapes by label, cycles the matches, and clears on Escape', asy
   await expect(page.locator('[data-search-hit]')).toHaveCount(0);
   await expect(page.locator('.react-flow__node.selected')).toContainText('Alphabet');
 });
+
+/** The React Flow node wrapper holding a node of the given kind. */
+function nodesOfType(page: Page, type: 'shape' | 'group' | 'frame') {
+  return page.locator('.react-flow__node').filter({ has: page.locator(`[data-node-type="${type}"]`) });
+}
+
+test('⌘G groups two shapes so they move as one, and ⌘⇧G lets them go', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await drawShapeAt(page, pane, 'Left', { x: 420, y: 300 });
+  await drawShapeAt(page, pane, 'Right', { x: 760, y: 300 });
+
+  const shapes = nodesOfType(page, 'shape');
+  await expect(shapes).toHaveCount(2);
+  const before = [await shapes.nth(0).boundingBox(), await shapes.nth(1).boundingBox()];
+
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.press('ControlOrMeta+g');
+
+  const group = nodesOfType(page, 'group');
+  await expect(group).toHaveCount(1);
+
+  // Grab the group by its own margin — the 16 px ring around its contents —
+  // rather than by a child, which React Flow would drag on its own.
+  const box = (await group.boundingBox())!;
+  await page.mouse.move(box.x + 6, box.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 6 + 80, box.y + 6, { steps: 10 });
+  await page.mouse.up();
+
+  // Both children travelled with it.
+  for (const [index, was] of before.entries()) {
+    const now = (await shapes.nth(index).boundingBox())!;
+    expect(now.x - was!.x).toBeGreaterThan(70);
+    expect(now.x - was!.x).toBeLessThan(90);
+    expect(Math.abs(now.y - was!.y)).toBeLessThan(5);
+  }
+
+  await page.keyboard.press('ControlOrMeta+Shift+g');
+  await expect(nodesOfType(page, 'group')).toHaveCount(0);
+  await expect(shapes).toHaveCount(2);
+  await expect(page.locator('.react-flow__node', { hasText: 'Left' })).toBeVisible();
+  await expect(page.locator('.react-flow__node', { hasText: 'Right' })).toBeVisible();
+});
+
+test('a shape dropped in a frame joins it and then travels with it', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // Rail -> More shapes -> Frame, then click to place it.
+  await page.getByRole('button', { name: 'More shapes' }).click();
+  await page.getByRole('button', { name: 'Frame' }).click();
+  await pane.click({ position: { x: 640, y: 400 } });
+
+  const frame = nodesOfType(page, 'frame');
+  await expect(frame).toHaveCount(1);
+  const frameBox = (await frame.boundingBox())!;
+
+  // A rectangle in the middle of the frame. The frame is a node, so this click
+  // never reaches the pane — the canvas serves the drawing tools either way.
+  await page.keyboard.press('r');
+  await page.mouse.click(frameBox.x + frameBox.width / 2, frameBox.y + frameBox.height / 2);
+  const shape = nodesOfType(page, 'shape');
+  await expect(shape).toHaveCount(1);
+
+  // Membership is settled on drop, so nudge it 10 px inside the frame.
+  const shapeBox = (await shape.boundingBox())!;
+  await page.mouse.move(shapeBox.x + shapeBox.width / 2, shapeBox.y + shapeBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(shapeBox.x + shapeBox.width / 2 + 10, shapeBox.y + shapeBox.height / 2, { steps: 5 });
+  await page.mouse.up();
+
+  const frameId = await frame.getAttribute('data-id');
+  await expect(shape.locator('[data-node-type="shape"]')).toHaveAttribute('data-parent-id', frameId!);
+
+  // And now the frame carries it: drag the frame by its title strip.
+  const movedShape = (await shape.boundingBox())!;
+  await page.mouse.move(frameBox.x + frameBox.width / 2, frameBox.y + 6);
+  await page.mouse.down();
+  await page.mouse.move(frameBox.x + frameBox.width / 2, frameBox.y + 6 + 100, { steps: 10 });
+  await page.mouse.up();
+
+  // Within a snap of the 100 px the frame was dragged: the alignment guides
+  // still apply to a container, so the drop can land a few pixels short.
+  const after = (await shape.boundingBox())!;
+  expect(after.y - movedShape.y).toBeGreaterThan(80);
+  expect(after.y - movedShape.y).toBeLessThan(120);
+  expect(Math.abs(after.x - movedShape.x)).toBeLessThan(5);
+});
