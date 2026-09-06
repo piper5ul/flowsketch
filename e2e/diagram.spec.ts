@@ -1185,3 +1185,58 @@ test('an invited viewer can join the discussion but not call it settled', async 
 
   await reviewer.close();
 });
+
+/**
+ * Places one labelled rectangle at `at` and hands it back.
+ *
+ * `drawLabelledShape` above always targets the first node on the board, which
+ * is exactly wrong once there is more than one; shapes are appended, so the
+ * new one is the last.
+ */
+async function drawShapeAt(page: Page, pane: Locator, label: string, at: { x: number; y: number }) {
+  const before = await page.locator('.react-flow__node').count();
+  await page.keyboard.press('r');
+  await pane.click({ position: at });
+  await expect(page.locator('.react-flow__node')).toHaveCount(before + 1);
+
+  const node = page.locator('.react-flow__node').nth(before);
+  await node.dblclick();
+  await page.keyboard.type(label);
+  await page.keyboard.press('Escape');
+  await expect(node).toContainText(label);
+  return node;
+}
+
+test('⌘F finds shapes by label, cycles the matches, and clears on Escape', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // Down the board, which is the order the find bar cycles them in: "alpha"
+  // matches the first and the third, and "Beta" is there to be skipped.
+  await drawShapeAt(page, pane, 'Alpha', { x: 400, y: 200 });
+  await drawShapeAt(page, pane, 'Beta', { x: 400, y: 340 });
+  await drawShapeAt(page, pane, 'Alphabet', { x: 400, y: 480 });
+
+  await page.keyboard.press('ControlOrMeta+f');
+  const field = page.getByLabel('Find on canvas');
+  await expect(field).toBeFocused();
+
+  await page.keyboard.type('alpha');
+  // Case-insensitive, so "Alpha" and "Alphabet" both match and "Beta" does not.
+  await expect(page.getByText('1 of 2')).toBeVisible();
+  await expect(page.locator('[data-search-hit]')).toHaveCount(2);
+
+  // Enter steps to the next hit, which is selected and framed.
+  await page.keyboard.press('Enter');
+  await expect(page.getByText('2 of 2')).toBeVisible();
+  const selected = page.locator('.react-flow__node.selected');
+  await expect(selected).toHaveCount(1);
+  await expect(selected).toContainText('Alphabet');
+
+  // Escape closes the bar and takes every ring with it — but leaves the shape
+  // it found selected, so the search hands the user something to work on.
+  await page.keyboard.press('Escape');
+  await expect(field).toHaveCount(0);
+  await expect(page.locator('[data-search-hit]')).toHaveCount(0);
+  await expect(page.locator('.react-flow__node.selected')).toContainText('Alphabet');
+});
