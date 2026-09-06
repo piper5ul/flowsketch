@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Canvas } from '../components/Canvas';
@@ -24,6 +24,8 @@ export function CanvasPage() {
   const loadDiagram = useDiagramStore((s) => s.loadDiagram);
   const saveStatus = useDiagramStore((s) => s.saveStatus);
   const { data: session } = useSession();
+  /** The diagram whose image backfill has already been started on this page. */
+  const backfilled = useRef<string | null>(null);
 
   // A 401 elsewhere in the app means "go and sign in"; here it means "the edits
   // on screen have nowhere to go yet", and navigating would be what loses them.
@@ -40,6 +42,13 @@ export function CanvasPage() {
    * it was for the next open to try again.
    */
   const runImageBackfill = useCallback(async (diagramId: string) => {
+    // Once per diagram per page. The effect that starts this is re-run by
+    // StrictMode's double mount, and two runs racing would upload every image
+    // twice — the second pass reads the same base64 the first has not replaced
+    // yet, and the loser's bytes are left on disk with nothing referencing them.
+    if (backfilled.current === diagramId) return;
+    backfilled.current = diagramId;
+
     const { nodes } = useDiagramStore.getState();
     const candidates = findBase64ImageNodes(nodes);
     if (candidates.length === 0) return;
