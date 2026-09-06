@@ -65,7 +65,7 @@ app.use('/api', (req, res, next) => {
 });
 app.use('/api', commentsRouter);
 // One port for the whole file — see `testServer.ts`.
-const server = serveForFile(app);
+const server = await serveForFile(app);
 
 /** The access-layer row for a diagram `u1` owns. */
 const OWNED = { id: 'd1', userId: 'u1' };

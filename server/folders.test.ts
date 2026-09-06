@@ -60,7 +60,7 @@ app.use('/api', (req, res, next) => {
 });
 app.use('/api', foldersRouter);
 // One port for the whole file — see `testServer.ts`.
-const server = serveForFile(app);
+const server = await serveForFile(app);
 
 const CREATED_AT = new Date('2026-09-06T10:00:00.000Z');
 
