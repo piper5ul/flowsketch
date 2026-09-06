@@ -11,7 +11,9 @@ interface TooltipProps {
 export function Tooltip({ label, shortcut, children, side = 'right' }: TooltipProps) {
   return (
     <RadixTooltip.Root delayDuration={250}>
-      <RadixTooltip.Trigger asChild>{children}</RadixTooltip.Trigger>
+      {/* aria-label merges onto the child, so icon-only buttons get an accessible
+          name for free; a child's own aria-label takes precedence. */}
+      <RadixTooltip.Trigger asChild aria-label={label}>{children}</RadixTooltip.Trigger>
       <RadixTooltip.Portal>
         <RadixTooltip.Content
           side={side}
