@@ -85,9 +85,14 @@ cloudflared service install && systemctl enable --now cloudflared
 |---|---|
 | Logs | `journalctl -u whimsy -f` |
 | Restart | `systemctl restart whimsy` |
-| Health | `curl -s localhost:3001/api/health` |
+| Health (liveness) | `curl -s localhost:3001/api/health` → `{"ok":true}` — answered by the process alone, never touches Postgres |
+| Health (readiness) | `curl -s localhost:3001/api/health?deep=1` → `{"ok":true,"db":true}`, or `503 {"ok":false,"db":false}` when the database is unreachable |
 | Schema after a pull | `npx prisma db push` (or `prisma migrate deploy` once migrations exist) |
 | Roll back | `git checkout <previous-tag> && npm ci --legacy-peer-deps && npm run build && npm run build:server && systemctl restart whimsy` |
+
+Point uptime monitoring at the deep probe: the shallow one stays green while the app is unusable because Postgres is down.
+
+**Rate limits.** `/api` allows 600 requests per 15 minutes per IP, and `POST /api/images` a further 60 per 15 minutes; over budget is `429 {"error":"Too many requests"}`. Counting is per process and in memory, so it resets on restart. For that counting to be per client rather than per proxy, `server/index.ts` sets `app.set('trust proxy', 1)`: the app only ever sees the tunnel's (or Nginx's) address on the socket, so it trusts exactly one hop of `X-Forwarded-For`. Raise that number only if you add another proxy in front — trusting more hops than you actually run lets a client forge its own IP and dodge the limits.
 
 Backups: the only state is the PostgreSQL database (diagrams are JSON in the `Diagram` table) — `pg_dump` it. Pasted images currently live inside that JSON; once uploads move to disk (roadmap `img-upload`) the upload directory needs backing up too.
 
