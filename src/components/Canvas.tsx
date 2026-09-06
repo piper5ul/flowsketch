@@ -43,7 +43,14 @@ function isTypingTarget(el: EventTarget | null) {
   return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
 }
 
-export function Canvas() {
+/**
+ * The board.
+ *
+ * `topBar` is what the public share page turns off: it mounts this same canvas
+ * in read-only mode under a slim header of its own, and the editing top bar —
+ * title field, star, Share, History — belongs to a signed-in reader.
+ */
+export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const nodes = useDiagramStore((s) => s.nodes);
   const edges = useDiagramStore((s) => s.edges);
   const onNodesChange = useDiagramStore((s) => s.onNodesChange);
@@ -55,6 +62,9 @@ export function Canvas() {
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
+  // Nothing on this canvas may change the diagram while this is true — see the
+  // `readOnly` note in the store for why the gate lives out here and not there.
+  const readOnly = useDiagramStore((s) => s.readOnly);
   const minimap = useViewPreferences((s) => s.minimap);
   const gridSnap = useViewPreferences((s) => s.gridSnap);
 
@@ -267,6 +277,10 @@ export function Canvas() {
 
   const onCanvasDoubleClick = useCallback(
     (event: React.MouseEvent) => {
+      // The tool is always `select` on a read-only board (the rail is gone and
+      // every tool command is gated), so this is the one place a double-click
+      // would still drop a text shape onto it.
+      if (readOnly) return;
       const target = event.target as HTMLElement;
       // Edge labels (and the add-label target) are portalled into the label
       // renderer, outside `.react-flow__edge`, so they need their own guard.
@@ -282,26 +296,33 @@ export function Canvas() {
       const id = addShape('text', { x: position.x - 80, y: position.y - 20 });
       setEditingNodeId(id);
     },
-    [tool, screenToFlowPosition, addShape, setEditingNodeId],
+    [readOnly, tool, screenToFlowPosition, addShape, setEditingNodeId],
   );
 
   // Dropping image files anywhere on the canvas inserts them where they
   // landed. `onDragOver` must preventDefault or the browser takes over and
   // navigates the tab to the dropped file.
-  const onDragOver = useCallback((event: React.DragEvent) => {
-    if (!Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) return;
-    event.preventDefault();
-    event.dataTransfer.dropEffect = 'copy';
-  }, []);
+  const onDragOver = useCallback(
+    (event: React.DragEvent) => {
+      // Left to the browser on a read-only board, so a dropped file is not
+      // silently swallowed by a canvas that was never going to accept it.
+      if (readOnly) return;
+      if (!Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'copy';
+    },
+    [readOnly],
+  );
 
   const onDrop = useCallback(
     (event: React.DragEvent) => {
+      if (readOnly) return;
       const files = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
       if (files.length === 0) return;
       event.preventDefault();
       insertImages(files, { x: event.clientX, y: event.clientY });
     },
-    [insertImages],
+    [readOnly, insertImages],
   );
 
   // Dragging a connector out to empty canvas creates a new connected shape,
@@ -345,6 +366,7 @@ export function Canvas() {
   // base64 used to blow a screenshot-sized paste past the 5 MB limit on the
   // diagram's JSON body, which failed the save rather than the paste.
   useEffect(() => {
+    if (readOnly) return;
     function onPaste(e: ClipboardEvent) {
       if (isTypingTarget(e.target)) return;
       const items = e.clipboardData?.items;
@@ -364,7 +386,7 @@ export function Canvas() {
 
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [insertImages]);
+  }, [readOnly, insertImages]);
 
   // Every shortcut is a command now; this handler only decides whether one
   // applies. A keystroke that matches nothing falls through untouched, which is
@@ -415,9 +437,12 @@ export function Canvas() {
         onNodeClick={onNodeClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
-        onNodeContextMenu={onNodeContextMenu}
-        onEdgeContextMenu={onEdgeContextMenu}
-        onPaneContextMenu={onPaneContextMenu}
+        // Every item on those menus either edits the diagram or is offered by
+        // the bottom bar anyway, so a read-only board has none: right-clicking
+        // it falls through to the browser's own menu.
+        onNodeContextMenu={readOnly ? undefined : onNodeContextMenu}
+        onEdgeContextMenu={readOnly ? undefined : onEdgeContextMenu}
+        onPaneContextMenu={readOnly ? undefined : onPaneContextMenu}
         // Grid snapping is opt-in and orthogonal to the shape-to-shape
         // alignment guides, which keep working either way: the grid rounds the
         // drag, the guides still line the shape up with its neighbours.
@@ -429,8 +454,13 @@ export function Canvas() {
         // The right button opens the context menu, so panning is the middle
         // button plus the hand tool and hold-to-pan.
         panOnDrag={tool === 'pan' ? true : [1]}
-        selectionOnDrag={tool === 'select'}
-        nodesDraggable={tool !== 'connector'}
+        selectionOnDrag={!readOnly && tool === 'select'}
+        // React Flow's own three gates. Dragging and connecting are edits; and
+        // with nothing selectable there is no selection for the floating
+        // toolbar to act on, which is the belt to the braces of not rendering it.
+        nodesDraggable={!readOnly && tool !== 'connector'}
+        nodesConnectable={!readOnly}
+        elementsSelectable={!readOnly}
         panOnScroll
         zoomOnScroll={false}
         zoomOnPinch
@@ -454,10 +484,14 @@ export function Canvas() {
         {minimap && <CanvasMiniMap />}
       </ReactFlow>
 
-      <TopBar />
-      <LeftRail />
-      <FloatingToolbar />
-      <TextFormatBar />
+      {topBar && <TopBar />}
+      {!readOnly && (
+        <>
+          <LeftRail />
+          <FloatingToolbar />
+          <TextFormatBar />
+        </>
+      )}
       <BottomBar onRunCommand={runCommand} />
 
       {contextMenu && (

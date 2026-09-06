@@ -92,11 +92,15 @@ const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys }) => ({
 }));
 
 /**
- * The single source of truth for what FlowSketch can do from the keyboard, the
- * right-click menu and the cheat sheet. Order matters only where two commands
- * share a keystroke and are told apart by `when` — the first match wins.
+ * Everything FlowSketch can do from the keyboard, the right-click menu and the
+ * cheat sheet, as declared. Order matters only where two commands share a
+ * keystroke and are told apart by `when` — the first match wins.
+ *
+ * Exported as `commands` below, once the read-only gate has been folded in —
+ * and exported raw for the tests that assert on the bindings *as declared*,
+ * which the gate would otherwise hide behind a `when` on every command.
  */
-export const commands: Command[] = [
+export const commandDeclarations: Command[] = [
   ...toolCommands,
 
   // ---- history -----------------------------------------------------------
@@ -497,6 +501,61 @@ export const commands: Command[] = [
     run: () => useViewPreferences.getState().toggleGridSnap(),
   },
 ];
+
+/**
+ * The commands that change nothing about the diagram, and so stay live when it
+ * is open read-only (a viewer's copy, or the public `/s/:token` page).
+ *
+ * A deny-list would let a *new* command be editable in read-only mode by
+ * default, which is the wrong way for the mistake to fall: this is the
+ * allow-list, so anything added below without being named here is gated off.
+ * Looking, framing, copying and the cheat sheet are all still on the table —
+ * read-only is about not writing, not about not reading.
+ */
+const READ_ONLY_COMMAND_IDS = new Set<string>([
+  'tool.select',
+  'tool.pan',
+  'select.all',
+  'edit.escape',
+  'clipboard.copy',
+  'clipboard.copyAsImage',
+  'style.copy',
+  'view.zoomIn',
+  'view.zoomOut',
+  'view.zoomReset',
+  'view.fitView',
+  'view.fitSelection',
+  'view.pan',
+  'view.shortcuts',
+  'view.toggleMinimap',
+  'view.toggleGridSnap',
+]);
+
+/**
+ * The one predicate every mutating command is gated on. Exported so a caller
+ * that offers an action outside the registry (a toolbar button, say) asks the
+ * same question rather than re-deriving the answer.
+ */
+export function canEditDiagram(ctx: CommandContext): boolean {
+  return !ctx.store.getState().readOnly;
+}
+
+/** `command`, with `canEditDiagram` folded into its own `when` where it mutates. */
+function gateOnEditability(command: Command): Command {
+  if (READ_ONLY_COMMAND_IDS.has(command.id)) return command;
+  const { when } = command;
+  return {
+    ...command,
+    when: (ctx) => canEditDiagram(ctx) && (!when || when(ctx)),
+  };
+}
+
+/**
+ * The single source of truth for what FlowSketch can do, as the keyboard
+ * handler, the cheat sheet and the right-click menus read it: every declared
+ * command, with the read-only gate already applied.
+ */
+export const commands: Command[] = commandDeclarations.map(gateOnEditability);
 
 export const registry = createRegistry(commands);
 

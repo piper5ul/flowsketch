@@ -1,6 +1,6 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Eye, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
@@ -17,6 +17,8 @@ export function TopBar() {
   const setStarred = useDiagramStore((s) => s.setStarred);
   const diagramId = useDiagramStore((s) => s.diagramId);
   const saveStatus = useDiagramStore((s) => s.saveStatus);
+  const role = useDiagramStore((s) => s.role);
+  const readOnly = useDiagramStore((s) => s.readOnly);
 
   const toggleStar = useCallback(async () => {
     if (!diagramId) return;
@@ -43,18 +45,23 @@ export function TopBar() {
           // so the fallback waits until the user leaves it rather than
           // fighting them mid-edit.
           onBlur={() => setTitle(title.trim() || 'Untitled')}
+          readOnly={readOnly}
           aria-label="Diagram title"
           className="min-w-0 max-w-[16rem] bg-transparent text-[14px] font-semibold text-ink-900 outline-none"
         />
-        <Tooltip label={starred ? 'Unstar' : 'Star'} side="bottom">
-          <button
-            onClick={toggleStar}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-black/[0.04] hover:text-ink-700"
-          >
-            <Star size={15} className={clsx(starred && 'fill-yellow-400 text-yellow-400')} />
-          </button>
-        </Tooltip>
-        <SaveIndicator status={saveStatus} />
+        {/* `starred` is one column on the diagram row rather than a per-user
+            flag, so the server refuses it from anyone but the owner. */}
+        {role === 'owner' && (
+          <Tooltip label={starred ? 'Unstar' : 'Star'} side="bottom">
+            <button
+              onClick={toggleStar}
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-black/[0.04] hover:text-ink-700"
+            >
+              <Star size={15} className={clsx(starred && 'fill-yellow-400 text-yellow-400')} />
+            </button>
+          </Tooltip>
+        )}
+        {readOnly ? <ViewOnlyPill /> : <SaveIndicator status={saveStatus} />}
       </div>
 
       <ExportMenu />
@@ -83,7 +90,9 @@ function ConflictBanner() {
       // other version. `loadDiagram` clears the conflict and resets the guard.
       useDiagramStore
         .getState()
-        .loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt);
+        .loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt, {
+          role: diagram.role,
+        });
     } catch {
       toastError('Could not reload the diagram. Please try again.');
     } finally {
@@ -229,6 +238,18 @@ function ExportMenu() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Stands where the save indicator would, because it answers the same question:
+ * what is happening to my edits? Here, nothing — there are none to make.
+ */
+export function ViewOnlyPill() {
+  return (
+    <span className="ml-1 flex items-center gap-1.5 rounded-full bg-ink-950/[0.06] px-2 py-0.5 text-xs font-medium text-ink-700">
+      <Eye size={12} /> View only
+    </span>
   );
 }
 
