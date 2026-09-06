@@ -484,8 +484,8 @@ export const commandDeclarations: Command[] = [
   ...distributeCommands(),
 
   // ---- view: canvas chrome -----------------------------------------------
-  // Both toggles live in `useViewPreferences` rather than the diagram store:
-  // they are per-browser preferences, not part of any diagram. Neither takes a
+  // All three live in `useViewPreferences` rather than the diagram store: they
+  // are per-browser preferences, not part of any diagram. None takes a
   // keystroke — the letters left are worth more to a tool — so they reach the
   // user through the bottom bar, and through here for the sake of one list.
   {
@@ -499,6 +499,12 @@ export const commandDeclarations: Command[] = [
     title: 'Snap to grid',
     group: 'view',
     run: () => useViewPreferences.getState().toggleGridSnap(),
+  },
+  {
+    id: 'view.toggleTheme',
+    title: 'Theme',
+    group: 'view',
+    run: () => useViewPreferences.getState().cycleTheme(),
   },
 ];
 
@@ -529,6 +535,7 @@ const READ_ONLY_COMMAND_IDS = new Set<string>([
   'view.shortcuts',
   'view.toggleMinimap',
   'view.toggleGridSnap',
+  'view.toggleTheme',
 ]);
 
 /**
