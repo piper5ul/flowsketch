@@ -57,6 +57,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
 - Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
 - Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
+- Light and dark themes, cycled from the bottom bar (system → light → dark) and remembered per browser. It ships following your OS, and only the app's own chrome changes: shapes, connectors and their labels keep the colours you gave them, and an exported PNG or SVG is captured light whichever theme you are working in
 - Auto-save to server (diagrams persist across sessions), including the pan and zoom the diagram was left at
 
 ### Collaboration
@@ -156,6 +157,9 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `⌘0` | Fit all shapes in view |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
 | `?` | Show the keyboard shortcut cheat sheet |
+
+The minimap, grid snapping and the theme are commands too, but deliberately keyless — the letters
+left are worth more to a tool — so they are reached from the bottom bar rather than the keyboard.
 
 Every shortcut above is a single entry in the command registry (`src/commands/`), which also
 generates the cheat sheet and the right-click menus — so this table, the tooltips and the app
