@@ -15,6 +15,7 @@ import {
 import clsx from 'clsx';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { ColorPalette } from './ColorPalette';
+import { ArrangeMenu } from './ArrangeMenu';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
@@ -263,6 +264,13 @@ export function FloatingToolbar() {
                 <SendToBack size={16} />
               </button>
             </Tooltip>
+          </>
+        )}
+
+        {!isEdgeMode && selectedNodes.length > 1 && (
+          <>
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <ArrangeMenu selectedCount={selectedNodes.length} />
           </>
         )}
 
