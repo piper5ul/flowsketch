@@ -1030,6 +1030,18 @@ test('two people edit one diagram at once and both windows end up identical', as
   await guest.close();
 });
 
+/** Invites `email` as an editor of the open diagram, through the share dialog. */
+async function inviteEditor(page: Page, email: string) {
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(email);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(email)).toBeVisible();
+  // Out of the way: it covers the canvas the two of them are about to work on.
+  await page.getByRole('button', { name: 'Close share dialog' }).click();
+}
+
 test('⌘Z takes back your own move and leaves your collaborator’s where they put it', async ({ page, browser }) => {
   test.setTimeout(120_000);
   await signUp(page, 'Ada Lovelace');
@@ -1040,15 +1052,7 @@ test('⌘Z takes back your own move and leaves your collaborator’s where they 
 
   const guest = await browser.newContext();
   const guestPage = await guest.newPage();
-  const guestEmail = await signUp(guestPage, 'Grace Hopper');
-
-  await page.getByRole('button', { name: 'Share' }).click();
-  const dialog = page.getByRole('dialog', { name: 'Share' });
-  await dialog.getByLabel('Invite by email').fill(guestEmail);
-  await dialog.getByLabel('Invite as').selectOption('editor');
-  await dialog.getByRole('button', { name: 'Invite' }).click();
-  await expect(dialog.getByText(guestEmail)).toBeVisible();
-  await page.getByRole('button', { name: 'Close share dialog' }).click();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
 
   await guestPage.goto(page.url());
   await expect(guestPage.locator('.react-flow__node')).toHaveCount(2);
@@ -1079,6 +1083,87 @@ test('⌘Z takes back your own move and leaves your collaborator’s where they 
     .toBe(moved[first]);
   await expectSameBoard(page, guestPage);
   expect((await nodePositions(page))[second]).toBe(moved[second]);
+
+  await guest.close();
+});
+
+/**
+ * Takes `page`'s collaboration socket away on demand, and gives it back.
+ *
+ * `context.setOffline(true)` is the obvious way and does not do this:
+ * Chromium's offline emulation refuses *new* connections and leaves an
+ * established WebSocket alone, so the provider goes on believing it is live
+ * until its own 30 s message timeout — which is a slow, flaky thing to wait
+ * for and not what a dropped connection looks like anyway. Routing the socket
+ * closes it the way a lost network does, and refuses to reopen it until the
+ * network is "back", so the reconnect being tested is the provider's own.
+ *
+ * Install it **before the page navigates at all**. Routing a WebSocket works by
+ * injecting into the document, and the app routes on the client from the sign-up
+ * form onwards — so a route installed after that first load reaches no document
+ * and quietly catches nothing.
+ */
+async function collabNetwork(page: Page) {
+  const open: { close: () => Promise<void> | void }[] = [];
+  let down = false;
+
+  await page.routeWebSocket(/\/collab/, (socket) => {
+    if (down) {
+      void socket.close();
+      return;
+    }
+    socket.connectToServer();
+    open.push(socket);
+  });
+
+  return {
+    async drop() {
+      down = true;
+      await Promise.all(open.splice(0).map((socket) => socket.close()));
+    },
+    restore() {
+      down = false;
+    },
+  };
+}
+
+test('a dropped connection says so, comes back, and brings the offline edit with it', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  const network = await collabNetwork(page);
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await expectSynced(page);
+
+  // Grace is in her own browser context, so she stays online while Ada does not.
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
+
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.getByText('Live')).toBeVisible();
+
+  // Ada's network goes away. The bar stops claiming she is live rather than
+  // leaving her to believe her edits are reaching anybody.
+  await network.drop();
+  await expect(page.locator('[data-collab-status="connected"]')).toHaveCount(0);
+  await expect(page.getByText('Live')).toHaveCount(0);
+
+  // She keeps drawing regardless — the document is in her browser, and the
+  // canvas has no reason to stop working because a socket did.
+  await drawShapeIn(page, pane, { x: 800, y: 300 });
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
+
+  network.restore();
+  await expect(page.getByText('Live')).toBeVisible({ timeout: 30_000 });
+  await expectSynced(page);
+
+  // What she drew while she was gone is on Grace's board, merged rather than
+  // sent as a whole copy of a diagram Grace was looking at the same time.
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
+  await expectSameBoard(page, guestPage);
 
   await guest.close();
 });
