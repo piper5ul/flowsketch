@@ -143,6 +143,13 @@ cloudflared service install && systemctl enable --now cloudflared
 
 **Nginx** instead: proxy `your.domain` to `http://127.0.0.1:3001` with `proxy_set_header Host $host;` and `X-Forwarded-Proto https;`, and terminate TLS with certbot. Nothing in the app depends on Nginx; it is optional.
 
+**WebSockets.** The app serves a WebSocket upgrade on **`/collab`** — the real-time collaboration server, in the same process on the same port 3001, so there is nothing extra to deploy, open or run. It does need whatever is in front to *forward* the upgrade:
+
+- **Cloudflare Tunnel** does, with no configuration: the ingress rule above carries WebSockets as it carries anything else. Nothing to change.
+- **Nginx** does not, by default — add `proxy_http_version 1.1;`, `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection "upgrade";` to the `location /` block, and give it a generous `proxy_read_timeout` (say `3600s`), or an idle collaborator's socket is cut every minute. The same applies to any other reverse proxy you put in front.
+
+Without a forwarded upgrade the app still works: the socket simply never connects, and the top bar's connection dot stays red. Nobody loses an edit — diagram content is saved over `/api`, not over the socket.
+
 ## Operations
 
 | Task | Command (on the server) |

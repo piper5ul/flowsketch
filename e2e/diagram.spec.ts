@@ -5,10 +5,10 @@ import { readFile } from 'node:fs/promises';
  * Creates a fresh account through the real sign-up form. Email verification is
  * not required to sign in, so this needs no mail server.
  */
-async function signUp(page: Page) {
+async function signUp(page: Page, name = 'E2E User') {
   const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
   await page.goto('/signup');
-  await page.getByLabel('Name').fill('E2E User');
+  await page.getByLabel('Name').fill(name);
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill('correct-horse-battery');
   await page.getByRole('button', { name: 'Create account' }).click();
@@ -989,6 +989,65 @@ test('an invited editor finds the diagram, edits it, and loses that when demoted
 
   expect(page.url()).toBe(diagramUrl);
   await invitee.close();
+});
+
+test('two people on one diagram see each other, their pointers and their selections', async ({ page, browser }) => {
+  // Distinct names, because the whole of what presence shows is who: the
+  // avatars, the label on a cursor and the tooltip are all the name.
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  const node = await drawLabelledShape(page, pane, 'Shared shape');
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  const guestEmail = await signUp(guestPage, 'Grace Hopper');
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(guestEmail);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(guestEmail)).toBeVisible();
+  // Out of the way: it covers the canvas the cursor is about to move over.
+  await page.getByRole('button', { name: 'Close share dialog' }).click();
+
+  await guestPage.goto(page.url());
+  const guestPane = guestPage.locator('.react-flow__pane');
+  await expect(guestPane).toBeVisible();
+
+  // Each sees the other in the top bar, and is told the socket is live.
+  // `exact`, because a cursor is labelled "<name>'s cursor" and one of these
+  // two is about to have one on screen.
+  await expect(page.getByLabel('Grace Hopper', { exact: true })).toHaveText('GH');
+  await expect(guestPage.getByLabel('Ada Lovelace', { exact: true })).toHaveText('AL');
+  await expect(page.locator('[data-collab-status="connected"]')).toBeVisible();
+  await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+
+  // Grace moves her pointer across the board; Ada sees it, labelled.
+  await guestPane.hover({ position: { x: 500, y: 300 } });
+  await guestPane.hover({ position: { x: 560, y: 340 } });
+  const guestCursor = page.locator('.presence-cursor');
+  await expect(guestCursor).toHaveCount(1);
+  await expect(guestCursor).toContainText('Grace Hopper');
+
+  // Ada's selection, seen from Grace's window. Cleared first, so what is
+  // asserted is the selection arriving rather than one that was already there.
+  const guestView = guestPage.locator('.react-flow__node').first();
+  await pane.click({ position: { x: 200, y: 500 } });
+  await expect(guestView.locator('[data-peer-selected]')).toHaveCount(0);
+
+  await node.click();
+  await expect(guestView.locator('[data-peer-selected="Ada Lovelace"]')).toBeVisible();
+
+  // And it goes away again when she lets go of it.
+  await pane.click({ position: { x: 200, y: 500 } });
+  await expect(guestView.locator('[data-peer-selected]')).toHaveCount(0);
+
+  // Leaving takes the cursor and the avatar with it, rather than stranding a
+  // pointer on the board for as long as the tab that drew it is closed.
+  await guest.close();
+  await expect(page.locator('.presence-cursor')).toHaveCount(0);
+  await expect(page.getByLabel('Grace Hopper', { exact: true })).toHaveCount(0);
 });
 
 test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
