@@ -1,24 +1,195 @@
 @import "tailwindcss";
 @import "@xyflow/react/dist/style.css";
 
+/* ---------- Theme tokens ----------
+   Two layers, on purpose.
+
+   The runtime layer is the plain `--canvas`, `--panel`, `--ink-900` … custom
+   properties defined on `:root` below. They are the ones a theme redefines, so
+   flipping to dark is one attribute on `<html>` and no re-render.
+
+   The Tailwind layer maps `--color-*` onto them with `@theme inline`, so
+   `bg-panel`, `text-ink-700` and `ring-line` compile to `var(--panel)` and pick
+   the new value up the instant the runtime layer changes. `inline` is what
+   keeps the utility referencing the runtime variable rather than a snapshot of
+   its value — see the theming note in CLAUDE.md.
+
+   What deliberately does *not* move with the theme:
+   - `--color-ink-950` and the accents: the floating rail, toolbars, menus and
+     tooltips are dark chrome in both themes, so their ground is a constant.
+   - `--color-shape-ink`: the label on a shape, whose colour is decided by the
+     user's fill through `isDarkFill`, never by the theme. A white shape keeps
+     dark text on a dark canvas.
+
+   The constants below live in a plain `@theme`, so they are also emitted as
+   `--color-*` custom properties for the handful of places that reach for one
+   directly from an inline style or a hand-written rule.
+*/
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
 
+  /* Dark chrome. Fixed: the rail and the floating toolbars are dark in both themes. */
   --color-ink-950: #12131a;
-  --color-ink-900: #181a24;
-  --color-ink-800: #21232f;
-  --color-ink-700: #2b2e3d;
-  --color-ink-600: #3a3d50;
+
+  /* Text drawn on top of a user-chosen fill. Never themed — see above. */
+  --color-shape-ink: #181a24;
 
   --color-accent-500: #7c5cff;
   --color-accent-600: #6a45f5;
   --color-accent-400: #9b81ff;
-
-  --color-canvas: #f6f7fb;
 }
 
+/* The themed half. `inline` is what makes `bg-panel` compile to
+   `var(--panel)` rather than to a snapshot of whatever `--panel` held at build
+   time — which is the whole mechanism by which a theme swap needs no rebuild
+   and no re-render. Anything reaching for one of these outside a utility
+   should use the runtime name (`var(--canvas)`), not `var(--color-canvas)`. */
+@theme inline {
+  /* Body text scale, darkest to lightest in the light theme; inverted in dark. */
+  --color-ink-900: var(--ink-900);
+  --color-ink-800: var(--ink-800);
+  --color-ink-700: var(--ink-700);
+  --color-ink-600: var(--ink-600);
+
+  /* Surfaces */
+  --color-canvas: var(--canvas);
+  --color-panel: var(--panel);
+  --color-field: var(--field);
+
+  /* Hairlines, in three weights so the light theme keeps the exact rings it had. */
+  --color-line-subtle: var(--line-subtle);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  /* Hover washes over a light surface. */
+  --color-hover-soft: var(--hover-soft);
+  --color-hover: var(--hover);
+  --color-hover-strong: var(--hover-strong);
+
+  /* Status chips: an error message, the conflict banner, a destructive
+     confirmation. A pale tint with dark text reads on white and nowhere else,
+     so both halves are themed together and never separately. */
+  --color-danger-wash: var(--danger-wash);
+  --color-danger-ink: var(--danger-ink);
+  --color-warn-wash: var(--warn-wash);
+  --color-warn-ink: var(--warn-ink);
+}
+
+/* The light theme, and the base every other block only overrides. Every token
+   is defined here exactly once, so a value can never be missing in a theme. */
 :root {
   color-scheme: light;
+
+  --canvas: #f6f7fb;
+  --canvas-dot: #d6d9e4;
+  --panel: #ffffff;
+  --field: #f6f7fb;
+
+  --ink-900: #181a24;
+  --ink-800: #21232f;
+  --ink-700: #2b2e3d;
+  --ink-600: #3a3d50;
+
+  --line-subtle: rgba(0, 0, 0, 0.04);
+  --line: rgba(0, 0, 0, 0.06);
+  --line-strong: rgba(0, 0, 0, 0.1);
+
+  --hover-soft: rgba(0, 0, 0, 0.03);
+  --hover: rgba(0, 0, 0, 0.04);
+  --hover-strong: rgba(0, 0, 0, 0.06);
+
+  --scrollbar-thumb: #d7d9e3;
+
+  --minimap-bg: rgba(255, 255, 255, 0.95);
+  --minimap-mask: rgba(24, 26, 36, 0.08);
+  --minimap-mask-stroke: rgba(24, 26, 36, 0.18);
+
+  /* Tailwind's red-50 / red-600 and amber-50 / amber-900, the pairs these
+     chips already wore. */
+  --danger-wash: #fef2f2;
+  --danger-ink: #dc2626;
+  --warn-wash: #fffbeb;
+  --warn-ink: #78350f;
+}
+
+/* The dark theme, written once and applied from two places:
+   - `prefers-color-scheme`, for the default `'system'` preference — guarded so
+     an explicit "light" still wins over the OS on a dark machine;
+   - `[data-theme="dark"]`, which `applyTheme` stamps for an explicit choice.
+   `applyTheme` removes the attribute entirely for `'system'`, which is what
+   hands the media query back its say. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    /* Darker than `--color-ink-950`, so the dark rail and toolbars still read
+       as raised chrome sitting above the board rather than dissolving into it. */
+    --canvas: #0d0e13;
+    --canvas-dot: #303446;
+    --panel: #1a1c25;
+    --field: #101119;
+
+    --ink-900: #eceef5;
+    --ink-800: #dcdfe9;
+    --ink-700: #c3c7d5;
+    --ink-600: #9aa0b3;
+
+    --line-subtle: rgba(255, 255, 255, 0.06);
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.14);
+
+    --hover-soft: rgba(255, 255, 255, 0.04);
+    --hover: rgba(255, 255, 255, 0.07);
+    --hover-strong: rgba(255, 255, 255, 0.1);
+
+    --scrollbar-thumb: #3b3f4f;
+
+    --minimap-bg: rgba(26, 28, 37, 0.95);
+    --minimap-mask: rgba(0, 0, 0, 0.4);
+    --minimap-mask-stroke: rgba(255, 255, 255, 0.16);
+
+    /* Inverted: a tint of the hue over the dark panel, with the light end
+       of the ramp for the text. */
+    --danger-wash: rgba(239, 68, 68, 0.14);
+    --danger-ink: #fca5a5;
+    --warn-wash: rgba(245, 158, 11, 0.14);
+    --warn-ink: #fcd34d;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #0d0e13;
+  --canvas-dot: #303446;
+  --panel: #1a1c25;
+  --field: #101119;
+
+  --ink-900: #eceef5;
+  --ink-800: #dcdfe9;
+  --ink-700: #c3c7d5;
+  --ink-600: #9aa0b3;
+
+  --line-subtle: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.14);
+
+  --hover-soft: rgba(255, 255, 255, 0.04);
+  --hover: rgba(255, 255, 255, 0.07);
+  --hover-strong: rgba(255, 255, 255, 0.1);
+
+  --scrollbar-thumb: #3b3f4f;
+
+  --minimap-bg: rgba(26, 28, 37, 0.95);
+  --minimap-mask: rgba(0, 0, 0, 0.4);
+  --minimap-mask-stroke: rgba(255, 255, 255, 0.16);
+
+  /* Inverted: a tint of the hue over the dark panel, with the light end
+     of the ramp for the text. */
+  --danger-wash: rgba(239, 68, 68, 0.14);
+  --danger-ink: #fca5a5;
+  --warn-wash: rgba(245, 158, 11, 0.14);
+  --warn-ink: #fcd34d;
 }
 
 html, body, #root {
@@ -30,6 +201,10 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
+  /* The ground behind everything. Without it a dark theme flashes white
+     between paints, and shows a white gutter wherever a page is shorter than
+     the viewport or is scrolled past its end. */
+  background-color: var(--canvas);
 }
 
 /* Keyboard focus. Nothing in the app drew its own ring, and the browser
@@ -55,7 +230,7 @@ a:focus-visible {
 
 /* ---------- Canvas ---------- */
 .rf-canvas {
-  background-color: var(--color-canvas);
+  background-color: var(--canvas);
 }
 
 /* React Flow structural overrides so it gets out of our way visually */
@@ -99,8 +274,8 @@ a:focus-visible {
   width: 176px;
   height: 112px;
   border-radius: 16px;
-  background-color: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 10px 30px -10px rgba(20, 20, 50, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  background-color: var(--minimap-bg);
+  box-shadow: 0 10px 30px -10px rgba(20, 20, 50, 0.25), 0 0 0 1px var(--line-subtle);
   backdrop-filter: blur(8px);
 }
 
@@ -196,6 +371,9 @@ a:focus-visible {
 }
 
 /* Edge selection joint handles (endpoint markers + draggable bend point) */
+/* White in both themes on purpose: a joint is chrome drawn on top of the user's
+   own colours, so it has to read against any fill *and* against either canvas.
+   Theming it would make it vanish into a dark board. */
 .connector-joint {
   position: absolute;
   top: 50%;
@@ -288,7 +466,7 @@ a:focus-visible {
   padding: 0;
   border-radius: 9999px;
   border: 1.5px dashed var(--color-accent-400);
-  background: var(--color-canvas);
+  background: var(--canvas);
   opacity: 0.7;
   cursor: text;
   transition: opacity 100ms ease, border-color 100ms ease;
@@ -312,7 +490,7 @@ a:focus-visible {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d7d9e3;
+  background: var(--scrollbar-thumb);
   border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;

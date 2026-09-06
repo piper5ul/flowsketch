@@ -1,6 +1,7 @@
 /**
- * View preferences: the small toggles that belong to the person at this
- * browser rather than to the diagram — the minimap, grid snapping. They are
+ * View preferences: the small settings that belong to the person at this
+ * browser rather than to the diagram — the minimap, grid snapping, the theme.
+ * They are
  * deliberately *not* part of `DiagramData`, so opening the same board on
  * another machine does not drag someone else's chrome along with it.
  *
@@ -13,7 +14,7 @@
 /** Namespaced so a value cannot collide with anything else on the origin. */
 const PREFIX = 'flowsketch:';
 
-export type PreferenceKey = 'minimap' | 'gridSnap';
+export type PreferenceKey = 'minimap' | 'gridSnap' | 'theme';
 
 function storage(): Pick<Storage, 'getItem' | 'setItem'> | null {
   try {
