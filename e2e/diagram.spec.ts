@@ -529,6 +529,43 @@ test('right-clicking a shape opens a context menu that deletes it', async ({ pag
   await expect(menu).toBeHidden();
 });
 
+test('a diagram reopens at the zoom it was left at', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // One shape, saved, so the frame-on-first-node is over and done with before
+  // the viewport under test is set.
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  const zoomReset = page.getByRole('button', { name: 'Reset zoom' });
+  const opened = await zoomReset.textContent();
+
+  // The autosave the zoom triggers, rather than a timeout: the thumbnail save
+  // goes to the same route, so the body is what tells the two apart.
+  const viewportSaved = page.waitForResponse((response) => {
+    if (response.request().method() !== 'PUT' || !response.ok()) return false;
+    const body = response.request().postDataJSON() as { data?: { viewport?: unknown } } | null;
+    return !!body?.data?.viewport;
+  });
+
+  const zoomIn = page.getByRole('button', { name: 'Zoom in' });
+  await zoomIn.click();
+  await zoomIn.click();
+  await viewportSaved;
+
+  const zoomed = await zoomReset.textContent();
+  expect(zoomed).not.toBe(opened);
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  // Restored from the diagram, not re-framed: fitView would put it back to the
+  // zoom the diagram opened at.
+  await expect(zoomReset).toHaveText(zoomed!);
+});
+
 test('the minimap is off until it is switched on, and is still on after a reload', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);

@@ -10,7 +10,7 @@ import {
   type Connection,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import type { DiagramData } from '../../shared/types';
+import type { DiagramData, DiagramViewport } from '../../shared/types';
 import type { ConnectorData, ConnectorKind, Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
@@ -202,6 +202,8 @@ interface DiagramState {
   nodes: ShapeNode[];
   edges: ConnectorEdge[];
   guides: GuideLine[];
+  /** Where the canvas was left, restored on the next open. `null` until it is reported. */
+  viewport: DiagramViewport | null;
   tool: Tool;
   defaultFill: string;
   defaultStroke: string;
@@ -219,6 +221,8 @@ interface DiagramState {
   setEditingEdgeId: (id: string | null) => void;
 
   setTool: (tool: Tool) => void;
+  /** Records a pan or zoom. Transient by design: moving the camera is not an edit. */
+  setViewport: (viewport: DiagramViewport) => void;
   onNodesChange: (changes: NodeChange<ShapeNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<ConnectorEdge>[]) => void;
   onConnect: (connection: Connection) => void;
@@ -418,11 +422,18 @@ function serializeEdges(edges: ConnectorEdge[]) {
 }
 
 /** The exact JSON written to `Diagram.data` — always stamped with a version. */
-export function serializeDiagram(nodes: ShapeNode[], edges: ConnectorEdge[]): DiagramData {
+export function serializeDiagram(
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+  viewport?: DiagramViewport | null,
+): DiagramData {
   return {
     version: CURRENT_DIAGRAM_VERSION,
     nodes: serializeNodes(nodes) as unknown as DiagramData['nodes'],
     edges: serializeEdges(edges) as unknown as DiagramData['edges'],
+    // Left out entirely rather than written as null: a diagram nobody has
+    // panned should open framed on whatever screen it is opened on.
+    ...(viewport ? { viewport } : {}),
   };
 }
 
@@ -436,6 +447,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   nodes: [],
   edges: [],
   guides: [],
+  viewport: null,
   tool: 'select',
   defaultFill: DEFAULT_SWATCH.fill,
   defaultStroke: DEFAULT_SWATCH.stroke,
@@ -459,12 +471,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       saveStatus: 'idle',
       nodes: migrated.nodes as unknown as ShapeNode[],
       edges: migrated.edges as unknown as ConnectorEdge[],
+      // Cleared, not kept: /d/A -> /d/B reuses this store, and B must not open
+      // on A's camera.
+      viewport: migrated.viewport ?? null,
       ...historyFlags(),
     });
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, saveStatus } = get();
+    const { diagramId, title, nodes, edges, viewport, saveStatus } = get();
     if (!diagramId) return;
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
@@ -475,7 +490,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           // The API rejects a blank title, so a diagram whose name the user
           // cleared would fail every autosave from then on.
           title: title.trim() || 'Untitled',
-          data: serializeDiagram(nodes, edges),
+          data: serializeDiagram(nodes, edges, viewport),
         },
         options,
       );
@@ -497,6 +512,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   setEditingEdgeId: (id) => set({ editingEdgeId: id, editingNodeId: null }),
 
   setTool: (tool) => set({ tool }),
+
+  setViewport: (viewport) => set({ viewport }),
 
   onNodesChange: (changes) => {
     const lockedIds = new Set(get().nodes.filter((n) => n.data.locked).map((n) => n.id));

@@ -63,6 +63,25 @@ describe('migrateDiagramData', () => {
     expect(migrated.edges).toEqual([]);
   });
 
+  it('leaves a payload that has no viewport without one', () => {
+    // Every diagram written before the viewport was stored, which is all of
+    // them: the canvas has to fall back to framing the content itself.
+    expect(migrateDiagramData(v0).viewport).toBeUndefined();
+  });
+
+  it('carries a stored viewport through untouched', () => {
+    const viewport = { x: -40, y: 12, zoom: 1.25 };
+    expect(migrateDiagramData({ ...v0, viewport }).viewport).toEqual(viewport);
+  });
+
+  it('drops a viewport that is not three finite numbers', () => {
+    // `data` is a free-form JSON column, and this value is handed straight to
+    // React Flow as its `defaultViewport`.
+    const broken = ['nope', null, 42, { x: 1, y: 2 }, { x: 1, y: 2, zoom: '3' }, { x: NaN, y: 0, zoom: 1 }];
+    for (const viewport of broken) {
+      expect(migrateDiagramData({ ...v0, viewport }).viewport, JSON.stringify(viewport)).toBeUndefined();
+    }
+>>>>>>> 25ad395 (feat(canvas): reopen a diagram where it was left)
   describe('v1 -> v2: arrowhead booleans become styles', () => {
     /** A v1 edge, with `data` overridden by `patch`. */
     function v1Edge(patch: Record<string, unknown>) {
