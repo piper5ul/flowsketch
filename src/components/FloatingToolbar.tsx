@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { getNodesBounds, useReactFlow, useViewport } from '@xyflow/react';
+import * as Popover from '@radix-ui/react-popover';
 import {
   Trash2,
   CornerDownRight,
@@ -9,9 +10,12 @@ import {
   ChevronUp,
   ChevronDown,
   Link2,
+  RotateCcw,
+  Spline,
   Tag,
   X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { ColorPalette } from './ColorPalette';
@@ -19,8 +23,41 @@ import { ArrangeMenu } from './ArrangeMenu';
 import { TextFormatControls } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
-import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
-import type { StrokeStyle } from '../types';
+import {
+  CONNECTOR_STROKE_PX,
+  DEFAULT_EDGE_STROKE,
+  DEFAULT_END_ARROW,
+  DEFAULT_START_ARROW,
+  DEFAULT_STROKE_WIDTH,
+} from '../lib/defaults';
+import type { ArrowStyle, ConnectorKind, StrokeStyle, StrokeWidth } from '../types';
+
+/** The toolbar's icon button. */
+const BUTTON_CLASS =
+  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30';
+
+/** The toolbar's icon button while it shows the value the selection already has. */
+const ACTIVE_BUTTON_CLASS = 'bg-accent-500 text-white hover:bg-accent-500';
+
+const CONNECTOR_KINDS: [ConnectorKind, LucideIcon, string][] = [
+  ['straight', ArrowRight, 'Straight line'],
+  ['elbow', CornerDownRight, 'Elbow line'],
+  ['curved', Spline, 'Curved line'],
+];
+
+const STROKE_WIDTHS: [StrokeWidth, string][] = [
+  [1, 'Thin line'],
+  [2, 'Regular line'],
+  [3, 'Bold line'],
+];
+
+const ARROW_STYLES: [ArrowStyle, string][] = [
+  ['none', 'None'],
+  ['arrow', 'Arrow'],
+  ['open', 'Open'],
+  ['circle', 'Circle'],
+  ['diamond', 'Diamond'],
+];
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
   solid: undefined,
@@ -45,13 +82,102 @@ function StrokeStyleIcon({ style }: { style: StrokeStyle }) {
   );
 }
 
-function ArrowEndIcon({ side }: { side: 'start' | 'end' }) {
-  const flip = side === 'start';
+function StrokeWidthIcon({ width }: { width: StrokeWidth }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 18 18" style={{ transform: flip ? 'scaleX(-1)' : undefined }}>
-      <line x1="2" y1="9" x2="12" y2="9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      <polygon points="12,4.5 17,9 12,13.5" fill="currentColor" />
+    <svg width="18" height="18" viewBox="0 0 18 18">
+      <line
+        x1="2"
+        y1="9"
+        x2="16"
+        y2="9"
+        stroke="currentColor"
+        strokeWidth={CONNECTOR_STROKE_PX[width]}
+        strokeLinecap="round"
+      />
     </svg>
+  );
+}
+
+/** The five arrowheads, drawn on a stub of line so the choice reads at a glance. */
+function ArrowEndIcon({ style, side }: { style: ArrowStyle; side: 'start' | 'end' }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" style={{ transform: side === 'start' ? 'scaleX(-1)' : undefined }}>
+      <line
+        x1="2"
+        y1="9"
+        x2={style === 'none' ? 16 : 12}
+        y2="9"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+      {style === 'arrow' && <polygon points="12,4.5 17,9 12,13.5" fill="currentColor" />}
+      {style === 'open' && (
+        <polyline
+          points="12,4.5 16.5,9 12,13.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      )}
+      {style === 'circle' && <circle cx="13.5" cy="9" r="3.5" fill="currentColor" />}
+      {style === 'diamond' && <polygon points="10,9 13.5,5.5 17,9 13.5,12.5" fill="currentColor" />}
+    </svg>
+  );
+}
+
+/**
+ * One end's arrowhead. Five styles is more than the toolbar has room for
+ * twice over, so each end keeps its single button and opens the choice below
+ * it — the button itself showing what that end currently wears.
+ */
+function ArrowStylePicker({
+  side,
+  value,
+  onChange,
+}: {
+  side: 'start' | 'end';
+  value: ArrowStyle;
+  onChange: (style: ArrowStyle) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = side === 'start' ? 'Start arrowhead' : 'End arrowhead';
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Tooltip label={label} side="top">
+        <Popover.Trigger asChild>
+          <button aria-label={label} className={clsx(BUTTON_CLASS, value !== 'none' && ACTIVE_BUTTON_CLASS)}>
+            <ArrowEndIcon style={value} side={side} />
+          </button>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          sideOffset={10}
+          className="panel-in z-50 flex items-center gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          {ARROW_STYLES.map(([style, styleLabel]) => (
+            <button
+              key={style}
+              aria-label={styleLabel}
+              title={styleLabel}
+              onClick={() => {
+                onChange(style);
+                setOpen(false);
+              }}
+              className={clsx(BUTTON_CLASS, value === style && ACTIVE_BUTTON_CLASS)}
+            >
+              <ArrowEndIcon style={style} side={side} />
+            </button>
+          ))}
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -136,8 +262,11 @@ export function FloatingToolbar() {
     : selectedNodes[0]?.data?.stroke ?? DEFAULT_SWATCH.stroke;
   const connectorType = selectedEdges[0]?.data?.connectorType ?? 'elbow';
   const strokeStyle = selectedEdges[0]?.data?.strokeStyle ?? 'solid';
-  const startArrow = selectedEdges[0]?.data?.startArrow ?? false;
-  const endArrow = selectedEdges[0]?.data?.endArrow ?? true;
+  const strokeWidth = selectedEdges[0]?.data?.strokeWidth ?? DEFAULT_STROKE_WIDTH;
+  const startArrowStyle = selectedEdges[0]?.data?.startArrowStyle ?? DEFAULT_START_ARROW;
+  const endArrowStyle = selectedEdges[0]?.data?.endArrowStyle ?? DEFAULT_END_ARROW;
+  // Only a dragged bend can be reset, so the button is dead weight without one.
+  const hasWaypoint = selectedEdges.some((e) => e.data?.waypoint);
 
   return (
     <div
@@ -159,26 +288,24 @@ export function FloatingToolbar() {
         {isEdgeMode && (
           <>
             <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <Tooltip label="Straight line" side="top">
+            {CONNECTOR_KINDS.map(([kind, Icon, label]) => (
+              <Tooltip key={kind} label={label} side="top">
+                <button
+                  onClick={() => updateSelectedEdgesStyle({ connectorType: kind })}
+                  className={clsx(BUTTON_CLASS, connectorType === kind && ACTIVE_BUTTON_CLASS)}
+                >
+                  <Icon size={16} />
+                </button>
+              </Tooltip>
+            ))}
+            <Tooltip label="Reset route" side="top">
               <button
-                onClick={() => updateSelectedEdgesStyle({ connectorType: 'straight' })}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  connectorType === 'straight' && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
+                aria-label="Reset route"
+                onClick={() => updateSelectedEdgesStyle({ waypoint: null })}
+                disabled={!hasWaypoint}
+                className={BUTTON_CLASS}
               >
-                <ArrowRight size={16} />
-              </button>
-            </Tooltip>
-            <Tooltip label="Elbow line" side="top">
-              <button
-                onClick={() => updateSelectedEdgesStyle({ connectorType: 'elbow' })}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  connectorType === 'elbow' && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
-              >
-                <CornerDownRight size={16} />
+                <RotateCcw size={16} />
               </button>
             </Tooltip>
 
@@ -187,10 +314,7 @@ export function FloatingToolbar() {
               <Tooltip key={s} label={s[0].toUpperCase() + s.slice(1)} side="top">
                 <button
                   onClick={() => updateSelectedEdgesStyle({ strokeStyle: s })}
-                  className={clsx(
-                    'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                    strokeStyle === s && 'bg-accent-500 text-white hover:bg-accent-500',
-                  )}
+                  className={clsx(BUTTON_CLASS, strokeStyle === s && ACTIVE_BUTTON_CLASS)}
                 >
                   <StrokeStyleIcon style={s} />
                 </button>
@@ -198,28 +322,28 @@ export function FloatingToolbar() {
             ))}
 
             <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <Tooltip label="Start arrowhead" side="top">
-              <button
-                onClick={() => updateSelectedEdgesStyle({ startArrow: !startArrow })}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  startArrow && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
-              >
-                <ArrowEndIcon side="start" />
-              </button>
-            </Tooltip>
-            <Tooltip label="End arrowhead" side="top">
-              <button
-                onClick={() => updateSelectedEdgesStyle({ endArrow: !endArrow })}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  endArrow && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
-              >
-                <ArrowEndIcon side="end" />
-              </button>
-            </Tooltip>
+            {STROKE_WIDTHS.map(([width, label]) => (
+              <Tooltip key={width} label={label} side="top">
+                <button
+                  onClick={() => updateSelectedEdgesStyle({ strokeWidth: width })}
+                  className={clsx(BUTTON_CLASS, strokeWidth === width && ACTIVE_BUTTON_CLASS)}
+                >
+                  <StrokeWidthIcon width={width} />
+                </button>
+              </Tooltip>
+            ))}
+
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <ArrowStylePicker
+              side="start"
+              value={startArrowStyle}
+              onChange={(startArrowStyle) => updateSelectedEdgesStyle({ startArrowStyle })}
+            />
+            <ArrowStylePicker
+              side="end"
+              value={endArrowStyle}
+              onChange={(endArrowStyle) => updateSelectedEdgesStyle({ endArrowStyle })}
+            />
 
             <div className="mx-0.5 h-6 w-px bg-white/10" />
             <Tooltip label="Add label" shortcut="↵" side="top">

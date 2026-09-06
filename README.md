@@ -15,9 +15,12 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 ### Connectors
 - **Elbow (Manhattan) routing** with automatic obstacle avoidance
 - **Straight connectors** for direct point-to-point lines
+- **Curved connectors** that leave each shape square to the side they attach to
 - Three line styles: solid, dashed, dotted
+- Three line thicknesses: thin, regular, bold — arrowheads scale to match
+- Five arrowhead styles per end: none, arrow, open, circle, diamond
 - Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter)
-- Draggable bend-point handles on elbow connectors
+- Draggable bend-point handles, and a Reset route button to undo one
 - Free-standing arrows that can be placed and dragged anywhere
 
 ### Text & Formatting
@@ -223,7 +226,7 @@ CI runs all of the above on every pull request, with Playwright against a fresh 
 flowsketch/
 ├── src/
 │   ├── components/      # Canvas, toolbars, color palette, alignment guides
-│   ├── edges/           # Custom connector edge with Manhattan routing
+│   ├── edges/           # Custom connector edge + its arrowhead marker defs
 │   ├── lib/             # Edge geometry, Manhattan router, color utilities
 │   ├── nodes/           # Custom shape node with 9 shape types
 │   ├── pages/           # Dashboard, canvas, login, signup pages

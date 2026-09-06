@@ -11,11 +11,12 @@
  * `MIGRATIONS`, and leave the earlier steps alone.
  */
 import type { DiagramData, SerializedEdge, SerializedNode } from '../../shared/types';
+import type { ArrowStyle, StrokeWidth } from '../types';
 import { computeMarkers } from './edgeMarkers';
 import { DEFAULT_EDGE_STROKE } from './defaults';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
-export const CURRENT_DIAGRAM_VERSION = 1;
+export const CURRENT_DIAGRAM_VERSION = 2;
 
 type Bag = Record<string, unknown>;
 
@@ -38,10 +39,12 @@ function emptyDiagram(): DiagramData {
 /**
  * v0 (anything written before the version field existed) -> v1.
  *
- * v0 rows may be missing the React Flow `type` discriminators, may have no
- * `data` bag at all, and may carry arrowhead markers that disagree with their
- * data (or none). Entries without the ids the API requires are dropped rather
- * than carried forward into a body the server would reject.
+ * v0 rows may be missing the React Flow `type` discriminators and may have no
+ * `data` bag at all. Entries without the ids the API requires are dropped
+ * rather than carried forward into a body the server would reject.
+ *
+ * They may also carry arrowhead markers that disagree with their data, or
+ * none. That is left to v1 -> v2, which recomputes every edge's markers.
  */
 function v0ToV1(raw: Bag): Bag {
   const nodes = recordsOf(raw.nodes)
@@ -55,29 +58,54 @@ function v0ToV1(raw: Bag): Bag {
 
   const edges = recordsOf(raw.edges)
     .filter((edge) => isNonEmptyString(edge.id) && isNonEmptyString(edge.source) && isNonEmptyString(edge.target))
-    .map((edge) => {
-      const data = isRecord(edge.data) ? edge.data : {};
-      // Markers are derived state; recompute them so a v0 row with stale or
-      // missing arrowheads renders the arrows its data actually asks for.
-      const { markerStart, markerEnd } = computeMarkers({
-        stroke: isNonEmptyString(data.stroke) ? data.stroke : DEFAULT_EDGE_STROKE,
-        startArrow: data.startArrow === true,
-        // An end arrow is the app default, so only an explicit `false` removes it.
-        endArrow: data.endArrow !== false,
-      });
-      const migrated: Bag = { ...edge, type: isNonEmptyString(edge.type) ? edge.type : 'connector', data };
-      if (markerStart) migrated.markerStart = markerStart;
-      else delete migrated.markerStart;
-      if (markerEnd) migrated.markerEnd = markerEnd;
-      else delete migrated.markerEnd;
-      return migrated;
-    });
+    .map((edge) => ({
+      ...edge,
+      type: isNonEmptyString(edge.type) ? edge.type : 'connector',
+      data: isRecord(edge.data) ? edge.data : {},
+    }));
 
   return { ...raw, version: 1, nodes, edges };
 }
 
+/**
+ * v1 -> v2: the two arrowhead booleans become the five-way styles.
+ *
+ * `endArrow: true` was the plain filled arrowhead and `false` was a bare end,
+ * which is exactly `'arrow'` and `'none'`. The booleans are dropped rather
+ * than kept in step, so there is one field per end and no way to read a stale
+ * one; markers are derived state and are recomputed from the styles, which
+ * also repoints v0/v1 rows at this build's own `<marker>` defs.
+ */
+function v1ToV2(raw: Bag): Bag {
+  const edges = recordsOf(raw.edges).map((edge) => {
+    const { startArrow, endArrow, ...rest } = isRecord(edge.data) ? edge.data : {};
+    const data: Bag = {
+      ...rest,
+      startArrowStyle: startArrow === true ? 'arrow' : 'none',
+      // An end arrow is the app default, so only an explicit `false` removes it.
+      endArrowStyle: endArrow === false ? 'none' : 'arrow',
+    };
+
+    const { markerStart, markerEnd } = computeMarkers({
+      stroke: isNonEmptyString(data.stroke) ? data.stroke : DEFAULT_EDGE_STROKE,
+      startArrowStyle: data.startArrowStyle as ArrowStyle,
+      endArrowStyle: data.endArrowStyle as ArrowStyle,
+      strokeWidth: data.strokeWidth as StrokeWidth | undefined,
+    });
+
+    const migrated: Bag = { ...edge, data };
+    if (markerStart) migrated.markerStart = markerStart;
+    else delete migrated.markerStart;
+    if (markerEnd) migrated.markerEnd = markerEnd;
+    else delete migrated.markerEnd;
+    return migrated;
+  });
+
+  return { ...raw, version: 2, edges };
+}
+
 /** `MIGRATIONS[n]` upgrades a v`n` payload to v`n+1`. */
-const MIGRATIONS: ((raw: Bag) => Bag)[] = [v0ToV1];
+const MIGRATIONS: ((raw: Bag) => Bag)[] = [v0ToV1, v1ToV2];
 
 /**
  * Normalizes whatever the API returned into a `DiagramData` this build

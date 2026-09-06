@@ -8,8 +8,8 @@ describe('makeEdgeData', () => {
       stroke: DEFAULT_EDGE_STROKE,
       strokeStyle: 'solid',
       label: '',
-      startArrow: false,
-      endArrow: true,
+      startArrowStyle: 'none',
+      endArrowStyle: 'arrow',
     });
   });
 

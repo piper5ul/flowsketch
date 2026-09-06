@@ -16,14 +16,14 @@ describe('migrateDiagramData', () => {
 
   it('fills in node/edge types and data bags when upgrading v0', () => {
     const migrated = migrateDiagramData(v0);
-    expect(migrated.version).toBe(1);
+    expect(migrated.version).toBe(CURRENT_DIAGRAM_VERSION);
     expect(migrated.nodes[0]).toMatchObject({ id: 'n1', type: 'shape', data: {} });
     expect(migrated.edges[0]).toMatchObject({ id: 'e1', type: 'connector' });
   });
 
   it('recomputes v0 arrowhead markers from edge data', () => {
     const edge = migrateDiagramData(v0).edges[0];
-    expect(edge.markerEnd).toMatchObject({ color: '#123456' });
+    expect(edge.markerEnd).toContain('123456');
     expect(edge.markerStart).toBeUndefined();
   });
 
@@ -37,19 +37,19 @@ describe('migrateDiagramData', () => {
   });
 
   it('passes a current-version diagram through untouched', () => {
-    const v1 = {
-      version: 1,
+    const current = {
+      version: CURRENT_DIAGRAM_VERSION,
       nodes: [{ id: 'n1', type: 'shape', position: { x: 0, y: 0 }, data: { label: 'hi' } }],
       edges: [
         {
           id: 'e1', source: 'n1', target: 'n2', type: 'connector',
-          markerEnd: { type: 'arrowclosed', color: '#999999' },
-          data: { stroke: '#123456', startArrow: false, endArrow: true },
+          markerEnd: 'whatever-this-build-wrote',
+          data: { stroke: '#123456', startArrowStyle: 'none', endArrowStyle: 'circle' },
         },
       ],
     };
-    // The stored marker survives — a v1 writer always persists markers alongside data.
-    expect(migrateDiagramData(v1)).toEqual(v1);
+    // The stored marker survives — a writer always persists markers alongside data.
+    expect(migrateDiagramData(current)).toEqual(current);
   });
 
   it('is idempotent — migrating twice equals migrating once', () => {
@@ -61,6 +61,50 @@ describe('migrateDiagramData', () => {
     const migrated = migrateDiagramData({ nodes: ['nope', null, { id: 'n1' }], edges: 'not an array' });
     expect(migrated.nodes).toHaveLength(1);
     expect(migrated.edges).toEqual([]);
+  });
+
+  describe('v1 -> v2: arrowhead booleans become styles', () => {
+    /** A v1 edge, with `data` overridden by `patch`. */
+    function v1Edge(patch: Record<string, unknown>) {
+      return {
+        version: 1,
+        nodes: [],
+        edges: [{ id: 'e1', source: 'n1', target: 'n2', type: 'connector', data: { stroke: '#123456', ...patch } }],
+      };
+    }
+
+    it('turns a shown arrow into the plain arrowhead and a hidden one into none', () => {
+      const { data } = migrateDiagramData(v1Edge({ startArrow: true, endArrow: false })).edges[0]!;
+      expect(data).toMatchObject({ startArrowStyle: 'arrow', endArrowStyle: 'none' });
+    });
+
+    it('reads the app defaults for a v1 edge that never wrote the flags', () => {
+      const { data } = migrateDiagramData(v1Edge({})).edges[0]!;
+      expect(data).toMatchObject({ startArrowStyle: 'none', endArrowStyle: 'arrow' });
+    });
+
+    it('drops the booleans it replaced, so nothing can read them again', () => {
+      const { data } = migrateDiagramData(v1Edge({ startArrow: true, endArrow: true })).edges[0]!;
+      expect(data).not.toHaveProperty('startArrow');
+      expect(data).not.toHaveProperty('endArrow');
+    });
+
+    it('repoints the markers at the styles it just wrote', () => {
+      const edge = migrateDiagramData(v1Edge({ startArrow: true, endArrow: false })).edges[0]!;
+      expect(edge.markerStart).toContain('arrow');
+      expect(edge.markerStart).toContain('123456');
+      expect(edge.markerEnd).toBeUndefined();
+    });
+
+    it('leaves the rest of an edge alone', () => {
+      const { data } = migrateDiagramData(v1Edge({ label: 'yes', connectorType: 'curved' })).edges[0]!;
+      expect(data).toMatchObject({ label: 'yes', connectorType: 'curved', stroke: '#123456' });
+    });
+
+    it('is idempotent — migrating twice equals migrating once', () => {
+      const once = migrateDiagramData(v1Edge({ startArrow: true, endArrow: false }));
+      expect(migrateDiagramData(once)).toEqual(once);
+    });
   });
 
   it('throws a descriptive error for a diagram from a newer version', () => {
