@@ -10,7 +10,7 @@ import { serveForTest } from './testServer.js';
  * than per file here; it is still one port per test instead of one per
  * request. See `testServer.ts`.
  */
-function serverWith(limiter: express.RequestHandler) {
+async function serverWith(limiter: express.RequestHandler) {
   const app = express();
   app.use(limiter);
   app.get('/', (_req, res) => {
@@ -32,7 +32,7 @@ describe('createApiLimiter', () => {
   });
 
   it('lets requests through up to the limit and 429s the next one', async () => {
-    const server = serverWith(createApiLimiter({ windowMs: 60_000, limit: 2 }));
+    const server = await serverWith(createApiLimiter({ windowMs: 60_000, limit: 2 }));
     await request(server).get('/').expect(200);
     await request(server).get('/').expect(200);
     const res = await request(server).get('/').expect(429);
@@ -40,15 +40,15 @@ describe('createApiLimiter', () => {
   });
 
   it('advertises the limit in standard headers, not legacy ones', async () => {
-    const server = serverWith(createApiLimiter({ windowMs: 60_000, limit: 2 }));
+    const server = await serverWith(createApiLimiter({ windowMs: 60_000, limit: 2 }));
     const res = await request(server).get('/').expect(200);
     expect(Object.keys(res.headers).some((h) => h.startsWith('ratelimit'))).toBe(true);
     expect(res.headers).not.toHaveProperty('x-ratelimit-limit');
   });
 
   it('counts each limiter separately, so uploads do not spend the general budget', async () => {
-    const general = serverWith(createApiLimiter({ windowMs: 60_000, limit: 2 }));
-    const uploads = serverWith(createImageUploadLimiter({ windowMs: 60_000, limit: 2 }));
+    const general = await serverWith(createApiLimiter({ windowMs: 60_000, limit: 2 }));
+    const uploads = await serverWith(createImageUploadLimiter({ windowMs: 60_000, limit: 2 }));
     await request(general).get('/').expect(200);
     await request(general).get('/').expect(200);
     await request(general).get('/').expect(429);
@@ -59,7 +59,7 @@ describe('createApiLimiter', () => {
 describe('outside production', () => {
   it('does not limit anything, so dev servers and unit tests are unaffected', async () => {
     process.env.NODE_ENV = 'development';
-    const server = serverWith(createApiLimiter({ windowMs: 60_000, limit: 1 }));
+    const server = await serverWith(createApiLimiter({ windowMs: 60_000, limit: 1 }));
     await request(server).get('/').expect(200);
     await request(server).get('/').expect(200);
     await request(server).get('/').expect(200);

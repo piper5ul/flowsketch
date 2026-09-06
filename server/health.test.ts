@@ -14,7 +14,7 @@ const { healthRouter } = await import('./health.js');
 const app = express();
 app.use('/api', healthRouter);
 // One port for the whole file — see `testServer.ts`.
-const server = serveForFile(app);
+const server = await serveForFile(app);
 
 beforeEach(() => {
   vi.resetAllMocks();

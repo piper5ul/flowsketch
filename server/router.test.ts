@@ -78,7 +78,7 @@ app.use('/api', express.json({ limit: '5mb' }));
 app.use('/api', apiRouter);
 // One port for the whole file, rather than the one-per-request supertest binds
 // when handed an app — see `testServer.ts` for what that was costing.
-const server = serveForFile(app);
+const server = await serveForFile(app);
 
 const owned = { id: 'd1', userId: 'u1', title: 'Mine', starred: false, data: { nodes: [], edges: [] } };
 

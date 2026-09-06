@@ -163,15 +163,16 @@ describe('copyTitle', () => {
   });
 });
 
-describe('validateBody', () => {
-  const app = express();
-  app.use(express.json());
-  app.post('/t', validateBody(updateDiagramBody), (req, res) => {
-    res.json({ body: req.body });
-  });
-  // One port for this suite — see `testServer.ts`.
-  const server = serveForFile(app);
+/** The one route `validateBody` is exercised through, and its server. */
+const app = express();
+app.use(express.json());
+app.post('/t', validateBody(updateDiagramBody), (req, res) => {
+  res.json({ body: req.body });
+});
+// One port for the whole file — see `testServer.ts`.
+const server = await serveForFile(app);
 
+describe('validateBody', () => {
   it('passes a valid body through, parsed', async () => {
     const res = await request(server).post('/t').send({ title: '  Plan  ' }).expect(200);
     expect(res.body).toEqual({ body: { title: 'Plan' } });

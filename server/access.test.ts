@@ -91,7 +91,7 @@ describe('requireDiagramRole', () => {
    * decided. Built per case because `minimum` differs; one port per test
    * rather than one per request. See `testServer.ts`.
    */
-  function serverRequiring(minimum: DiagramRole) {
+  async function serverRequiring(minimum: DiagramRole) {
     const app = express();
     app.get('/d/:id', (req, _res, next) => {
       req.user = { id: 'u1' } as NonNullable<typeof req.user>;
@@ -109,24 +109,24 @@ describe('requireDiagramRole', () => {
 
   it('lets a caller through whose role is strong enough', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'owner', members: [{ role: 'editor' }] });
-    const res = await request(serverRequiring('viewer')).get('/d/d1').expect(200);
+    const res = await request(await serverRequiring('viewer')).get('/d/d1').expect(200);
     expect(res.body).toEqual({ role: 'editor' });
   });
 
   it('404s a caller with no access at all, so the diagram stays unobservable', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    const res = await request(serverRequiring('viewer')).get('/d/d1').expect(404);
+    const res = await request(await serverRequiring('viewer')).get('/d/d1').expect(404);
     expect(res.body).toEqual({ error: 'Not found' });
   });
 
   it('403s a caller who can see it but may not do this to it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'owner', members: [{ role: 'viewer' }] });
-    const res = await request(serverRequiring('editor')).get('/d/d1').expect(403);
+    const res = await request(await serverRequiring('editor')).get('/d/d1').expect(403);
     expect(res.body).toEqual({ error: 'Forbidden' });
   });
 
   it('403s an editor where ownership is required', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'owner', members: [{ role: 'editor' }] });
-    await request(serverRequiring('owner')).get('/d/d1').expect(403);
+    await request(await serverRequiring('owner')).get('/d/d1').expect(403);
   });
 });

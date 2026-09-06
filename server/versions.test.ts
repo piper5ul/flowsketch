@@ -78,7 +78,7 @@ const app = express();
 app.use('/api', express.json({ limit: '5mb' }));
 app.use('/api', apiRouter);
 // One port for the whole file — see `testServer.ts`.
-const server = serveForFile(app);
+const server = await serveForFile(app);
 
 /** Diagram JSON with `n` placeholder nodes, distinguishable between saves. */
 function board(nodeIds: string[]) {

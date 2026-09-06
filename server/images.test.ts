@@ -55,7 +55,7 @@ const { imagePath } = await import('./storage.js');
 const app = express();
 app.use('/api/images', imagesRouter);
 // One port for the whole file — see `testServer.ts`.
-const server = serveForFile(app);
+const server = await serveForFile(app);
 
 /** A real, valid 1x1 transparent PNG. */
 const PNG_1X1 = Buffer.from(

@@ -39,6 +39,23 @@ import { afterAll, onTestFinished } from 'vitest';
  */
 const LOOPBACK = '127.0.0.1';
 
+/**
+ * Listen on a loopback port and resolve once it is really bound.
+ *
+ * The `await` is not optional. Naming a host sends `listen` through an
+ * asynchronous lookup — even for a literal address — so `server.address()` is
+ * `null` until it completes, and supertest reads that as "not listening yet"
+ * and calls `listen(0)` on it *itself*. Which binds `::`, and closes the server
+ * after the response: precisely the two things this file exists to avoid, but
+ * silently. Hence the promise, which makes forgetting it a type error.
+ */
+function listen(app: RequestListener): Promise<Server> {
+  return new Promise((resolve) => {
+    const server = createServer(app);
+    server.listen(0, LOOPBACK, () => resolve(server));
+  });
+}
+
 /** Close a server without waiting out any connection still parked on it. */
 function close(server: Server): Promise<void> {
   return new Promise((resolve) => {
@@ -51,8 +68,8 @@ function close(server: Server): Promise<void> {
  * One server for the whole test file, closed when the file is done. Call it at
  * module scope, next to the app it serves, and hand the result to `request()`.
  */
-export function serveForFile(app: RequestListener): Server {
-  const server = createServer(app).listen(0, LOOPBACK);
+export async function serveForFile(app: RequestListener): Promise<Server> {
+  const server = await listen(app);
   afterAll(() => close(server));
   return server;
 }
@@ -62,8 +79,8 @@ export function serveForFile(app: RequestListener): Server {
  * that build a fresh app per case (a rate limiter has to start from an empty
  * count) and so cannot share one for the file.
  */
-export function serveForTest(app: RequestListener): Server {
-  const server = createServer(app).listen(0, LOOPBACK);
+export async function serveForTest(app: RequestListener): Promise<Server> {
+  const server = await listen(app);
   onTestFinished(() => close(server));
   return server;
 }
