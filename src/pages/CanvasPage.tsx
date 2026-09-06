@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Canvas } from '../components/Canvas';
@@ -14,20 +14,27 @@ export function CanvasPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const loadDiagram = useDiagramStore((s) => s.loadDiagram);
-  const mounted = useRef(false);
 
   useEffect(() => {
-    if (!id || mounted.current) return;
-    mounted.current = true;
+    if (!id) return;
+    // Route param changes (/d/A -> /d/B) reuse this component, so the load has
+    // to re-run per id. `cancelled` discards a response that arrives after the
+    // id moved on, and makes StrictMode's double-invocation harmless.
+    let cancelled = false;
+    setLoading(true);
 
     api.getDiagram(id)
       .then((diagram) => {
+        if (cancelled) return;
         loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data);
         setLoading(false);
       })
       .catch(() => {
+        if (cancelled) return;
         navigate('/', { replace: true });
       });
+
+    return () => { cancelled = true; };
   }, [id, loadDiagram, navigate]);
 
   useEffect(() => {
