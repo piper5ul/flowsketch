@@ -17,12 +17,13 @@ const API_LIMIT = 600;
 const IMAGE_UPLOAD_LIMIT = 60;
 
 /**
- * Unit tests fire dozens of requests from one address; throttling them would
- * make the suite order-dependent. Read at request time, not at import time, so
- * a test can build a limiter and exercise it under another NODE_ENV.
+ * Only production is limited. Unit tests fire dozens of requests from one
+ * address, and a local e2e loop against the dev server burns the 15-minute
+ * budget in a couple of runs. Read at request time, not at import time, so a
+ * test can build a limiter and exercise it under NODE_ENV=production.
  */
-function skipInTests(): boolean {
-  return process.env.NODE_ENV === 'test';
+function skipOutsideProduction(): boolean {
+  return process.env.NODE_ENV !== 'production';
 }
 
 function limiter(limit: number, overrides: Partial<Options>) {
@@ -32,7 +33,7 @@ function limiter(limit: number, overrides: Partial<Options>) {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests' },
-    skip: skipInTests,
+    skip: skipOutsideProduction,
     ...overrides,
   });
 }

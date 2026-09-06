@@ -19,10 +19,9 @@ afterEach(() => {
 });
 
 describe('createApiLimiter', () => {
-  // The limiters skip themselves under NODE_ENV=test (see the suite below), so
-  // these cases run as if in development.
+  // The limiters only count in production (see the suite below).
   beforeEach(() => {
-    process.env.NODE_ENV = 'development';
+    process.env.NODE_ENV = 'production';
   });
 
   it('lets requests through up to the limit and 429s the next one', async () => {
@@ -50,9 +49,9 @@ describe('createApiLimiter', () => {
   });
 });
 
-describe('under NODE_ENV=test', () => {
-  it('does not limit anything, so unit tests are unaffected', async () => {
-    process.env.NODE_ENV = 'test';
+describe('outside production', () => {
+  it('does not limit anything, so dev servers and unit tests are unaffected', async () => {
+    process.env.NODE_ENV = 'development';
     const app = appWith(createApiLimiter({ windowMs: 60_000, limit: 1 }));
     await request(app).get('/').expect(200);
     await request(app).get('/').expect(200);
