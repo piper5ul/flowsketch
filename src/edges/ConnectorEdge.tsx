@@ -519,6 +519,35 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           )}
         </div>
       </EdgeLabelRenderer>
+
+      {/* With no label there is no element to click, so a selected connector
+          offers a small target that opens the label editor. Selecting the edge
+          mounts the joint handles into this same portal afterwards, so the
+          target carries its own z-index to stay above the mid-path handle. */}
+      {selected && !editing && !data?.label && (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${labelPos.x}px, ${labelPos.y}px)`,
+              pointerEvents: 'all',
+              zIndex: 1,
+            }}
+            className="nodrag nopan"
+          >
+            <button
+              type="button"
+              title="Add label"
+              className="connector-label-target"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditingEdgeId(id);
+              }}
+            />
+          </div>
+        </EdgeLabelRenderer>
+      )}
     </>
   );
 }

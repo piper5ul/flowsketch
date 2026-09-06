@@ -2,9 +2,9 @@ import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Star, Check, Loader2, Download, Image, FileText } from 'lucide-react';
 import clsx from 'clsx';
-import { toPng } from 'html-to-image';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore, type SaveStatus } from '../store/useDiagramStore';
+import { renderDiagramPng } from '../lib/exportImage';
 import { api } from '../lib/api';
 
 export function TopBar() {
@@ -70,12 +70,9 @@ function ExportMenu() {
 
   const exportPng = useCallback(async () => {
     setOpen(false);
-    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
-    if (!viewport) return;
-    const dataUrl = await toPng(viewport, {
-      backgroundColor: '#f6f7fb',
-      pixelRatio: 2,
-    });
+    // Null for an empty diagram — nothing worth downloading.
+    const dataUrl = await renderDiagramPng();
+    if (!dataUrl) return;
     const a = document.createElement('a');
     a.href = dataUrl;
     a.download = `${title || 'diagram'}.png`;
@@ -84,12 +81,8 @@ function ExportMenu() {
 
   const exportSvg = useCallback(async () => {
     setOpen(false);
-    const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
-    if (!viewport) return;
-    const dataUrl = await toPng(viewport, {
-      backgroundColor: '#f6f7fb',
-      pixelRatio: 2,
-    });
+    const dataUrl = await renderDiagramPng();
+    if (!dataUrl) return;
     const printWindow = window.open('');
     if (!printWindow) return;
     printWindow.document.write(`<img src="${dataUrl}" style="max-width:100%" />`);

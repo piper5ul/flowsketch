@@ -28,6 +28,9 @@ uploads
 *.sln
 *.sw?
 
+# Agent worktrees
+.claude/worktrees/
+
 # Test output
 test-results
 playwright-report

@@ -211,6 +211,8 @@ interface DiagramState {
   beginInteraction: () => void;
   updateEdgeDataTransient: (id: string, data: Partial<ConnectorData>) => void;
   moveNodesTransient: (positions: Record<string, { x: number; y: number }>) => void;
+  /** Resizes a node without history — for sizes derived from content, not from a user gesture. */
+  setNodeSizeTransient: (id: string, size: { width?: number; height?: number }) => void;
 
   nudgeSelected: (dx: number, dy: number) => void;
   duplicateSelection: (offset?: number) => void;
@@ -605,6 +607,18 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   moveNodesTransient: (positions) => {
     set((s) => ({
       nodes: s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n)),
+    }));
+  },
+
+  // A text shape's height follows its content rather than a user gesture, so
+  // growing it must never cost the user an undo step.
+  setNodeSizeTransient: (id, size) => {
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === id
+          ? { ...n, width: size.width ?? n.width, height: size.height ?? n.height }
+          : n,
+      ),
     }));
   },
 

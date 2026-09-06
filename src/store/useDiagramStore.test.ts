@@ -436,6 +436,34 @@ describe('updateSelectedNodesStyle', () => {
   });
 });
 
+describe('setNodeSizeTransient', () => {
+  it('resizes a node, leaving the dimension that was not passed alone', () => {
+    const id = store().addShape('text', { x: 0, y: 0 });
+    store().setNodeSizeTransient(id, { height: 132 });
+
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node.height).toBe(132);
+    expect(node.width).toBe(160);
+  });
+
+  it('does not record an undo entry, so auto-growing text is not undoable', () => {
+    const id = store().addShape('text', { x: 0, y: 0 });
+    store().setNodeSizeTransient(id, { height: 240 });
+
+    // addShape pushed the only history entry, so a single undo must take the
+    // diagram all the way back to empty.
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('ignores an unknown node id', () => {
+    const id = store().addShape('text', { x: 0, y: 0 });
+    store().setNodeSizeTransient('nope', { height: 999 });
+    expect(store().nodes.find((n) => n.id === id)!.height).toBe(40);
+  });
+});
+
 describe('computeMarkers', () => {
   it('emits colored arrowheads only for the enabled ends', () => {
     const both = computeMarkers({ stroke: '#ABCDEF', startArrow: true, endArrow: true });

@@ -10,6 +10,7 @@ import {
 import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import type { ConnectorData } from '../types';
+import { renderDiagramPng } from '../lib/exportImage';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { LeftRail } from './LeftRail';
@@ -172,10 +173,28 @@ export function Canvas() {
     [tool, screenToFlowPosition, addShape, setTool, setEditingNodeId, addNodes, addEdges, defaultConnector],
   );
 
+  // A fresh connector renders no label element, so there is nothing to
+  // double-click on the label itself. Double-clicking anywhere along the
+  // connector opens its label for editing, matching Whimsical.
+  const onEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: { id: string }) => {
+      setEditingEdgeId(edge.id);
+    },
+    [setEditingEdgeId],
+  );
+
   const onCanvasDoubleClick = useCallback(
     (event: React.MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (target.closest('.react-flow__node') || target.closest('.react-flow__edge')) return;
+      // Edge labels (and the add-label target) are portalled into the label
+      // renderer, outside `.react-flow__edge`, so they need their own guard.
+      if (
+        target.closest('.react-flow__node') ||
+        target.closest('.react-flow__edge') ||
+        target.closest('.react-flow__edgelabel-renderer')
+      ) {
+        return;
+      }
       if (tool !== 'select') return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const id = addShape('text', { x: position.x - 80, y: position.y - 20 });
@@ -302,16 +321,12 @@ export function Canvas() {
       // Cmd+Shift+C → Copy as image
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
         e.preventDefault();
-        const viewport = document.querySelector('.react-flow__viewport') as HTMLElement;
-        if (viewport) {
-          import('html-to-image').then(({ toPng }) => {
-            toPng(viewport, { backgroundColor: '#f6f7fb', pixelRatio: 2 }).then(async (dataUrl) => {
-              const res = await fetch(dataUrl);
-              const blob = await res.blob();
-              await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-            });
-          });
-        }
+        void renderDiagramPng().then(async (dataUrl) => {
+          if (!dataUrl) return;
+          const res = await fetch(dataUrl);
+          const blob = await res.blob();
+          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        });
         return;
       }
 
@@ -548,6 +563,7 @@ export function Canvas() {
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
         onNodeClick={onNodeClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={30}
