@@ -365,65 +365,65 @@ export function DashboardPage() {
             </div>
 
             <div className="min-w-0 flex-1">
-          {listState === 'ready' && diagrams.length > 0 && (
-            <div className="mb-4 flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search
-                  size={14}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-600/50"
-                />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  aria-label="Search diagrams"
-                  placeholder="Search diagrams"
-                  className="w-full rounded-lg bg-panel py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
-                />
-              </div>
-              <select
-                value={sort}
-                onChange={(e) => setSort(e.target.value as DiagramSort)}
-                aria-label="Sort diagrams"
-                className="rounded-lg bg-panel px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none focus:ring-accent-500/40"
-              >
-                {DIAGRAM_SORTS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
+              {listState === 'ready' && diagrams.length > 0 && (
+                <div className="mb-4 flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search
+                      size={14}
+                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-600/50"
+                    />
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      aria-label="Search diagrams"
+                      placeholder="Search diagrams"
+                      className="w-full rounded-lg bg-panel py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
+                    />
+                  </div>
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as DiagramSort)}
+                    aria-label="Sort diagrams"
+                    className="rounded-lg bg-panel px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none focus:ring-accent-500/40"
+                  >
+                    {DIAGRAM_SORTS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
-          {listState === 'loading' ? (
-            <SkeletonGrid />
-          ) : listState === 'error' ? (
-            <ErrorState onRetry={refresh} />
-          ) : diagrams.length === 0 ? (
-            <EmptyState onCreate={createDiagram} />
-          ) : owned.length + shared.length === 0 ? (
-            <EmptySelection selection={selection} query={query} folderName={selectedFolderName} />
-          ) : (
-            <>
-              {owned.length > 0 && (
-                <section>
-                  {/* "All diagrams" needs no heading — the page already has
-                      one. Every narrower view says which one it is. */}
-                  {sectionTitle && (
-                    <h2 className="mb-4 text-lg font-semibold text-ink-900">{sectionTitle}</h2>
+              {listState === 'loading' ? (
+                <SkeletonGrid />
+              ) : listState === 'error' ? (
+                <ErrorState onRetry={refresh} />
+              ) : diagrams.length === 0 ? (
+                <EmptyState onCreate={createDiagram} />
+              ) : owned.length + shared.length === 0 ? (
+                <EmptySelection selection={selection} query={query} folderName={selectedFolderName} />
+              ) : (
+                <>
+                  {owned.length > 0 && (
+                    <section>
+                      {/* "All diagrams" needs no heading — the page already has
+                          one. Every narrower view says which one it is. */}
+                      {sectionTitle && (
+                        <h2 className="mb-4 text-lg font-semibold text-ink-900">{sectionTitle}</h2>
+                      )}
+                      <div className={CARD_GRID}>{owned.map(renderCard)}</div>
+                    </section>
                   )}
-                  <div className={CARD_GRID}>{owned.map(renderCard)}</div>
-                </section>
+                  {shared.length > 0 && (
+                    <section className={owned.length > 0 ? 'mt-10' : ''}>
+                      <h2 className="mb-4 text-lg font-semibold text-ink-900">Shared with me</h2>
+                      <div className={CARD_GRID}>{shared.map(renderCard)}</div>
+                    </section>
+                  )}
+                </>
               )}
-              {shared.length > 0 && (
-                <section className={owned.length > 0 ? 'mt-10' : ''}>
-                  <h2 className="mb-4 text-lg font-semibold text-ink-900">Shared with me</h2>
-                  <div className={CARD_GRID}>{shared.map(renderCard)}</div>
-                </section>
-              )}
-            </>
-          )}
             </div>
           </div>
         </main>
