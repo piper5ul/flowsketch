@@ -181,6 +181,9 @@ interface DiagramState {
   defaultFill: string;
   defaultStroke: string;
   defaultConnector: ConnectorKind;
+  /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
+  canUndo: boolean;
+  canRedo: boolean;
 
   loadDiagram: (id: string, title: string, starred: boolean, data: { nodes: unknown[]; edges: unknown[] }) => void;
   saveDiagram: () => Promise<void>;
@@ -229,6 +232,8 @@ interface DiagramState {
 }
 
 // ---- tiny undo/redo history (snapshot-based, good enough for a diagram tool) ----
+// The stacks stay module-level so they never reach the serialized diagram; the
+// `canUndo` / `canRedo` booleans in the store are the UI's view of them.
 type Snapshot = { nodes: ShapeNode[]; edges: ConnectorEdge[] };
 let past: Snapshot[] = [];
 let future: Snapshot[] = [];
@@ -242,10 +247,15 @@ function snapshotOf(state: DiagramState): Snapshot {
   return { nodes: state.nodes, edges: state.edges };
 }
 
+function historyFlags() {
+  return { canUndo: past.length > 0, canRedo: future.length > 0 };
+}
+
 function pushHistory(state: DiagramState) {
   if (suppressHistory) return;
   past = [...past.slice(-49), snapshotOf(state)];
   future = [];
+  useDiagramStore.setState(historyFlags());
 }
 
 /**
@@ -313,6 +323,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   defaultFill: DEFAULT_SWATCH.fill,
   defaultStroke: DEFAULT_SWATCH.stroke,
   defaultConnector: 'elbow',
+  canUndo: false,
+  canRedo: false,
 
   loadDiagram: (id, title, starred, data) => {
     past = [];
@@ -330,6 +342,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       saveStatus: 'idle',
       nodes: (data.nodes || []) as ShapeNode[],
       edges,
+      ...historyFlags(),
     });
   },
 
@@ -798,7 +811,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     future = [snapshotOf(state), ...future];
     suppressHistory = true;
     lastNudgeAt = 0;
-    set({ nodes: previous.nodes, edges: previous.edges });
+    set({ nodes: previous.nodes, edges: previous.edges, ...historyFlags() });
     suppressHistory = false;
   },
 
@@ -810,7 +823,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     past = [...past, snapshotOf(state)];
     suppressHistory = true;
     lastNudgeAt = 0;
-    set({ nodes: next.nodes, edges: next.edges });
+    set({ nodes: next.nodes, edges: next.edges, ...historyFlags() });
     suppressHistory = false;
   },
 }));

@@ -136,6 +136,37 @@ describe('undo / redo', () => {
   });
 });
 
+describe('canUndo / canRedo', () => {
+  it('are both false on a freshly loaded diagram', () => {
+    expect(store().canUndo).toBe(false);
+    expect(store().canRedo).toBe(false);
+  });
+
+  it('turn on as history accumulates and off again as it is consumed', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    expect(store().canUndo).toBe(true);
+    expect(store().canRedo).toBe(false);
+
+    store().undo();
+    expect(store().canUndo).toBe(false);
+    expect(store().canRedo).toBe(true);
+
+    store().redo();
+    expect(store().canUndo).toBe(true);
+    expect(store().canRedo).toBe(false);
+  });
+
+  it('reset when another diagram is loaded', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    store().undo();
+    expect(store().canRedo).toBe(true);
+
+    store().loadDiagram('other', 'Other', false, { nodes: [], edges: [] });
+    expect(store().canUndo).toBe(false);
+    expect(store().canRedo).toBe(false);
+  });
+});
+
 describe('nudgeSelected', () => {
   beforeEach(() => {
     vi.useFakeTimers();
