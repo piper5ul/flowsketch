@@ -745,6 +745,40 @@ describe('updateSelectedNodesStyle', () => {
   });
 });
 
+describe('updateSelectedNodesData', () => {
+  it('formats every selected shape at once', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('ellipse', { x: 200, y: 0 });
+    const outsider = store().addShape('rectangle', { x: 400, y: 0 });
+    select(a, b);
+    store().updateSelectedNodesData({ bold: true, fontSize: 'large' });
+
+    expect(store().nodes.find((n) => n.id === a)!.data).toMatchObject({ bold: true, fontSize: 'large' });
+    expect(store().nodes.find((n) => n.id === b)!.data).toMatchObject({ bold: true, fontSize: 'large' });
+    expect(store().nodes.find((n) => n.id === outsider)!.data.bold).toBeUndefined();
+  });
+
+  it('leaves an image alone — it has no text to format', () => {
+    const shape = store().addShape('rectangle', { x: 0, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 64, height: 64, position: { x: 200, y: 0 } });
+    select(shape, image);
+    store().updateSelectedNodesData({ bold: true });
+
+    expect(store().nodes.find((n) => n.id === shape)!.data.bold).toBe(true);
+    expect(store().nodes.find((n) => n.id === image)!.data.bold).toBeUndefined();
+  });
+
+  it('records one history entry for the whole selection', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 200, y: 0 });
+    select(a, b);
+    store().updateSelectedNodesData({ italic: true });
+
+    store().undo();
+    expect(store().nodes.every((n) => n.data.italic === undefined)).toBe(true);
+  });
+});
+
 describe('setNodeSizeTransient', () => {
   it('resizes a node, leaving the dimension that was not passed alone', () => {
     const id = store().addShape('text', { x: 0, y: 0 });

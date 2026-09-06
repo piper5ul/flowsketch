@@ -892,10 +892,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
+  // Formatting (and the copied style behind ⌘⌥C / ⌘⌥V) applied to the whole
+  // selection at once. Images carry no text and no fill or stroke of their own,
+  // so they sit it out rather than collecting data nothing will ever render.
   updateSelectedNodesData: (patch) => {
     pushHistory(get());
     set((s) => ({
-      nodes: s.nodes.map((n) => (n.selected ? { ...n, data: { ...n.data, ...patch } } : n)),
+      nodes: s.nodes.map((n) =>
+        n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
+      ),
     }));
   },
 

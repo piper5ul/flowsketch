@@ -16,6 +16,7 @@ import clsx from 'clsx';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
+import { TextFormatControls } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
@@ -60,6 +61,7 @@ export function FloatingToolbar() {
   const updateSelectedNodesStyle = useDiagramStore((s) => s.updateSelectedNodesStyle);
   const updateSelectedEdgesStyle = useDiagramStore((s) => s.updateSelectedEdgesStyle);
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
+  const updateSelectedNodesData = useDiagramStore((s) => s.updateSelectedNodesData);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
   const bringToFront = useDiagramStore((s) => s.bringToFront);
@@ -74,6 +76,8 @@ export function FloatingToolbar() {
 
   const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
   const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);
+  // Images have no label, so a selection of nothing but images gets no text controls.
+  const textNodes = useMemo(() => selectedNodes.filter((n) => n.data.shape !== 'image'), [selectedNodes]);
 
   // An elbow connector can route (and its drag handles can sit) well above/below
   // its endpoints, so measure the actual rendered path rather than assuming it
@@ -226,6 +230,22 @@ export function FloatingToolbar() {
                 <Tag size={16} />
               </button>
             </Tooltip>
+          </>
+        )}
+
+        {textNodes.length > 0 && (
+          <>
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <TextFormatControls
+              value={{
+                fontSize: textNodes[0].data.fontSize ?? 'medium',
+                bold: textNodes[0].data.bold ?? false,
+                italic: textNodes[0].data.italic ?? false,
+                textAlign: textNodes[0].data.textAlign ?? (textNodes[0].data.shape === 'text' ? 'left' : 'center'),
+                verticalAlign: textNodes[0].data.verticalAlign ?? 'middle',
+              }}
+              onChange={updateSelectedNodesData}
+            />
           </>
         )}
 
