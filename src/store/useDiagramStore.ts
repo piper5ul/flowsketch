@@ -170,7 +170,12 @@ function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
     .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
 }
 
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+/**
+ * `retrying` is owned by the autosaver, not by `saveDiagram`: it is set once
+ * the autosaver has scheduled another attempt after a failure (see
+ * `src/lib/autosave.ts`), and it survives the failures that follow.
+ */
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'retrying';
 
 // Toolbar interaction flag — prevents contentEditable blur from
 // clearing editing state when the user clicks a formatting button.
@@ -456,7 +461,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   saveDiagram: async (options) => {
     const { diagramId, title, nodes, edges, saveStatus } = get();
     if (!diagramId) return;
-    const wasFailing = saveStatus === 'error';
+    const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
     try {
       await api.saveDiagram(
@@ -471,11 +476,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       );
       set({ saveStatus: 'saved' });
     } catch {
-      set({ saveStatus: 'error' });
-      // Autosave retries on the next edit, so a broken connection would
-      // otherwise stack one toast per keystroke. Only the first failure of a
-      // run is announced; the SaveIndicator carries the state after that.
-      if (!wasFailing) toastError('Save failed — retrying on your next change');
+      // Once the autosaver is retrying, every further failure of that streak
+      // keeps saying "retrying" rather than flashing "save failed" per attempt.
+      set({ saveStatus: saveStatus === 'retrying' ? 'retrying' : 'error' });
+      // A broken connection would otherwise stack one toast per attempt. Only
+      // the first failure of a streak is announced; the SaveIndicator carries
+      // the state after that.
+      if (!wasFailing) toastError('Save failed — retrying');
     }
   },
 

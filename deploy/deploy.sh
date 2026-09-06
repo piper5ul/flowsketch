@@ -45,7 +45,7 @@ remote "
   echo \"▶ At \$(git rev-parse --short HEAD): \$(git log -1 --pretty=%s)\"
   npm ci --legacy-peer-deps --no-audit --no-fund
   npx prisma generate
-  npx prisma db push
+  npx prisma migrate deploy
   npm run build
   npm run build:server
   systemctl restart '$UNIT'

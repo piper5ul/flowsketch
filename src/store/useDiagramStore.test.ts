@@ -959,7 +959,7 @@ describe('saveDiagram', () => {
     await store().saveDiagram();
     expect(store().saveStatus).toBe('error');
     expect(useToastStore.getState().toasts).toMatchObject([
-      { kind: 'error', message: 'Save failed — retrying on your next change' },
+      { kind: 'error', message: 'Save failed — retrying' },
     ]);
   });
 
@@ -968,6 +968,23 @@ describe('saveDiagram', () => {
     await store().saveDiagram();
     await store().saveDiagram();
     expect(useToastStore.getState().toasts).toHaveLength(1);
+  });
+
+  it('keeps the retrying status a failing autosaver set, rather than flashing an error per attempt', async () => {
+    saveDiagram.mockRejectedValue(new Error('offline'));
+    // What the autosaver puts there once it has scheduled a retry.
+    useDiagramStore.setState({ saveStatus: 'retrying' });
+
+    await store().saveDiagram();
+    expect(store().saveStatus).toBe('retrying');
+    // The streak was already announced, so this attempt stays quiet.
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('clears a retrying status once a save gets through', async () => {
+    useDiagramStore.setState({ saveStatus: 'retrying' });
+    await store().saveDiagram();
+    expect(store().saveStatus).toBe('saved');
   });
 });
 

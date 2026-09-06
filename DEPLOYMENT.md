@@ -31,7 +31,7 @@ $EDITOR .env        # DATABASE_URL, BETTER_AUTH_SECRET (long random string), BET
 
 npm ci --legacy-peer-deps
 npx prisma generate
-npx prisma db push   # until migrations exist (roadmap: deploy-migrate)
+npx prisma migrate deploy   # creates the schema from prisma/migrations/
 npm run build && npm run build:server
 
 install -m 644 deploy/whimsy.service /etc/systemd/system/whimsy.service
@@ -54,6 +54,38 @@ From a developer machine with SSH access, [`deploy/deploy.sh`](deploy/deploy.sh)
 ```
 
 The script refuses to run if the server checkout has local modifications, and prints the health check at the end. Set `DEPLOY_SSH` (default `localpve`) and `DEPLOY_PCT` (default `235`) to target a different host or container; set `DEPLOY_PCT=` to run the remote commands directly over SSH instead of through Proxmox's `pct exec`.
+
+## Database migrations
+
+The schema is versioned in `prisma/migrations/`. Every deploy — including `deploy/deploy.sh` — applies pending migrations with `prisma migrate deploy`, which is non-interactive, never resets, and never prompts.
+
+```bash
+npm run db:migrate:deploy      # or: npx prisma migrate deploy
+```
+
+**A new, empty database needs nothing else**: `migrate deploy` applies `20260906065812_init` and records it in `_prisma_migrations`.
+
+### Baselining a database created with `db push` (one-time, required)
+
+Before migrations existed the schema was applied with `prisma db push`, which writes no `_prisma_migrations` table. Such a database already *has* the init schema but cannot prove it, so `migrate deploy` would try to re-create every table and fail on the first `CREATE TABLE`. Mark the initial migration as already applied, once per such database, **before the first deploy that runs `migrate deploy`**:
+
+```bash
+npx prisma migrate resolve --applied 20260906065812_init
+```
+
+That only writes the bookkeeping row; it runs no SQL against your tables. Run it once for **every** database that predates this change — the shared dev database and the production LXC's database both qualify (see *Reference deployment* below). Afterwards `migrate deploy` reports "No pending migrations" and future migrations apply normally.
+
+If you are unsure whether a database is baselined, `SELECT migration_name FROM "_prisma_migrations";` — a missing table or an empty result means it is not.
+
+### Changing the schema
+
+Edit `prisma/schema.prisma`, then generate a migration against a scratch database:
+
+```bash
+npm run db:migrate -- --name add_something   # prisma migrate dev
+```
+
+Commit the generated `prisma/migrations/<timestamp>_add_something/` directory with the schema change. `npm run db:push` is still there for a throwaway local database you do not mind losing — it skips the migration history entirely, so never point it at the shared dev database or production.
 
 ## Exposing it
 
@@ -87,7 +119,7 @@ cloudflared service install && systemctl enable --now cloudflared
 | Restart | `systemctl restart whimsy` |
 | Health (liveness) | `curl -s localhost:3001/api/health` → `{"ok":true}` — answered by the process alone, never touches Postgres |
 | Health (readiness) | `curl -s localhost:3001/api/health?deep=1` → `{"ok":true,"db":true}`, or `503 {"ok":false,"db":false}` when the database is unreachable |
-| Schema after a pull | `npx prisma db push` (or `prisma migrate deploy` once migrations exist) |
+| Schema after a pull | `npx prisma migrate deploy` (`deploy/deploy.sh` already runs it) |
 | Roll back | `git checkout <previous-tag> && npm ci --legacy-peer-deps && npm run build && npm run build:server && systemctl restart whimsy` |
 
 Point uptime monitoring at the deep probe: the shallow one stays green while the app is unusable because Postgres is down.
@@ -109,6 +141,14 @@ The public instance at `whimsical.vedalogy.com`, as verified on 2026-09-05:
 | Database | shared PostgreSQL at `192.168.68.242:5432` |
 | Tunnel | **runs on the maintainer's Mac** (`~/.cloudflared/config.yml`, shared with ~25 other hostnames) with `whimsical.vedalogy.com → http://192.168.68.251:3001` |
 | Nginx | installed on the container with the stock config; unused |
+
+**Required one-time step — baseline both databases.** Both the production database and the shared development database on `192.168.68.242` were created with `prisma db push`, so neither has a `_prisma_migrations` table. The next deploy runs `prisma migrate deploy` and will fail on `CREATE TABLE "User"` until each is baselined. With `DATABASE_URL` pointing at the database in question:
+
+```bash
+npx prisma migrate resolve --applied 20260906065812_init
+```
+
+Do this **once per database, before the first deploy of this change** — for the LXC 235 app database and for the shared dev database. It writes only the bookkeeping row; no schema SQL runs.
 
 Known gaps, tracked on the roadmap:
 

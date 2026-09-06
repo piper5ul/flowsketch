@@ -309,6 +309,103 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
   });
 });
 
+describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
+  function nodeWithImage(id: string, imageId: string) {
+    return { id, type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } };
+  }
+  /** What the row looked like before the edit, as the handler reads it. */
+  function existingWith(...imageIds: string[]) {
+    return { id: 'd1', data: { nodes: imageIds.map((i, n) => nodeWithImage(`n${n}`, i)), edges: [] } };
+  }
+  /** The body of an edit that leaves `imageIds` on the canvas. */
+  function bodyWith(...imageIds: string[]) {
+    return { data: { nodes: imageIds.map((i, n) => nodeWithImage(`n${n}`, i)), edges: [] } };
+  }
+
+  it('deletes an image the edit removed from the canvas', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped', 'kept'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    // The survivor scan runs after the update, so d1 already reads back edited.
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith('kept').data }]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'dropped', mime: 'image/png' }]);
+    prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const droppedFile = imagePath('u1', 'dropped', 'png');
+    fs.writeFileSync(droppedFile, 'x');
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith('kept')).expect(200);
+
+    expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['dropped'] }, userId: 'u1' },
+    });
+    expect(fs.existsSync(droppedFile)).toBe(false);
+  });
+
+  it('keeps a dropped image that another diagram still references', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('shared'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    // d2 still uses `shared`, so removing it from d1 must not delete the file.
+    prismaMock.diagram.findMany.mockResolvedValue([
+      { data: bodyWith().data },
+      { data: bodyWith('shared').data },
+    ]);
+    prismaMock.image.findMany.mockResolvedValue([]);
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const sharedFile = imagePath('u1', 'shared', 'png');
+    fs.writeFileSync(sharedFile, 'x');
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    expect(prismaMock.image.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+    expect(fs.existsSync(sharedFile)).toBe(true);
+  });
+
+  it('scans the survivors only after the row is updated', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    prismaMock.image.findMany.mockResolvedValue([]);
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    // Otherwise the pre-edit JSON would still count as a live reference.
+    const updatedAt = prismaMock.diagram.update.mock.invocationCallOrder[0];
+    const scannedAt = prismaMock.diagram.findMany.mock.invocationCallOrder[0];
+    expect(updatedAt).toBeLessThan(scannedAt);
+  });
+
+  it('does not scan when the edit drops no image', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('kept'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith('kept', 'added')).expect(200);
+
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('does not scan for a PUT that carries no data', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('kept'));
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed' });
+
+    await request(app).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
+
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('still returns 200 when cleanup fails, because the edit is already saved', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('boom'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+  });
+});
+
 describe('POST /api/diagrams/:id/duplicate', () => {
   const source = {
     title: 'Roadmap',
