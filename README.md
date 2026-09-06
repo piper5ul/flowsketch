@@ -36,6 +36,16 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Infinite pan and zoom canvas
 - Undo / redo history
 - Export to PNG
+- Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
+- Lock / unlock shapes (`⌘⇧L`)
+- Z-order controls: bring forward / backward, bring to front / send to back
+- Copy / paste style between shapes and save a shape's fill & stroke as the default style for new shapes (`⌘⌥C`, `⌘⌥V`, `⌘⇧D`)
+- Paste images from the clipboard as image shapes (`⌘V` with an image on the clipboard)
+- Add hyperlinks to shapes from the floating toolbar
+- Nudge selected shapes with the arrow keys (1 px, 10 px with Shift)
+- Quick-add neighbor buttons on hover that create a connected shape in any direction
+- Drag connector endpoints to reconnect them to other shapes
+- Drag connector labels along the path to reposition them
 - Auto-save to server (diagrams persist across sessions)
 
 ### Collaboration-Ready Backend
@@ -43,6 +53,84 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Email verification via configurable SMTP
 - Per-user diagram dashboard
 - RESTful API for diagram CRUD
+
+## Keyboard shortcuts
+
+On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
+
+### Tools
+
+| Shortcut | Tool |
+|----------|------|
+| `V` | Select |
+| `H` | Pan |
+| `R` | Rectangle |
+| `O` | Ellipse |
+| `D` | Diamond |
+| `U` | Pill |
+| `G` | Triangle |
+| `Y` | Cylinder |
+| `S` / `N` | Sticky note |
+| `T` | Text |
+| `A` / `L` | Connector |
+
+Hexagon has no keyboard shortcut — select it from the left rail. Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.
+
+### Editing
+
+| Shortcut | Action |
+|----------|--------|
+| `Enter` | Edit the selected shape's text (or the selected connector's label) |
+| `Escape` | Cancel / deselect and return to the Select tool |
+| Double-click a shape | Edit its text inline |
+| Double-click a connector label | Edit the label |
+| Double-click empty canvas | Add a text shape and edit it |
+| `Backspace` / `Delete` | Delete the selection |
+
+### Selection & arrangement
+
+| Shortcut | Action |
+|----------|--------|
+| `⌘A` | Select all shapes and connectors (locked shapes stay unselected) |
+| `←` `↑` `→` `↓` | Nudge selection by 1 px |
+| `⇧` + arrows | Nudge selection by 10 px |
+| `]` | Bring selection to front |
+| `[` | Send selection to back |
+| `⌘]` | Bring selection forward |
+| `⌘[` | Send selection backward |
+| `⌘⇧L` | Lock / unlock selection |
+
+### Clipboard & style
+
+| Shortcut | Action |
+|----------|--------|
+| `⌘C` | Copy the selection |
+| `⌘X` | Cut the selection |
+| `⌘V` | Paste the selection |
+| `⌘D` | Duplicate the selection (offset +30) |
+| `⌥`-drag | Duplicate a shape in place while dragging |
+| `⌘⌥C` | Copy the selected shape's style |
+| `⌘⌥V` | Paste style onto the selection |
+| `⌘⇧D` | Save the selected shape's fill/stroke as the default style for new shapes |
+| `⌘⌥=` | Increase font size of the selection |
+| `⌘⌥-` | Decrease font size of the selection |
+| `⌘⇧C` | Copy the canvas as an image to the clipboard |
+
+### View
+
+| Shortcut | Action |
+|----------|--------|
+| `⌘Z` | Undo |
+| `⌘⇧Z` | Redo |
+| `⌘=` / `⌘+` | Zoom in |
+| `⌘-` | Zoom out |
+| `=` / `+` | Zoom in |
+| `-` | Zoom out |
+| `0` | Reset zoom to 100% |
+| `1` | Fit all shapes in view |
+| `2` | Zoom to the selection |
+| `⌘0` | Fit all shapes in view |
+| `Space` (hold) | Temporarily pan; releases back to the previous tool |
 
 ## Tech Stack
 
