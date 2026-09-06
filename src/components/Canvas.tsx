@@ -19,6 +19,7 @@ import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { ConnectorMarkerDefs } from '../edges/ConnectorMarkerDefs';
+import { useCollabStore } from '../store/useCollabStore';
 import { useCommentStore, type CommentAnchor } from '../store/useCommentStore';
 import { CommentPins } from './CommentPins';
 import { LeftRail } from './LeftRail';
@@ -415,6 +416,26 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     [readOnly, insertImages],
   );
 
+  /**
+   * Tells the other people on this diagram where the pointer is.
+   *
+   * Reported in flow coordinates, so a peer's cursor lands on the same shape it
+   * is over here whatever either window is panned or zoomed to. The store
+   * throttles what actually reaches the wire; this only converts.
+   */
+  const onPointerMove = useCallback(
+    (event: React.PointerEvent) => {
+      useCollabStore.getState().reportCursor(
+        screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+      );
+    },
+    [screenToFlowPosition],
+  );
+
+  // The pointer being *somewhere else* is worth saying: a cursor left where it
+  // was last seen claims someone is looking at a shape they have walked away from.
+  const onPointerLeave = useCallback(() => useCollabStore.getState().reportCursor(null), []);
+
   // Dragging a connector out to empty canvas creates a new connected shape,
   // mirroring Whimsical's "drag to create" flow.
   const onConnectEnd = useCallback(
@@ -513,6 +534,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       onDoubleClick={onCanvasDoubleClick}
       onDragOver={onDragOver}
       onDrop={onDrop}
+      // Nobody to tell on the public share page — `canComment` stands for "a
+      // signed-in member has this open", which is exactly who has presence.
+      onPointerMove={canComment ? onPointerMove : undefined}
+      onPointerLeave={canComment ? onPointerLeave : undefined}
     >
       <ReactFlow
         nodes={nodes}
