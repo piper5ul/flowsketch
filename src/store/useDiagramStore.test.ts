@@ -418,6 +418,66 @@ describe('onNodesChange with locked nodes', () => {
   });
 });
 
+describe('alignment guides while dragging', () => {
+  // `loadDiagram` resets the nodes but not the guides drawn over them.
+  beforeEach(() => {
+    useDiagramStore.setState({ guides: [] });
+  });
+
+  /** A default-sized (180×100) rectangle. */
+  const rect = (x: number, y: number) => store().addShape('rectangle', { x, y });
+  const posOf = (id: string) => store().nodes.find((n) => n.id === id)!.position;
+
+  /** The change React Flow emits for a node being dragged to `x, y`. */
+  const drag = (id: string, x: number, y: number) =>
+    ({ type: 'position', id, position: { x, y }, dragging: true }) as const;
+
+  it('snaps a single dragged node onto a stationary one', () => {
+    const still = rect(500, 1000);
+    const moving = rect(0, 0);
+    store().onNodesChange([drag(moving, 497, 0)]);
+
+    expect(posOf(moving).x).toBe(500);
+    expect(posOf(still)).toEqual({ x: 500, y: 1000 });
+    expect(store().guides.length).toBeGreaterThan(0);
+  });
+
+  it('snaps a two-node drag as one box, moving both by the same delta', () => {
+    rect(500, 1000);
+    const a = rect(0, 0);
+    const b = rect(0, 300);
+    // Both dragged together, the pair's left edge 3px shy of the third node's.
+    store().onNodesChange([drag(a, 497, 0), drag(b, 497, 300)]);
+
+    expect(posOf(a)).toEqual({ x: 500, y: 0 });
+    expect(posOf(b)).toEqual({ x: 500, y: 300 });
+    expect(store().guides.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the dragged nodes\' spacing when the snap comes from the far edge', () => {
+    // The stationary node's left edge lines up with the *pair's* right edge,
+    // which only the trailing node can reach: the leading one must move with it.
+    rect(860, 1000);
+    const a = rect(0, 0);
+    const b = rect(200, 0);
+    store().onNodesChange([drag(a, 480, 0), drag(b, 677, 0)]);
+
+    expect(posOf(a)).toEqual({ x: 483, y: 0 });
+    expect(posOf(b)).toEqual({ x: 680, y: 0 });
+  });
+
+  it('does not snap to the nodes being dragged themselves', () => {
+    const a = rect(0, 0);
+    const b = rect(203, 0);
+    store().onNodesChange([drag(a, 0, 0), drag(b, 203, 0)]);
+
+    // b's left edge is 3px from a's right edge, but both are travelling, so
+    // there is nothing standing still to snap to.
+    expect(posOf(b)).toEqual({ x: 203, y: 0 });
+    expect(store().guides).toHaveLength(0);
+  });
+});
+
 describe('z-order', () => {
   function ids() {
     return store().nodes.map((n) => n.id);

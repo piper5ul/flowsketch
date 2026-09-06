@@ -505,25 +505,41 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     if (isDragging) {
       const state = get();
-      const draggedIds = new Set(
-        changes.filter((c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true).map((c) => c.id),
+      const posChanges = changes.filter(
+        (c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true,
       );
+      const draggedIds = new Set(posChanges.map((c) => c.id));
       const others = state.nodes
         .filter((n) => !draggedIds.has(n.id))
-        .map((n) => ({ x: n.position.x, y: n.position.y, w: n.width ?? n.measured?.width ?? 0, h: n.height ?? n.measured?.height ?? 0 }));
+        .map((n) => ({ x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
 
-      if (others.length > 0 && draggedIds.size === 1) {
-        const posChange = changes.find((c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true)!;
-        const node = state.nodes.find((n) => n.id === posChange.id)!;
-        const newX = posChange.position?.x ?? node.position.x;
-        const newY = posChange.position?.y ?? node.position.y;
-        const w = node.width ?? node.measured?.width ?? 0;
-        const h = node.height ?? node.measured?.height ?? 0;
+      // Where each dragged node would land before any snapping.
+      const dragged = posChanges.flatMap((change) => {
+        const node = state.nodes.find((n) => n.id === change.id);
+        if (!node) return [];
+        return [{
+          change,
+          x: change.position?.x ?? node.position.x,
+          y: change.position?.y ?? node.position.y,
+          w: nodeWidth(node),
+          h: nodeHeight(node),
+        }];
+      });
 
-        const { dx, dy, guides } = computeAlignmentSnap({ x: newX, y: newY, w, h }, others);
+      if (others.length > 0 && dragged.length > 0) {
+        // A multi-selection snaps as one rigid box: the guides are computed for
+        // its bounding box and the resulting offset is applied to every node in
+        // it, so the shapes keep their spacing instead of collapsing onto the
+        // same guide one by one.
+        const x = Math.min(...dragged.map((d) => d.x));
+        const y = Math.min(...dragged.map((d) => d.y));
+        const w = Math.max(...dragged.map((d) => d.x + d.w)) - x;
+        const h = Math.max(...dragged.map((d) => d.y + d.h)) - y;
+
+        const { dx, dy, guides } = computeAlignmentSnap({ x, y, w, h }, others);
 
         if (dx !== 0 || dy !== 0) {
-          posChange.position = { x: newX + dx, y: newY + dy };
+          for (const d of dragged) d.change.position = { x: d.x + dx, y: d.y + dy };
         }
         set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides }));
         return;
