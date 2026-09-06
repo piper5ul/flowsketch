@@ -25,7 +25,7 @@
  */
 import { Router } from 'express';
 import { prisma } from './db.js';
-import { requireDiagramRole } from './access.js';
+import { publicDiagram, requireDiagramRole } from './access.js';
 import { authedUser } from './types.js';
 import { createVersionBody, validateBody, type CreateVersionBody } from './validation.js';
 import type { DiagramVersion, DiagramVersionMeta } from '../shared/types.js';
@@ -287,5 +287,7 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     // `shareToken`, which an editor restoring a version has no business seeing.
     select: { id: true, title: true, data: true, updatedAt: true },
   });
-  res.json(updated);
+  // Already narrow enough that this strips nothing — it is here so that every
+  // route answering with a diagram row does so through the one serializer.
+  res.json(publicDiagram(updated, access.role));
 });

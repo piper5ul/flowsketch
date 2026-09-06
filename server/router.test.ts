@@ -264,6 +264,33 @@ describe('PUT /api/diagrams/:id', () => {
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { title: 'Edited' } });
   });
 
+  it('never hands an editor the owner\'s share token back', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
+    // `update` reads the whole row back, so the share token is in hand here —
+    // the response is where it has to be dropped.
+    prismaMock.diagram.update.mockResolvedValue({
+      ...owned,
+      userId: 'owner-user',
+      title: 'Edited',
+      shareToken: 'secret-token',
+    });
+
+    const res = await request(app).put('/api/diagrams/d1').send({ title: 'Edited' }).expect(200);
+
+    expect(res.body).toMatchObject({ id: 'd1', title: 'Edited' });
+    expect(res.body).not.toHaveProperty('shareToken');
+  });
+
+  it('keeps the share token in the owner\'s own PUT response', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, shareToken: 'secret-token' });
+
+    const res = await request(app).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
+
+    // The owner is the one person the link belongs to; the share dialog reads it.
+    expect(res.body.shareToken).toBe('secret-token');
+  });
+
   it('refuses a viewer\'s write with a 403, not a 404: they can already see it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('viewer'));
     await request(app).put('/api/diagrams/d1').send({ title: 'Nope' }).expect(403);
