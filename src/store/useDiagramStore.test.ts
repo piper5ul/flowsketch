@@ -466,6 +466,38 @@ describe('addConnectedShape', () => {
   });
 });
 
+describe('updateEdgeData', () => {
+  /** An edge with the default styling, plus the id of its source shape. */
+  function edgeId() {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    return store().edges[0].id;
+  }
+
+  it('recolors the arrowheads when the stroke changes', () => {
+    const id = edgeId();
+    store().updateEdgeData(id, { stroke: '#FF0000' });
+    expect(store().edges[0].markerEnd).toMatchObject({ color: '#FF0000' });
+  });
+
+  it('adds and removes arrowheads as the arrow flags change', () => {
+    const id = edgeId();
+    store().updateEdgeData(id, { startArrow: true });
+    expect(store().edges[0].markerStart).toBeDefined();
+
+    store().updateEdgeData(id, { endArrow: false });
+    expect(store().edges[0].markerEnd).toBeUndefined();
+    expect(store().edges[0].markerStart).toBeDefined();
+  });
+
+  it('leaves the markers alone for a patch that cannot affect them', () => {
+    const id = edgeId();
+    const before = store().edges[0].markerEnd;
+    store().updateEdgeData(id, { label: 'yes' });
+    expect(store().edges[0].markerEnd).toBe(before);
+  });
+});
+
 describe('updateSelectedNodesStyle', () => {
   it('restyles the selection and makes that style the new default', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });

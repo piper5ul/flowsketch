@@ -248,6 +248,14 @@ function pushHistory(state: DiagramState) {
   useDiagramStore.setState(historyFlags());
 }
 
+/** The `ConnectorData` fields `computeMarkers` reads. */
+const MARKER_KEYS = ['stroke', 'startArrow', 'endArrow'] as const satisfies readonly (keyof ConnectorData)[];
+
+/** True when a connector patch changes something the arrowheads are derived from. */
+function touchesMarkers(patch: Partial<ConnectorData>): boolean {
+  return MARKER_KEYS.some((key) => key in patch);
+}
+
 /**
  * True when every key in `patch` already holds that exact value — a commit that
  * would leave the diagram untouched and so must not cost the user a ⌘Z.
@@ -585,7 +593,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     if (!edge || (edge.data && isNoOpPatch(edge.data, data))) return;
     pushHistory(get());
     set((s) => ({
-      edges: s.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, ...data } } : e)),
+      edges: s.edges.map((e) => {
+        if (e.id !== id) return e;
+        const next = { ...e.data!, ...data };
+        // Arrowheads are derived from `data` but live on the edge, so any patch
+        // that touches what they are derived from has to regenerate them.
+        return { ...e, ...(touchesMarkers(data) ? computeMarkers(next) : {}), data: next };
+      }),
     }));
   },
 
