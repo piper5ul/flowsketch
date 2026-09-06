@@ -252,6 +252,14 @@ export interface ConnectPresenceOptions {
   onPeers: (peers: Peer[]) => void;
   onStatus: (status: PresenceStatus) => void;
   /**
+   * Called whenever the answer to "is everything written here on the server?"
+   * changes — `false` while an update is still in the browser.
+   *
+   * The provider is the only thing that knows, and from phase 3 the connection
+   * is what the UI reports instead of a save status, so somebody has to ask.
+   */
+  onPending?: (pending: boolean) => void;
+  /**
    * Called once the server's first document message has been applied — the
    * moment the `Y.Doc` really holds this diagram and may be bound to the store.
    * Fires again after a reconnect, so the callback has to be idempotent.
@@ -301,6 +309,7 @@ export function connectPresence({
   onPeers,
   onStatus,
   onSynced,
+  onPending,
 }: ConnectPresenceOptions): PresenceConnection {
   const provider = new HocuspocusProvider({
     url: collabUrl(origin),
@@ -340,6 +349,12 @@ export function connectPresence({
     provider.setAwarenessField('cursor', cursor);
   }, CURSOR_INTERVAL_MS);
 
+  /** True while something written in this browser has not reached the server. */
+  const reportPending = () => onPending?.(!provider.isSynced || provider.hasUnsyncedChanges);
+  provider.on('synced', reportPending);
+  provider.on('unsyncedChanges', reportPending);
+  reportPending();
+
   /** Resolves once the provider has nothing left to send, or gives up. */
   const flush = () =>
     new Promise<boolean>((resolve) => {
@@ -377,6 +392,8 @@ export function connectPresence({
     setSelection: (nodeIds) => provider.setAwarenessField('selection', nodeIds),
     destroy: () => {
       sendCursor.cancel();
+      provider.off('synced', reportPending);
+      provider.off('unsyncedChanges', reportPending);
       provider.awareness?.off('change', publishPeers);
       // Removes this client's awareness state for everybody else on the way
       // out, rather than leaving a ghost cursor until the server times it out.

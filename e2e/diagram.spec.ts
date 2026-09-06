@@ -21,8 +21,22 @@ const TINY_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAbElEQVR42u3XMQ0AIAxFQeQgAiUoQSKuwECZukC4hLEDN738svoMX20jfLfdFwAAAACAFOCVj57uAQAAAAByACUGAAAAsAeUGAAAAMAeUGIAAAAAe0CJAQAAAOwBJQYAAACwB5QYAAAA4BvABjVC6Vo+2hhHAAAAAElFTkSuQmCC';
 
 /**
- * Draws one labelled rectangle on the open canvas and waits for it to be saved,
- * so a second reader of the same diagram is guaranteed to see it.
+ * Waits until everything this window has done has reached the server.
+ *
+ * The sync point "Saved" used to be. From phase 3 of `docs/realtime.md` an open
+ * diagram lives in a shared document and the indicator reports the *connection*
+ * ("Live"), which is a different claim: connected is not the same as
+ * everything-I-typed-has-arrived, and a test about to reload the page needs the
+ * second one. `data-collab-sync` is that answer — the provider has nothing left
+ * to send and the binding is not holding a gesture.
+ */
+async function expectSynced(page: Page) {
+  await expect(page.locator('[data-collab-sync="synced"]')).toBeVisible();
+}
+
+/**
+ * Draws one labelled rectangle on the open canvas and waits for it to reach the
+ * server, so a second reader of the same diagram is guaranteed to see it.
  */
 async function drawLabelledShape(page: Page, pane: Locator, label: string) {
   await page.keyboard.press('r');
@@ -33,7 +47,7 @@ async function drawLabelledShape(page: Page, pane: Locator, label: string) {
   await page.keyboard.type(label);
   await page.keyboard.press('Escape');
   await expect(node).toContainText(label);
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
   return node;
 }
 
@@ -73,8 +87,9 @@ test('a new user can create a diagram, add a labeled shape, and see it survive a
   await page.keyboard.press('Escape');
   await expect(node).toContainText('Hello from e2e');
 
-  // Autosave is debounced; wait for the indicator rather than a fixed sleep.
-  await expect(page.getByText('Saved')).toBeVisible();
+  // Writing the edit out takes a beat either way; wait for the indicator rather
+  // than a fixed sleep.
+  await expectSynced(page);
 
   await page.reload();
   await expect(page.locator('.react-flow__node', { hasText: 'Hello from e2e' })).toBeVisible();
@@ -256,7 +271,7 @@ test('the dashboard lists a created diagram and can open it again', async ({ pag
   await expect(page).toHaveURL(url);
 });
 
-test('an edit made inside the autosave debounce window survives navigating away', async ({ page }) => {
+test('an edit made and left behind at once survives navigating away', async ({ page }) => {
   await signUp(page);
 
   await page.getByRole('button', { name: 'New Diagram' }).first().click();
@@ -274,8 +289,10 @@ test('an edit made inside the autosave debounce window survives navigating away'
   await page.keyboard.press('Escape');
   await expect(node).toContainText('Saved on the way out');
 
-  // Leave immediately — inside the 2 s debounce, without waiting for "Saved".
-  // The unmount must flush the pending save rather than drop it.
+  // Leave at once, without waiting for the edit to be reported as stored. The
+  // unmount has to carry it out either way: the binding writes the gesture
+  // still in hand into the document before the socket closes, and a diagram
+  // with no document behind it flushes the pending autosave instead.
   await page.getByRole('button', { name: 'Back to dashboard' }).click();
   await expect(page.getByRole('heading', { name: 'My Diagrams' })).toBeVisible();
 
@@ -379,7 +396,7 @@ test('a diagram exported as JSON can be imported back from the dashboard', async
   await node.dblclick();
   await page.keyboard.type('Exported shape');
   await page.keyboard.press('Escape');
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -471,7 +488,7 @@ test('a pasted image is uploaded and referenced by URL, not embedded as base64',
   await expect(image).toHaveJSProperty('complete', true);
   expect(await image.evaluate((el) => el.naturalWidth)).toBe(64);
 
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
   await page.reload();
   await expect(page.locator('.react-flow__node img[src^="/api/images/"]')).toHaveCount(1);
 });
@@ -494,7 +511,7 @@ test('the rail\'s image button inserts a picked file, and it survives a reload',
   await expect(image).toHaveCount(1);
   await expect(image).toHaveJSProperty('complete', true);
 
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
   await page.reload();
   await expect(page.locator('.react-flow__node img[src^="/api/images/"]')).toHaveCount(1);
 });
@@ -578,7 +595,7 @@ test('a diagram reopens at the zoom it was left at', async ({ page }) => {
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
 
   const zoomReset = page.getByRole('button', { name: 'Reset zoom' });
   const opened = await zoomReset.textContent();
@@ -960,7 +977,7 @@ test('two people edit one diagram at once and both windows end up identical', as
   const pane = await newDiagram(page);
   const alpha = await drawShapeIn(page, pane, { x: 400, y: 260 });
   await drawShapeIn(page, pane, { x: 400, y: 560 });
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
 
   const guest = await browser.newContext();
   const guestPage = await guest.newPage();
@@ -1013,6 +1030,144 @@ test('two people edit one diagram at once and both windows end up identical', as
   await guest.close();
 });
 
+/** Invites `email` as an editor of the open diagram, through the share dialog. */
+async function inviteEditor(page: Page, email: string) {
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(email);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(email)).toBeVisible();
+  // Out of the way: it covers the canvas the two of them are about to work on.
+  await page.getByRole('button', { name: 'Close share dialog' }).click();
+}
+
+test('⌘Z takes back your own move and leaves your collaborator’s where they put it', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  const mine = await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await drawShapeIn(page, pane, { x: 400, y: 560 });
+  await expectSynced(page);
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
+
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2);
+  await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+
+  const [first, second] = Object.keys(await nodePositions(page));
+
+  // Ada moves one shape, Grace moves the other, and both windows agree.
+  await dragBy(page, mine, 150, 0);
+  await dragBy(guestPage, guestPage.locator(`.react-flow__node[data-id="${second}"]`), 0, -120);
+  await expectSameBoard(page, guestPage);
+  const moved = await nodePositions(page);
+
+  // Ada presses ⌘Z. Her shape goes back — in Grace's window too, because
+  // undoing an edit is an edit — and Grace's shape is not Ada's to take back.
+  await pane.click({ position: { x: 60, y: 60 } });
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect.poll(async () => (await nodePositions(page))[first], { timeout: 15_000 })
+    .not.toBe(moved[first]);
+  await expectSameBoard(page, guestPage);
+
+  const afterUndo = await nodePositions(page);
+  expect(afterUndo[second]).toBe(moved[second]);
+
+  // And ⌘⇧Z puts Ada's own move back, still without touching Grace's.
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect.poll(async () => (await nodePositions(page))[first], { timeout: 15_000 })
+    .toBe(moved[first]);
+  await expectSameBoard(page, guestPage);
+  expect((await nodePositions(page))[second]).toBe(moved[second]);
+
+  await guest.close();
+});
+
+/**
+ * Takes `page`'s collaboration socket away on demand, and gives it back.
+ *
+ * `context.setOffline(true)` is the obvious way and does not do this:
+ * Chromium's offline emulation refuses *new* connections and leaves an
+ * established WebSocket alone, so the provider goes on believing it is live
+ * until its own 30 s message timeout — which is a slow, flaky thing to wait
+ * for and not what a dropped connection looks like anyway. Routing the socket
+ * closes it the way a lost network does, and refuses to reopen it until the
+ * network is "back", so the reconnect being tested is the provider's own.
+ *
+ * Install it **before the page navigates at all**. Routing a WebSocket works by
+ * injecting into the document, and the app routes on the client from the sign-up
+ * form onwards — so a route installed after that first load reaches no document
+ * and quietly catches nothing.
+ */
+async function collabNetwork(page: Page) {
+  const open: { close: () => Promise<void> | void }[] = [];
+  let down = false;
+
+  await page.routeWebSocket(/\/collab/, (socket) => {
+    if (down) {
+      void socket.close();
+      return;
+    }
+    socket.connectToServer();
+    open.push(socket);
+  });
+
+  return {
+    async drop() {
+      down = true;
+      await Promise.all(open.splice(0).map((socket) => socket.close()));
+    },
+    restore() {
+      down = false;
+    },
+  };
+}
+
+test('a dropped connection says so, comes back, and brings the offline edit with it', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  const network = await collabNetwork(page);
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await expectSynced(page);
+
+  // Grace is in her own browser context, so she stays online while Ada does not.
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
+
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.getByText('Live')).toBeVisible();
+
+  // Ada's network goes away. The bar stops claiming she is live rather than
+  // leaving her to believe her edits are reaching anybody.
+  await network.drop();
+  await expect(page.locator('[data-collab-status="connected"]')).toHaveCount(0);
+  await expect(page.getByText('Live')).toHaveCount(0);
+
+  // She keeps drawing regardless — the document is in her browser, and the
+  // canvas has no reason to stop working because a socket did.
+  await drawShapeIn(page, pane, { x: 800, y: 300 });
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
+
+  network.restore();
+  await expect(page.getByText('Live')).toBeVisible({ timeout: 30_000 });
+  await expectSynced(page);
+
+  // What she drew while she was gone is on Grace's board, merged rather than
+  // sent as a whole copy of a diagram Grace was looking at the same time.
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
+  await expectSameBoard(page, guestPage);
+
+  await guest.close();
+});
+
 test('a public link opens the diagram read-only, and revoking it kills the URL', async ({ page, browser }) => {
   await signUp(page);
   const pane = await newDiagram(page);
@@ -1034,7 +1189,24 @@ test('a public link opens the diagram read-only, and revoking it kills the URL',
   const visitorPage = await visitor.newPage();
   await visitorPage.goto(link);
 
-  await expect(visitorPage.locator('.react-flow__node', { hasText: 'Public shape' })).toBeVisible();
+  // The public page reads `Diagram.data`, and for a diagram that is open in a
+  // browser that column is a snapshot the server renders from the document on
+  // its own debounce (docs/realtime.md) — so it can be a second or two behind
+  // the board its owner is looking at. Reload until it has caught up rather
+  // than asserting on the first render, which is a race the page cannot win.
+  await expect
+    .poll(
+      async () => {
+        await visitorPage.reload();
+        // The board is only drawn once `GET /api/shared/:token` has answered,
+        // so counting before the pane is there counts a page that has not
+        // rendered rather than a snapshot that has not caught up.
+        await visitorPage.locator('.react-flow__pane').waitFor();
+        return visitorPage.locator('.react-flow__node', { hasText: 'Public shape' }).count();
+      },
+      { intervals: [500, 1000, 2000, 2000, 4000], timeout: 30_000 },
+    )
+    .toBe(1);
   await expect(visitorPage.getByText('View only')).toBeVisible();
   // Read-only means the drawing tools are not there at all, not merely inert.
   await expect(visitorPage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
@@ -1082,7 +1254,7 @@ test('an invited editor finds the diagram, edits it, and loses that when demoted
   await inviteePage.keyboard.press('r');
   await inviteePane.click({ position: { x: 900, y: 260 } });
   await expect(inviteePage.locator('.react-flow__node')).toHaveCount(2);
-  await expect(inviteePage.getByText('Saved')).toBeVisible();
+  await expectSynced(inviteePage);
 
   await page.reload();
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
@@ -1194,7 +1366,7 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await page.keyboard.type('Version two');
   await page.keyboard.press('Escape');
   await expect(node).toContainText('Version two');
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
 
   await page.getByRole('button', { name: 'History' }).click();
   await checkpoint.getByRole('button', { name: 'Restore' }).click();
@@ -1212,7 +1384,7 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.type('Version three');
   await page.keyboard.press('Escape');
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
@@ -1261,7 +1433,7 @@ test('dark mode follows the system, can be pinned, and never repaints the diagra
   // The rectangle above was drawn inside the autosave debounce, so the reload
   // has to wait for it the way every other reload test does — otherwise the
   // shape this test goes on to read the fill of may never have been written.
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expectSynced(page);
 
   await page.reload();
   await expect(page.locator('.react-flow__pane')).toBeVisible();

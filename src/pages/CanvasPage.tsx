@@ -27,6 +27,16 @@ export function CanvasPage() {
   // A viewer's copy: nothing below this may write, so autosave, the thumbnail
   // scheduler and the image backfill are all left unarmed.
   const readOnly = useDiagramStore((s) => s.readOnly);
+  /**
+   * True once the diagram *is* the shared document.
+   *
+   * From then on the document is the save — the server writes it and renders
+   * `Diagram.data` from it — so this page stops running the JSON autosave, its
+   * retry backoff and the `ifUnmodifiedSince` guard for it. The thumbnail is
+   * unaffected: it is a picture of the board, written through the same `PUT`,
+   * and no socket produces one.
+   */
+  const bound = useCollabStore((s) => s.bound);
   const { data: session } = useSession();
   /** The diagram whose image backfill has already been started on this page. */
   const backfilled = useRef<string | null>(null);
@@ -133,15 +143,65 @@ export function CanvasPage() {
     return () => useCollabStore.getState().disconnect();
   }, [loading, loadError, id, userId, userName, readOnly]);
 
+  // The dashboard card's preview, and the one-off move of an old diagram's
+  // inline images into storage. Both belong to *any* editable diagram: a
+  // thumbnail is a picture of the board written through the `PUT`, which no
+  // socket produces, and the backfill is an edit like any other — persisted by
+  // the document when there is one and by the autosave below when there is not.
   useEffect(() => {
     if (loading || loadError || !id || readOnly) return;
 
-    // Still the same loop for a diagram that is not collaborative (no session
-    // on the socket, or a server that refused it). For one that is, the
-    // document is the save and `saveDiagram` writes nothing: what it does is
-    // ask whether this browser's edits have reached the server, so the
-    // indicator, the retry backoff and the `pagehide` flush all keep working
-    // and none of them sends a whole copy of the board.
+    // Rate-limited rather than debounced: one rasterisation of the whole canvas
+    // per interval, not one per edit.
+    //
+    // A capture reads whatever canvas is on screen, so /d/A -> /d/B (which
+    // re-runs this effect rather than remounting) could otherwise render B and
+    // store it as A's thumbnail. Both ends of the capture check the store still
+    // holds this diagram.
+    const isCurrent = () => useDiagramStore.getState().diagramId === id;
+    const thumbnails = createThumbnailScheduler({
+      render: () =>
+        isCurrent()
+          ? renderDiagramPng({ pixelRatio: 1, maxSide: THUMBNAIL_MAX_SIDE, preserveSelection: true })
+          : Promise.resolve(null),
+      save: async (thumbnail) => {
+        if (!isCurrent()) return;
+        const saved = await api.saveDiagram(id, { thumbnail });
+        // A thumbnail is written through the same `PUT`, so it bumps the row's
+        // `updatedAt` like any edit. For a diagram that is still guarding its
+        // saves with `ifUnmodifiedSince`, the guard has to follow it or the next
+        // real save would be refused as stale by this tab's own decoration.
+        if (isCurrent() && saved?.updatedAt) useDiagramStore.getState().noteSaved(saved.updatedAt);
+      },
+    });
+
+    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
+      // Neither a retitle nor a pan changes the picture, so only shape edits
+      // mark the thumbnail stale.
+      if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
+    });
+
+    void runImageBackfill(id);
+
+    return () => {
+      unsubscribe();
+      // Best-effort: the capture reads the live canvas, so it only produces a
+      // thumbnail while the viewport is still mounted. `renderDiagramPng`
+      // returns null once it is gone, which the scheduler treats as "nothing
+      // to save" rather than an error.
+      void thumbnails.flush();
+    };
+  }, [loading, loadError, id, readOnly, runImageBackfill]);
+
+  // **The JSON autosave, for a diagram with no document behind it.** A socket
+  // that was refused, a proxy that will not upgrade, an older deployment: the
+  // debounce, the retry backoff, the `ifUnmodifiedSince` guard and the conflict
+  // banner are all still exactly what keeps such a board, and none of them is
+  // reachable once one is bound — Hocuspocus's persistence is the save then,
+  // and a `PUT` carrying `data` would be refused with a `409` anyway.
+  useEffect(() => {
+    if (loading || loadError || !id || readOnly || bound) return;
+
     const autosaver = createAutosaver({
       save: async () => {
         const outcome = await useDiagramStore.getState().saveDiagram();
@@ -167,30 +227,6 @@ export function CanvasPage() {
       },
     });
 
-    // The dashboard card's preview. Rate-limited rather than debounced: one
-    // rasterisation of the whole canvas per interval, not one per edit.
-    //
-    // A capture reads whatever canvas is on screen, so /d/A -> /d/B (which
-    // re-runs this effect rather than remounting) could otherwise render B and
-    // store it as A's thumbnail. Both ends of the capture check the store still
-    // holds this diagram.
-    const isCurrent = () => useDiagramStore.getState().diagramId === id;
-    const thumbnails = createThumbnailScheduler({
-      render: () =>
-        isCurrent()
-          ? renderDiagramPng({ pixelRatio: 1, maxSide: THUMBNAIL_MAX_SIDE, preserveSelection: true })
-          : Promise.resolve(null),
-      save: async (thumbnail) => {
-        if (!isCurrent()) return;
-        const saved = await api.saveDiagram(id, { thumbnail });
-        // A thumbnail is written through the same `PUT`, so it bumps the row's
-        // `updatedAt` like any edit. The conflict guard has to follow it, or
-        // the next real save would be refused as stale by this tab's own
-        // decoration.
-        if (isCurrent() && saved?.updatedAt) useDiagramStore.getState().noteSaved(saved.updatedAt);
-      },
-    });
-
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
       // A pan is a change worth saving on its own — the viewport is stored with
       // the diagram — so it schedules a save like any edit.
@@ -207,9 +243,6 @@ export function CanvasPage() {
       if (state.saveStatus !== 'conflict' && state.saveStatus !== 'unauthorized') {
         autosaver.schedule();
       }
-      // Neither a retitle nor a pan changes the picture, so only shape edits
-      // mark the thumbnail stale.
-      if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
     });
 
     // The tab can go away without unmounting the page (close, back/forward
@@ -222,22 +255,15 @@ export function CanvasPage() {
     };
     window.addEventListener('pagehide', onPageHide);
 
-    // Started only once the subscription above exists, so the patches it
-    // applies schedule a save rather than sitting there until the next edit.
-    void runImageBackfill(id);
-
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       unsubscribe();
-      // Navigating away inside the debounce window must not drop the edit.
+      // Navigating away inside the debounce window must not drop the edit —
+      // and a diagram that binds while a save is pending flushes it here, which
+      // is what carries the last unsynced JSON edit into the document's world.
       void autosaver.flush();
-      // Best-effort: the capture reads the live canvas, so it only produces a
-      // thumbnail while the viewport is still mounted. `renderDiagramPng`
-      // returns null once it is gone, which the scheduler treats as "nothing
-      // to save" rather than an error.
-      void thumbnails.flush();
     };
-  }, [loading, loadError, id, readOnly, runImageBackfill]);
+  }, [loading, loadError, id, readOnly, bound]);
 
   // Autosave is never armed in this branch, so the unreadable diagram cannot be
   // overwritten by this build.

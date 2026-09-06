@@ -36,7 +36,7 @@ Email verification is not required to sign in, so you can sign up and start draw
 Where to put a test:
 
 - **Pure functions** (`src/lib/*.ts`) → `*.test.ts` next to the file. These are the cheapest tests and where routing/geometry bugs are caught.
-- **Store behaviour** (`src/store/useDiagramStore.ts`) → `useDiagramStore.test.ts`. No DOM needed; drive it with `getState()` / `setState()`. Reset history between tests with `loadDiagram(...)`.
+- **Store behaviour** (`src/store/useDiagramStore.ts`) → `useDiagramStore.test.ts`. No DOM needed; drive it with `getState()` / `setState()`. Reset history between tests with `loadDiagram(...)`. That file is the **unbound** store — the snapshot history. Behaviour that only happens once a diagram is bound to a shared document (per-user undo included) goes in `src/lib/collab/binding.test.ts`, which drives the same store through a real `Y.Doc`.
 - **API routes** (`server/router.ts`) → `server/router.test.ts` using supertest with `prisma` and `requireAuth` mocked via `vi.mock`.
 - **User-visible flows** → `e2e/*.spec.ts`. Prefer role/label locators; use `.react-flow__pane` / `.react-flow__node` for the canvas.
 
@@ -57,7 +57,7 @@ Some things no assertion captures. Before merging a change to the canvas, toolba
 
 - TypeScript strict; `tsc -b` must pass with zero errors. No `any` — the request user is typed in `server/types.ts` and read with `authedUser(req)`.
 - `oxlint` must report zero errors. Warnings are tolerated but should not grow.
-- Store actions that change nodes or edges must call `pushHistory` so they are undoable.
+- Store actions that change nodes or edges must call `pushHistory` so they are undoable. It marks the *boundary* between one undo step and the next: it pushes a snapshot for a diagram with no shared document behind it, and tells the document's `Y.UndoManager` to start a new step for one that has (see the undo model in CLAUDE.md). Leave it out and the edit is folded into the one before it.
 - Edge arrowheads live on the top-level `markerStart` / `markerEnd`, not in `data` — always go through `computeMarkers`.
 - A new keyboard shortcut, menu item or toolbar action is a `Command` in `src/commands/commands.ts`. The keyboard handler, the `?` cheat sheet and the right-click menus all read from that list; nothing else should hard-code a keystroke. Update the README's shortcut tables in the same commit.
 - Tailwind for styling; palette tokens are in `src/index.css`. **Chrome takes its colours from a theme token** (`bg-panel`, `text-ink-700`, `ring-line`, `hover:bg-hover`, …), never from a raw `bg-white` / `ring-black/[0.04]` / hex — those only look right in one theme. A colour that belongs to the *diagram* (a fill, a stroke, a shape's label) is user data and stays fixed; see the theming note in CLAUDE.md for which side a token is on.

@@ -157,7 +157,7 @@ cloudflared service install && systemctl enable --now cloudflared
 - **Cloudflare Tunnel** does, with no configuration: the ingress rule above carries WebSockets as it carries anything else. Nothing to change.
 - **Nginx** does not, by default — add `proxy_http_version 1.1;`, `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection "upgrade";` to the `location /` block, and give it a generous `proxy_read_timeout` (say `3600s`), or an idle collaborator's socket is cut every minute. The same applies to any other reverse proxy you put in front.
 
-Without a forwarded upgrade the app still works: the socket simply never connects, and the top bar's connection dot stays red. Nobody loses an edit — diagram content is saved over `/api`, not over the socket.
+**Forward the upgrade, or diagrams that have been opened live cannot be edited.** Without it the socket never connects: the top bar's connection dot stays red and its indicator keeps saying "Saving… / Saved", because the browser falls back to the debounced `PUT` over `/api`. That is a complete way to run the app *for a diagram nobody has ever opened collaboratively* — no `DiagramDoc` row, so the `PUT` is accepted and nothing is lost. A diagram that **does** have one is a different matter: the document is that diagram's save, the server refuses a `data` write to it with `409`, and the tab is left with the "changed in another tab" banner, whose "Reload" discards what was drawn in the meantime. So a proxy that will not upgrade is a broken deployment for any board somebody has already collaborated on, not a degraded one — check the dot on a real diagram after any change to what sits in front of the app.
 
 ## Operations
 

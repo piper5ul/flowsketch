@@ -8,6 +8,8 @@ import { CommentsPanel } from './CommentsPanel';
 import { ShareDialog } from './ShareDialog';
 import { PresenceStrip } from './PresenceStrip';
 import { openThreadCount } from '../lib/comments';
+import { connectionDisplay } from '../lib/collab/connectionStatus';
+import { useCollabStore } from '../store/useCollabStore';
 import { useCommentStore } from '../store/useCommentStore';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
 import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
@@ -25,6 +27,9 @@ export function TopBar() {
   const saveStatus = useDiagramStore((s) => s.saveStatus);
   const role = useDiagramStore((s) => s.role);
   const readOnly = useDiagramStore((s) => s.readOnly);
+  // A bound diagram has no save to report: the document is the save. What is
+  // worth reporting there is the connection — see `LiveIndicator`.
+  const bound = useCollabStore((s) => s.bound);
 
   const toggleStar = useCallback(async () => {
     if (!diagramId) return;
@@ -67,7 +72,7 @@ export function TopBar() {
             </button>
           </Tooltip>
         )}
-        {readOnly ? <ViewOnlyPill /> : <SaveIndicator status={saveStatus} />}
+        {readOnly ? <ViewOnlyPill /> : bound ? <LiveIndicator /> : <SaveIndicator status={saveStatus} />}
         {/* Next to the save indicator because it answers the neighbouring
             question: not "where are my edits going" but "who else is making
             them". Shown to viewers too — being in the room is not an edit. */}
@@ -366,6 +371,44 @@ export function ViewOnlyPill() {
   return (
     <span className="ml-1 flex items-center gap-1.5 rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
       <Eye size={12} /> View only
+    </span>
+  );
+}
+
+/**
+ * Where the save indicator stands, for a diagram that lives in a shared
+ * document: the connection, because that is the only thing left that can go
+ * wrong with an edit. See `src/lib/collab/connectionStatus.ts`.
+ *
+ * The three tones are spelled out rather than themed, exactly as the presence
+ * dot's are: green, amber and red mean the same thing on any background.
+ */
+const TONE_CLASS = {
+  live: 'text-green-500/70',
+  reconnecting: 'text-amber-500',
+  offline: 'text-red-500',
+} as const;
+
+function LiveIndicator() {
+  const status = useCollabStore((s) => s.status);
+  const synced = useCollabStore((s) => s.synced);
+  const { label, tone } = connectionDisplay(status);
+
+  return (
+    <span
+      className={clsx('ml-1 flex items-center gap-1.5 text-xs', TONE_CLASS[tone])}
+      role="status"
+      // Not shown: "Live" is the answer either way, and a label that flickered
+      // between two words on every keystroke would be worse than one that
+      // stands still. It is here because *something* has to be able to tell
+      // "connected" from "connected and everything I did has arrived" — the
+      // end-to-end tests wait on it where they used to wait on "Saved".
+      data-collab-sync={synced ? 'synced' : 'pending'}
+    >
+      {tone === 'live' && <Check size={12} />}
+      {tone === 'reconnecting' && <Loader2 size={12} className="animate-spin" />}
+      {tone === 'offline' && <AlertTriangle size={12} />}
+      {label}
     </span>
   );
 }

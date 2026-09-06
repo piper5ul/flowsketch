@@ -20,9 +20,14 @@
  * (what is selected, what React Flow has measured) back over it, because none
  * of that belongs to anybody but the browser it is in. It goes in through
  * `setState` rather than an action, so a collaborator's edit never lands in
- * this client's undo history — the phase-3 `Y.UndoManager` is what will make
- * undo per-person; until then, undoing your way past somebody else's change is
- * the known limitation phase 2 ships with.
+ * this client's undo history.
+ *
+ * **Undo is the `Y.UndoManager` below, scoped to this client's origin.** ⌘Z
+ * takes back what *you* did — on every window, since undoing an edit is itself
+ * an edit — and can never reach a collaborator's work, which is what the
+ * snapshot stack it replaces could not promise. Where one entry ends and the
+ * next begins is still decided by the store, not by a clock: see
+ * `DocumentHistory.beginEntry`.
  *
  * **Gestures are committed, not streamed.** A drag, a slider and a text shape
  * growing under the keyboard all report per frame; those states are marked
@@ -45,8 +50,8 @@ import {
   writeDiagramIntoDoc,
   type DocEntry,
 } from '../../../shared/collabDoc';
-import type { ConnectorEdge, DiagramState, ShapeNode } from '../../store/useDiagramStore';
-import { serializeDiagram } from '../../store/useDiagramStore';
+import type { ConnectorEdge, DiagramState, DocumentHistory, ShapeNode } from '../../store/useDiagramStore';
+import { hasDocumentHistory, serializeDiagram } from '../../store/useDiagramStore';
 import { normalizeParentage } from '../nodeTree';
 
 /**
@@ -84,11 +89,29 @@ export interface BindDocOptions {
    * the document; an element that matches it is the document's business.
    */
   baseline?: DiagramData;
+  /**
+   * Called when the answer to "is anything still only in this browser?"
+   * changes: `true` while a gesture is being held for the trailing flush,
+   * `false` once it has been written.
+   *
+   * "Everything I did is on the server" is not the provider's answer alone: for
+   * the 150 ms a gesture is held here it has not been offered to the provider
+   * at all, and an indicator that said otherwise would be claiming a drag was
+   * safe before it had left this module.
+   */
+  onPendingWrite?: (pending: boolean) => void;
 }
 
 export interface DocBinding {
   /** Writes any gesture still in hand and stops listening in both directions. */
   destroy: () => void;
+  /**
+   * This browser's undo history in the document — what `useDiagramStore`'s
+   * `undo` / `redo` dispatch to while the diagram is bound.
+   *
+   * Empty for a viewer, whose binding writes nothing there is to take back.
+   */
+  history: DocumentHistory;
 }
 
 /** True when two serializable values are the same diagram element. */
@@ -294,6 +317,14 @@ export function bindDocToStore(
 
   const contentOf = (data: DiagramData) => JSON.stringify([data.nodes, data.edges]);
 
+  /** Whether a gesture is being held here, reported only when it changes. */
+  let pendingWrite = false;
+  const setPendingWrite = (next: boolean) => {
+    if (pendingWrite === next) return;
+    pendingWrite = next;
+    options.onPendingWrite?.(next);
+  };
+
   const pull = () => {
     const nodes = nodesOf(doc);
     const edges = edgesOf(doc);
@@ -319,6 +350,8 @@ export function bindDocToStore(
     const data = diagramOf(state);
     pushDiagramToDoc(doc, data, origin);
     rendered = contentOf(data);
+    // Offered to the provider: from here whether it has arrived is its answer.
+    setPendingWrite(false);
   };
 
   const cancelTransient = () => {
@@ -326,6 +359,10 @@ export function bindDocToStore(
     clearTimeout(transientTimer);
     transientTimer = null;
   };
+
+  const nodeMap = nodeEntries(doc);
+  const edgeMap = edgeEntries(doc);
+  const metaMap = docMeta(doc);
 
   const local = diagramOf(store.getState());
   if (!isSeeded(doc)) {
@@ -349,6 +386,124 @@ export function bindDocToStore(
     pull();
   }
 
+  // ---- undo ----------------------------------------------------------------
+  /**
+   * This browser's edits, and only this browser's: `trackedOrigins` is the one
+   * origin every local transaction carries, so a collaborator's work is not on
+   * the stack and ⌘Z cannot reach it.
+   *
+   * Built *after* the seed and the baseline merge above, which are written with
+   * the same origin: neither is an edit the user made in front of the document,
+   * and an undo that emptied the canvas back to a document that was never there
+   * would be the worst first impression this feature could make.
+   *
+   * `meta` is deliberately out of scope. The viewport lives there, is written
+   * for the snapshot's sake and is never read back out, so tracking it would
+   * hand the user an undo entry for panning that changes nothing they can see.
+   */
+  const undoManager = new Y.UndoManager([nodeMap, edgeMap], {
+    trackedOrigins: new Set([origin]),
+    // Never split an entry on a clock. Where one undo step ends is decided by
+    // the store — every `pushHistory` call site, plus the start of a gesture —
+    // and `beginEntry` below is the only thing that opens a new one. A timeout
+    // would additionally split a drag the user paused in the middle of, and
+    // would coalesce two arrow-key nudges 200 ms apart differently from the
+    // 500 ms window `nudgeSelected` has always used.
+    captureTimeout: Number.POSITIVE_INFINITY,
+  });
+
+  /**
+   * True between the first frame of a gesture and the write that commits it.
+   *
+   * A drag is one undo step, and the store says so twice: once when the gesture
+   * starts (the first transient frame) and again when it ends (`onNodesChange`
+   * pushes history on the release). Honouring the second would split the
+   * release off from the movement, so a boundary asked for while a gesture is
+   * open is dropped — the gesture already opened one.
+   */
+  let gestureOpen = false;
+
+  const syncFlags = () => {
+    // Only when this history is the one the store is dispatching to. A viewer's
+    // binding registers none (there is nothing of theirs to take back), and a
+    // stack that nothing can pop must not be what greys the toolbar's buttons.
+    if (!hasDocumentHistory()) return;
+    store.setState({
+      canUndo: undoManager.undoStack.length > 0,
+      canRedo: undoManager.redoStack.length > 0,
+    });
+  };
+
+  /**
+   * The element ids the undo or redo now running has changed.
+   *
+   * Filled by the observers below while the transaction is open — a `YEvent`'s
+   * changes cannot be read once the handler that carried it has returned, and
+   * `stack-item-popped` fires after the transaction is closed — and read by
+   * that handler to decide what to select.
+   */
+  const touched = new Set<string>();
+
+  /**
+   * Put the selection on what the undo just changed, as far as it still exists.
+   *
+   * Selection is not in the document — it is this browser's alone — so without
+   * this an undo would put a shape back somewhere off screen with nothing at
+   * all to say where it went.
+   */
+  const selectTouched = (ids: ReadonlySet<string>) => {
+    if (ids.size === 0) return;
+    const state = store.getState();
+    const nodes = state.nodes.map((node) =>
+      node.selected === ids.has(node.id) ? node : { ...node, selected: ids.has(node.id) },
+    );
+    const edges = state.edges.map((edge) =>
+      edge.selected === ids.has(edge.id) ? edge : { ...edge, selected: ids.has(edge.id) },
+    );
+    if (nodes.every((node, i) => node === state.nodes[i]) && edges.every((edge, i) => edge === state.edges[i])) {
+      return;
+    }
+    // Not an edit: what is selected is not in the document, and pushing it back
+    // would be a transaction that writes nothing.
+    applyingRemote = true;
+    try {
+      store.setState({ nodes, edges });
+    } finally {
+      applyingRemote = false;
+    }
+  };
+
+  undoManager.on('stack-item-added', syncFlags);
+  undoManager.on('stack-cleared', syncFlags);
+  undoManager.on('stack-item-popped', () => {
+    syncFlags();
+    // Emitted after the transaction has closed, so the canvas already shows the
+    // result and `touched` holds exactly what moved.
+    selectTouched(touched);
+  });
+  syncFlags();
+
+  /** Run `step` with `touched` holding only what that step changes. */
+  const tracked = (step: () => void) => {
+    touched.clear();
+    step();
+    touched.clear();
+  };
+
+  const history: DocumentHistory = {
+    undo: () => tracked(() => undoManager.undo()),
+    redo: () => tracked(() => undoManager.redo()),
+    beginEntry: () => {
+      if (gestureOpen) return;
+      undoManager.stopCapturing();
+    },
+    clear: () => {
+      undoManager.clear();
+      gestureOpen = false;
+      syncFlags();
+    },
+  };
+
   // ---- doc -> store --------------------------------------------------------
   // The three observers all fire inside one transaction, so they only mark the
   // store dirty; `afterTransaction` is what rebuilds it, once.
@@ -365,12 +520,21 @@ export function bindDocToStore(
     pull();
   };
 
-  const nodes = nodeEntries(doc);
-  const edges = edgeEntries(doc);
-  const meta = docMeta(doc);
-  nodes.observe(markDirty);
-  edges.observe(markDirty);
-  meta.observe(markDirty);
+  /**
+   * `markDirty`, and a note of which elements moved.
+   *
+   * The keys have to be read here, inside the handler Yjs called: a `YEvent`
+   * refuses to describe its changes once its transaction has been cleaned up,
+   * and `stack-item-popped` — the one place that wants them — fires after that.
+   */
+  function markDirtyElements<T>(event: Y.YMapEvent<T>, transaction: Y.Transaction): void {
+    markDirty(event, transaction);
+    for (const key of event.keys.keys()) touched.add(key);
+  }
+
+  nodeMap.observe(markDirtyElements);
+  edgeMap.observe(markDirtyElements);
+  metaMap.observe(markDirty);
   doc.on('afterTransaction', flush);
 
   // ---- store -> doc --------------------------------------------------------
@@ -388,14 +552,25 @@ export function bindDocToStore(
 
     cancelTransient();
     if (state.transientSeq !== previous.transientSeq) {
+      // The first frame of a gesture is where its undo entry starts. The store
+      // cannot say so itself — a drag pushes history on the *release* — and
+      // without it a drag the user paused in the middle of would have its first
+      // half folded into whatever they did before picking the shape up.
+      if (!gestureOpen) {
+        undoManager.stopCapturing();
+        gestureOpen = true;
+      }
       // Mid-gesture. Hold it: the commit that ends the gesture will push, and
-      // the timer catches the gestures that have no commit of their own.
+      // the timer catches the gestures that have no commit of their own. It is
+      // in this browser and nowhere else until one of those happens.
+      setPendingWrite(true);
       transientTimer = setTimeout(() => {
         transientTimer = null;
         if (!destroyed) push(store.getState());
       }, TRANSIENT_COMMIT_MS);
       return;
     }
+    gestureOpen = false;
     push(state);
   });
 
@@ -409,10 +584,12 @@ export function bindDocToStore(
       // binding could lose an edit.
       if (hadGesture) push(store.getState());
       unsubscribe();
-      nodes.unobserve(markDirty);
-      edges.unobserve(markDirty);
-      meta.unobserve(markDirty);
+      nodeMap.unobserve(markDirtyElements);
+      edgeMap.unobserve(markDirtyElements);
+      metaMap.unobserve(markDirty);
       doc.off('afterTransaction', flush);
+      undoManager.destroy();
     },
+    history,
   };
 }
