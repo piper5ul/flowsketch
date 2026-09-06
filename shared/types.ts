@@ -44,6 +44,7 @@ export interface DiagramMeta {
   id: string;
   title: string;
   starred: boolean;
+  createdAt: string;
   updatedAt: string;
   thumbnail: string | null;
 }

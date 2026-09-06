@@ -92,6 +92,19 @@ export const updateDiagramBody = z
     error: 'Expected at least one of title, data, starred or thumbnail',
   });
 
+/** Appended by `POST /api/diagrams/:id/duplicate`. */
+export const COPY_SUFFIX = ' (copy)';
+
+/**
+ * Names the copy a duplicate produces. Duplicating a diagram whose title is
+ * already at the limit must not create a row the API would then refuse to
+ * accept back, so the original is trimmed to make room for the suffix.
+ */
+export function copyTitle(title: string): string {
+  const room = MAX_TITLE_CHARS - COPY_SUFFIX.length;
+  return `${title.length > room ? title.slice(0, room).trimEnd() : title}${COPY_SUFFIX}`;
+}
+
 export type CreateDiagramBody = z.infer<typeof createDiagramBody>;
 export type UpdateDiagramBody = z.infer<typeof updateDiagramBody>;
 

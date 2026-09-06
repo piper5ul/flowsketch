@@ -4,6 +4,7 @@ import request from 'supertest';
 import {
   MAX_ELEMENTS,
   MAX_TITLE_CHARS,
+  copyTitle,
   createDiagramBody,
   diagramData,
   updateDiagramBody,
@@ -138,6 +139,24 @@ describe('updateDiagramBody — thumbnail', () => {
     const atLimit = THUMBNAIL_DATA_URL_PREFIX + 'A'.repeat(pad);
     expect(updateDiagramBody.safeParse({ thumbnail: atLimit }).success).toBe(true);
     expect(updateDiagramBody.safeParse({ thumbnail: `${atLimit}A` }).success).toBe(false);
+  });
+});
+
+describe('copyTitle', () => {
+  it('suffixes the original title', () => {
+    expect(copyTitle('Roadmap')).toBe('Roadmap (copy)');
+  });
+
+  it('suffixes a copy again rather than collapsing the chain', () => {
+    expect(copyTitle('Roadmap (copy)')).toBe('Roadmap (copy) (copy)');
+  });
+
+  it('trims the original so the copy still fits the title limit', () => {
+    const copy = copyTitle('x'.repeat(MAX_TITLE_CHARS));
+    expect(copy).toHaveLength(MAX_TITLE_CHARS);
+    expect(copy.endsWith(' (copy)')).toBe(true);
+    // And the result is a title the API would accept back.
+    expect(createDiagramBody.safeParse({ title: copy }).success).toBe(true);
   });
 });
 

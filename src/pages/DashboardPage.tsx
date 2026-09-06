@@ -1,9 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Star, Trash2, LogOut, MoreHorizontal, FileText, RotateCw } from 'lucide-react';
+import {
+  Plus,
+  Star,
+  Trash2,
+  LogOut,
+  MoreHorizontal,
+  FileText,
+  RotateCw,
+  Copy,
+  Pencil,
+  Search,
+} from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
-import { loadDiagrams } from '../lib/diagramList';
+import { DIAGRAM_SORTS, filterDiagrams, loadDiagrams, sortDiagrams, type DiagramSort } from '../lib/diagramList';
 import type { DiagramMeta } from '../../shared/types';
 import { Tooltip, TooltipProvider } from '../components/Tooltip';
 import { Toasts } from '../components/Toasts';
@@ -25,6 +36,15 @@ export function DashboardPage() {
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   // Set to a diagram id while its menu is showing the delete confirmation.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  // Set to a diagram id while its title is being edited in place.
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<DiagramSort>('updated');
+
+  const visible = useMemo(
+    () => sortDiagrams(filterDiagrams(diagrams, query), sort),
+    [diagrams, query, sort],
+  );
 
   // Opening or closing a menu always drops any confirmation it was showing, so
   // a menu never reopens mid-confirm.
@@ -73,6 +93,33 @@ export function DashboardPage() {
     openMenu(null);
   }, [openMenu]);
 
+  const duplicateDiagram = useCallback(async (id: string) => {
+    openMenu(null);
+    try {
+      const copy = await api.duplicateDiagram(id);
+      setDiagrams((prev) => [copy, ...prev]);
+    } catch {
+      toastError('Could not duplicate the diagram. Please try again.');
+    }
+  }, [openMenu]);
+
+  /** Commits an inline rename. An unchanged or emptied title is left alone. */
+  const renameDiagram = useCallback(async (id: string, title: string) => {
+    setRenaming(null);
+    const next = title.trim();
+    const current = diagrams.find((d) => d.id === id);
+    if (!current || next === '' || next === current.title) return;
+    // Optimistic: the card is being typed into, so it has to follow the
+    // keystrokes rather than the round trip.
+    setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, title: next } : d)));
+    try {
+      await api.saveDiagram(id, { title: next });
+    } catch {
+      setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, title: current.title } : d)));
+      toastError('Could not rename the diagram. Please try again.');
+    }
+  }, [diagrams]);
+
   const handleSignOut = useCallback(async () => {
     await signOut();
     navigate('/login');
@@ -112,26 +159,64 @@ export function DashboardPage() {
             </button>
           </div>
 
+          {listState === 'ready' && diagrams.length > 0 && (
+            <div className="mb-4 flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search
+                  size={14}
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-600/50"
+                />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  aria-label="Search diagrams"
+                  placeholder="Search diagrams"
+                  className="w-full rounded-lg bg-white py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
+                />
+              </div>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as DiagramSort)}
+                aria-label="Sort diagrams"
+                className="rounded-lg bg-white px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] outline-none focus:ring-accent-500/40"
+              >
+                {DIAGRAM_SORTS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {listState === 'loading' ? (
             <SkeletonGrid />
           ) : listState === 'error' ? (
             <ErrorState onRetry={refresh} />
           ) : diagrams.length === 0 ? (
             <EmptyState onCreate={createDiagram} />
+          ) : visible.length === 0 ? (
+            <p className="py-20 text-center text-sm text-ink-600">No diagrams match “{query.trim()}”.</p>
           ) : (
             <div className={CARD_GRID}>
-              {diagrams.map((d) => (
+              {visible.map((d) => (
                 <DiagramCard
                   key={d.id}
                   diagram={d}
                   menuOpen={menuOpen === d.id}
                   confirmingDelete={confirmingDelete === d.id}
+                  renaming={renaming === d.id}
                   onOpen={() => navigate(`/d/${d.id}`)}
                   onToggleStar={(e) => toggleStar(d.id, e)}
                   onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
                   onRequestDelete={() => setConfirmingDelete(d.id)}
                   onCancelDelete={() => openMenu(null)}
                   onDelete={() => deleteDiagram(d.id)}
+                  onDuplicate={() => duplicateDiagram(d.id)}
+                  onRequestRename={() => { openMenu(null); setRenaming(d.id); }}
+                  onCommitRename={(title) => renameDiagram(d.id, title)}
+                  onCancelRename={() => setRenaming(null)}
                 />
               ))}
             </div>
@@ -148,28 +233,39 @@ function DiagramCard({
   diagram,
   menuOpen,
   confirmingDelete,
+  renaming,
   onOpen,
   onToggleStar,
   onMenuToggle,
   onRequestDelete,
   onCancelDelete,
   onDelete,
+  onDuplicate,
+  onRequestRename,
+  onCommitRename,
+  onCancelRename,
 }: {
   diagram: DiagramMeta;
   menuOpen: boolean;
   confirmingDelete: boolean;
+  renaming: boolean;
   onOpen: () => void;
   onToggleStar: (e: React.MouseEvent) => void;
   onMenuToggle: () => void;
   onRequestDelete: () => void;
   onCancelDelete: () => void;
   onDelete: () => void;
+  onDuplicate: () => void;
+  onRequestRename: () => void;
+  onCommitRename: (title: string) => void;
+  onCancelRename: () => void;
 }) {
   const timeAgo = formatRelativeTime(diagram.updatedAt);
 
   return (
     <div
-      onClick={onOpen}
+      // A card being renamed must not open the diagram under the input.
+      onClick={renaming ? undefined : onOpen}
       className="group cursor-pointer rounded-xl bg-white shadow-[0_1px_3px_rgba(20,20,50,0.08)] ring-1 ring-black/[0.04] transition hover:shadow-[0_4px_12px_rgba(20,20,50,0.12)] hover:ring-accent-500/30"
     >
       {/* Thumbnail */}
@@ -191,7 +287,11 @@ function DiagramCard({
       {/* Info */}
       <div className="px-3 py-2.5">
         <div className="flex items-center justify-between">
-          <p className="truncate text-sm font-medium text-ink-900">{diagram.title}</p>
+          {renaming ? (
+            <RenameInput title={diagram.title} onCommit={onCommitRename} onCancel={onCancelRename} />
+          ) : (
+            <p className="truncate text-sm font-medium text-ink-900">{diagram.title}</p>
+          )}
           <div className="flex shrink-0 items-center gap-0.5">
             <button
               onClick={onToggleStar}
@@ -232,12 +332,26 @@ function DiagramCard({
                       </div>
                     </div>
                   ) : (
-                    <button
-                      onClick={onRequestDelete}
-                      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
-                    >
-                      <Trash2 size={13} /> Delete
-                    </button>
+                    <>
+                      <button
+                        onClick={onRequestRename}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-black/[0.04]"
+                      >
+                        <Pencil size={13} /> Rename
+                      </button>
+                      <button
+                        onClick={onDuplicate}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-black/[0.04]"
+                      >
+                        <Copy size={13} /> Duplicate
+                      </button>
+                      <button
+                        onClick={onRequestDelete}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -247,6 +361,48 @@ function DiagramCard({
         <p className="mt-0.5 text-xs text-ink-600/60">{timeAgo}</p>
       </div>
     </div>
+  );
+}
+
+/**
+ * The card title, in place, while it is being renamed.
+ *
+ * Enter and Escape both leave through blur, so there is exactly one commit
+ * path however the edit ends — clicking elsewhere included.
+ */
+function RenameInput({
+  title,
+  onCommit,
+  onCancel,
+}: {
+  title: string;
+  onCommit: (title: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState(title);
+  // A ref, not state: `blur()` dispatches its event synchronously, so a state
+  // update made just before it would not be visible to the blur handler.
+  const cancelled = useRef(false);
+
+  return (
+    <input
+      autoFocus
+      value={value}
+      aria-label="Diagram title"
+      onChange={(e) => setValue(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onFocus={(e) => e.currentTarget.select()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') e.currentTarget.blur();
+        else if (e.key === 'Escape') {
+          cancelled.current = true;
+          e.currentTarget.blur();
+        }
+      }}
+      onBlur={() => (cancelled.current ? onCancel() : onCommit(value))}
+      className="min-w-0 flex-1 rounded border border-accent-500/40 bg-white px-1 py-0.5 text-sm font-medium text-ink-900 outline-none"
+    />
   );
 }
 

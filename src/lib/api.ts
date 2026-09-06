@@ -52,6 +52,9 @@ export const api = {
       keepalive: options?.keepalive,
     }),
 
+  duplicateDiagram: (id: string) =>
+    request<DiagramMeta>(`/api/diagrams/${id}/duplicate`, { method: 'POST' }),
+
   deleteDiagram: (id: string) =>
     request(`/api/diagrams/${id}`, { method: 'DELETE' }),
 

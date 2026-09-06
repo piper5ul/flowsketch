@@ -294,6 +294,39 @@ test('deleting a diagram from the dashboard asks for confirmation first', async 
   await expect(page.getByText('Untitled')).toHaveCount(0);
 });
 
+test('a diagram can be renamed, duplicated and found again by searching', async ({ page }) => {
+  await signUp(page);
+  await newDiagram(page);
+  await page.getByRole('button', { name: 'Back to dashboard' }).click();
+  await expect(page.getByRole('heading', { name: 'My Diagrams' })).toBeVisible();
+
+  const card = page.getByText('Untitled').first();
+  await card.hover();
+  await page.getByRole('button', { name: 'Diagram actions' }).click();
+  await page.getByRole('button', { name: 'Rename' }).click();
+
+  const titleInput = page.getByRole('textbox', { name: 'Diagram title' });
+  await titleInput.fill('Roadmap');
+  await titleInput.press('Enter');
+  await expect(page.getByText('Roadmap', { exact: true })).toBeVisible();
+
+  const renamed = page.getByText('Roadmap', { exact: true });
+  await renamed.hover();
+  await page.getByRole('button', { name: 'Diagram actions' }).first().click();
+  await page.getByRole('button', { name: 'Duplicate' }).click();
+
+  await expect(page.getByText('Roadmap (copy)')).toBeVisible();
+  await expect(page.getByText('Roadmap', { exact: true })).toBeVisible();
+
+  // The rename survives a round trip, rather than only living in the page.
+  await page.reload();
+  await expect(page.getByText('Roadmap (copy)')).toBeVisible();
+
+  await page.getByRole('searchbox', { name: 'Search diagrams' }).fill('copy');
+  await expect(page.getByText('Roadmap (copy)')).toBeVisible();
+  await expect(page.getByText('Roadmap', { exact: true })).toHaveCount(0);
+});
+
 test('a pasted image is uploaded and referenced by URL, not embedded as base64', async ({ page }) => {
   await signUp(page);
   await newDiagram(page);
