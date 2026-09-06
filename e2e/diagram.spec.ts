@@ -872,6 +872,12 @@ test('a second tab editing the same diagram is caught before its work is overwri
   await second.keyboard.press('Escape');
   await expect(second.getByText('Saved')).toBeVisible();
 
+  // Back to the first tab, the way the user would switch to it. Explicit
+  // because a background tab has its animation frames throttled by the
+  // browser, and every actionability check Playwright makes on it waits on
+  // one — which is what left this test a few seconds off its own timeout.
+  await page.bringToFront();
+
   // The first tab is now building on a version the server has moved past, so
   // its next autosave is refused rather than silently dropping "Second tab".
   await first.dblclick();
