@@ -1,8 +1,9 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Eye, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Eye, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes, Users } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
+import { ShareDialog } from './ShareDialog';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
 import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
 import { buildDiagramExport, diagramFileName } from '../lib/diagramFile';
@@ -64,10 +65,36 @@ export function TopBar() {
         {readOnly ? <ViewOnlyPill /> : <SaveIndicator status={saveStatus} />}
       </div>
 
-      <ExportMenu />
+      <div className="flex items-center gap-2">
+        {/* Owner-only in substance — every sharing route is — but an editor is
+            still offered it, because the dialog is the only place the list of
+            collaborators lives and they are allowed to read it. A viewer gets
+            nothing: they have no say in who else is here. */}
+        {(role === 'owner' || role === 'editor') && <ShareButton />}
+        <ExportMenu />
+      </div>
     </div>
     <ConflictBanner />
     </>
+  );
+}
+
+function ShareButton() {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+
+  return (
+    <div className="pointer-events-auto">
+      <div className="flex items-center gap-2 rounded-2xl bg-white/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-black/[0.04]"
+        >
+          <Users size={15} /> Share
+        </button>
+      </div>
+      {open && <ShareDialog onClose={close} />}
+    </div>
   );
 }
 
@@ -92,6 +119,7 @@ function ConflictBanner() {
         .getState()
         .loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt, {
           role: diagram.role,
+          shareToken: diagram.shareToken ?? null,
         });
     } catch {
       toastError('Could not reload the diagram. Please try again.');

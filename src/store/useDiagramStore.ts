@@ -235,6 +235,12 @@ export interface LoadDiagramOptions {
    * inventing a role for an anonymous reader.
    */
   readOnly?: boolean;
+  /**
+   * The diagram's public share token, which the API sends to the owner alone.
+   * Held here so the share dialog can render the link it already knows about
+   * without re-fetching a diagram body it has no use for.
+   */
+  shareToken?: string | null;
 }
 
 interface DiagramState {
@@ -257,6 +263,8 @@ interface DiagramState {
    * undo when nothing can be done.
    */
   readOnly: boolean;
+  /** The live public link's token, or `null` when there is no public link. */
+  shareToken: string | null;
   saveStatus: SaveStatus;
   /**
    * The `updatedAt` this client is building on — what it loaded, then what
@@ -309,6 +317,8 @@ interface DiagramState {
    * ignored its own thumbnail would go on to mistake it for another tab's work.
    */
   noteSaved: (updatedAt: string) => void;
+  /** Records the public link being turned on (a token) or off (`null`). */
+  setShareToken: (token: string | null) => void;
   setTitle: (title: string) => void;
   setStarred: (starred: boolean) => void;
   setEditingNodeId: (id: string | null) => void;
@@ -551,6 +561,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   starred: false,
   role: 'owner' as DiagramRole,
   readOnly: false,
+  shareToken: null,
   saveStatus: 'idle' as SaveStatus,
   loadedAt: null,
   conflict: null,
@@ -586,6 +597,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // A viewer cannot write, and the caller may say so outright for a reader
       // who has no role at all (the public share page).
       readOnly: options?.readOnly ?? role === 'viewer',
+      shareToken: options?.shareToken ?? null,
       saveStatus: 'idle',
       // This load *is* the resolution of a conflict, so the guard restarts
       // from whatever the server just handed back.
@@ -655,6 +667,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     if (loadedAt !== null && updatedAt <= loadedAt) return;
     set({ loadedAt: updatedAt });
   },
+
+  setShareToken: (shareToken) => set({ shareToken }),
 
   setTitle: (title) => set({ title }),
   setStarred: (starred) => set({ starred }),

@@ -89,6 +89,9 @@ export function CanvasPage() {
         // `updatedAt` is the version every save from here on is guarded by.
         loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt, {
           role: diagram.role,
+          // Only ever sent to the owner; everyone else loads a `null` and is
+          // never told whether a public link exists.
+          shareToken: diagram.shareToken ?? null,
         });
         setLoading(false);
       })
