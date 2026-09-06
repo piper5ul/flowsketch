@@ -478,7 +478,11 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOL_KINDS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#D6D9E4" className="rf-canvas" />
+        {/* Both the backdrop and the dots come from the theme tokens, so the
+            board follows a theme change with no re-render: `rf-canvas` paints
+            the ground, and React Flow forwards `color` into a custom property
+            the dot's `fill` reads, so a `var()` here resolves at paint time. */}
+        <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="var(--canvas-dot)" className="rf-canvas" />
         <ConnectorMarkerDefs />
         <AlignmentGuides />
         {minimap && <CanvasMiniMap />}

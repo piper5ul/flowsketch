@@ -104,7 +104,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   // and no resizer: it is about to be replaced by the real thing.
   if (isImageNode && data.uploading) {
     return (
-      <div className="flex h-full w-full items-center justify-center rounded-md border-[1.5px] border-dashed border-ink-600/30 bg-black/[0.03] text-[13px] font-medium text-ink-600/60">
+      <div className="flex h-full w-full items-center justify-center rounded-md border-[1.5px] border-dashed border-ink-600/30 bg-hover-soft text-[13px] font-medium text-ink-600/60">
         Uploading…
       </div>
     );
@@ -317,7 +317,10 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
               // Other shapes have a fixed size and clip; a text shape grows to
               // fit instead, so clipping it would hide what was just typed.
               !isText && 'max-h-full overflow-hidden',
-              !darkBg && 'text-ink-900',
+              // `shape-ink`, not `ink-900`: the contrast that matters here is
+              // against the user's fill, which the theme does not touch. A
+              // light shape keeps dark text on a dark canvas.
+              !darkBg && 'text-shape-ink',
             )}
           >
             {data.label || null}
@@ -330,7 +333,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="absolute right-1.5 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded bg-black/10 text-ink-700/60 opacity-0 transition hover:bg-black/20 hover:text-ink-900"
+            className="absolute right-1.5 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded bg-black/10 text-shape-ink/60 opacity-0 transition hover:bg-black/20 hover:text-shape-ink"
             style={{ opacity: selected ? 0.7 : undefined }}
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -342,7 +345,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
         )}
 
         {isLocked && selected && (
-          <div className="absolute bottom-1 left-1 z-10 flex h-5 w-5 items-center justify-center rounded bg-black/10 text-ink-700/60">
+          <div className="absolute bottom-1 left-1 z-10 flex h-5 w-5 items-center justify-center rounded bg-black/10 text-shape-ink/60">
             <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
               <path d="M12 7V5a4 4 0 00-8 0v2H3a1 1 0 00-1 1v6a1 1 0 001 1h10a1 1 0 001-1V8a1 1 0 00-1-1h-1zm-2 0H6V5a2 2 0 114 0v2zM7 10v2h2v-2H7z" />
             </svg>

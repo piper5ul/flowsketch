@@ -2,6 +2,7 @@ import { getNodesBounds } from '@xyflow/react';
 import { toPng, toSvg } from 'html-to-image';
 import type { Options as HtmlToImageOptions } from 'html-to-image/lib/types';
 import { useDiagramStore } from '../store/useDiagramStore';
+import { pinLightTheme } from './theme';
 
 export interface Rect {
   x: number;
@@ -35,6 +36,11 @@ const MAX_DEVICE_SIDE = 16384;
 /** Padding used around an exported diagram, in flow units. */
 export const EXPORT_PADDING = 24;
 
+/**
+ * The light canvas, spelled out rather than read from `--canvas`: an export is
+ * always captured in the light theme (see `pinLightTheme`), so this is a
+ * constant of the file format and not of whatever the app is wearing.
+ */
 const DEFAULT_BACKGROUND = '#f6f7fb';
 
 /** Suppresses transitions while capturing — see the rule in `index.css`. */
@@ -156,6 +162,11 @@ async function captureDiagram(render: Renderer, options: CaptureOptions): Promis
   // then the deselect lands in a single style recalculation.
   document.body.classList.add(EXPORTING_CLASS);
 
+  // An exported diagram is a document, not a screenshot of the editor: it is
+  // captured in the light theme however the app is being viewed. Set before
+  // the frames below, so the recalculation lands in the same settle.
+  const restoreTheme = pinLightTheme(document.documentElement);
+
   if (hadSelection) {
     useDiagramStore.setState((s) => ({
       nodes: s.nodes.map((n) => (n.selected ? { ...n, selected: false } : n)),
@@ -178,6 +189,7 @@ async function captureDiagram(render: Renderer, options: CaptureOptions): Promis
       filter: exportFilter,
     });
   } finally {
+    restoreTheme();
     document.body.classList.remove(EXPORTING_CLASS);
     if (hadSelection) {
       useDiagramStore.setState((s) => ({
