@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect } from 'react';
+import { useRef, useCallback, useEffect, useLayoutEffect } from 'react';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
@@ -7,6 +7,9 @@ import type { Direction, FontSize, VerticalAlign } from '../types';
 import { isDarkFill } from '../lib/palette';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
+
+/** Text shapes never shrink below the height they are created at. */
+const TEXT_MIN_HEIGHT = 40;
 
 const HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
   { id: 'top', position: Position.Top, style: { top: -5, left: '50%', transform: 'translateX(-50%)' } },
@@ -22,13 +25,43 @@ const QUICK_ADD: { direction: Direction; style: React.CSSProperties }[] = [
   { direction: 'left', style: { left: -12, top: '50%', transform: 'translateY(-50%)' } },
 ];
 
-export function ShapeNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
+export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeType>) {
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
+  const setNodeSizeTransient = useDiagramStore((s) => s.setNodeSizeTransient);
   const addConnectedShape = useDiagramStore((s) => s.addConnectedShape);
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
   const ref = useRef<HTMLDivElement>(null);
+  const shapeRef = useRef<HTMLDivElement>(null);
+
+  const isTextShape = data.shape === 'text';
+
+  /**
+   * Text shapes size themselves to their content: the width stays under the
+   * user's control via the resizer and the text wraps, but the height follows
+   * whatever is typed. The update is transient so growing never lands in the
+   * undo stack.
+   */
+  const syncTextHeight = useCallback(() => {
+    if (!isTextShape) return;
+    const content = ref.current;
+    const shape = shapeRef.current;
+    if (!content || !shape) return;
+
+    const style = window.getComputedStyle(shape);
+    const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    const next = Math.max(TEXT_MIN_HEIGHT, content.scrollHeight + padding);
+    if (height === undefined || Math.abs(next - height) > 1) {
+      setNodeSizeTransient(id, { height: next });
+    }
+  }, [id, isTextShape, height, setNodeSizeTransient]);
+
+  // Runs on mount (so labels restored from the server get their height) and
+  // whenever the committed text or its typography changes.
+  useLayoutEffect(() => {
+    syncTextHeight();
+  }, [syncTextHeight, data.label, data.fontSize, data.bold, data.italic]);
 
   useEffect(() => {
     if (editing && ref.current) {
@@ -46,9 +79,14 @@ export function ShapeNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
     if (consumeSuppressBlur()) return;
     setEditingNodeId(null);
     updateNodeData(id, { label: ref.current?.innerText ?? '' });
-  }, [id, updateNodeData, setEditingNodeId]);
+    syncTextHeight();
+  }, [id, updateNodeData, setEditingNodeId, syncTextHeight]);
 
-  const isAnchor = data.fill === 'transparent' && data.stroke === 'transparent';
+  // Floating arrows hang off 1×1 rectangles with transparent fill and stroke.
+  // Text shapes are transparent too, so they must be excluded explicitly or
+  // they render as an empty anchor box with no editable text at all.
+  const isAnchor =
+    data.shape !== 'text' && data.fill === 'transparent' && data.stroke === 'transparent';
   if (isAnchor) {
     return (
       <div className="relative h-full w-full">
@@ -59,7 +97,7 @@ export function ShapeNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
     );
   }
 
-  const isText = data.shape === 'text';
+  const isText = isTextShape;
   const isSticky = data.shape === 'sticky';
   const isDiamond = data.shape === 'diamond';
   const isEllipse = data.shape === 'ellipse';
@@ -102,6 +140,7 @@ export function ShapeNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}
     >
       <div
+        ref={shapeRef}
         className={shapeClass}
         style={{
           background: hasClipShape || isCylinder ? 'transparent' : data.fill,
@@ -161,6 +200,7 @@ export function ShapeNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
             suppressContentEditableWarning
             data-placeholder={isText ? 'Text' : 'Add text'}
             onBlur={commit}
+            onInput={syncTextHeight}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
                 e.currentTarget.blur();
@@ -173,7 +213,10 @@ export function ShapeNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
               color: darkBg ? '#fff' : undefined,
             }}
             className={clsx(
-              'relative z-[1] max-h-full w-full overflow-hidden break-words whitespace-pre-wrap leading-snug outline-none',
+              'relative z-[1] w-full break-words whitespace-pre-wrap leading-snug outline-none',
+              // Other shapes have a fixed size and clip; a text shape grows to
+              // fit instead, so clipping it would hide what was just typed.
+              !isText && 'max-h-full overflow-hidden',
               !darkBg && 'text-ink-900',
             )}
           >

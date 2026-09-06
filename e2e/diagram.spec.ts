@@ -112,6 +112,54 @@ test('a selected connector offers a click target for adding its first label', as
   await expect(addLabel).toHaveCount(0);
 });
 
+test('a text shape grows to fit the paragraph typed into it', async ({ page }) => {
+  await signUp(page);
+
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+
+  // Double-clicking empty canvas drops a text shape straight into edit mode.
+  await pane.dblclick({ position: { x: 400, y: 250 } });
+  await expect(page.locator('.react-flow__node [contenteditable="true"]')).toBeFocused();
+  const lines = ['Line one', 'Line two', 'Line three', 'Line four', 'Line five'];
+  for (const [i, line] of lines.entries()) {
+    if (i > 0) await page.keyboard.press('Enter');
+    await page.keyboard.type(line);
+  }
+  await page.keyboard.press('Escape');
+
+  // The canvas opens at 80%; reset it so the assertions are in node pixels.
+  const zoomReset = page.getByRole('button', { name: 'Reset zoom' });
+  await zoomReset.click();
+  await expect(zoomReset).toHaveText('100%');
+
+  const textNode = page.locator('.react-flow__node').first();
+  await expect(textNode).toContainText('Line five');
+  // Five lines at 14px with snug leading come to ~96px — well past the 40px
+  // the shape is created at.
+  const grown = (await textNode.boundingBox())!;
+  expect(grown.height).toBeGreaterThan(90);
+
+  // And nothing is clipped: the rendered text fits inside the node's box.
+  const fitsInsideNode = await textNode.evaluate((el) => {
+    const content = el.querySelector('[contenteditable]');
+    if (!content) return false;
+    return content.scrollHeight <= el.clientHeight + 1;
+  });
+  expect(fitsInsideNode).toBe(true);
+
+  // A fresh single-line text shape keeps the compact default height.
+  await pane.dblclick({ position: { x: 900, y: 250 } });
+  await expect(page.locator('.react-flow__node [contenteditable="true"]')).toBeFocused();
+  await page.keyboard.type('Short');
+  await page.keyboard.press('Escape');
+  const shortNode = page.locator('.react-flow__node', { hasText: 'Short' });
+  const compact = (await shortNode.boundingBox())!;
+  expect(compact.height).toBeLessThanOrEqual(48);
+});
+
 test('the dashboard lists a created diagram and can open it again', async ({ page }) => {
   await signUp(page);
 
