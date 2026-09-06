@@ -238,6 +238,25 @@ body {
   background: var(--color-accent-500);
 }
 
+/* Click target that appears on a selected connector with no label yet */
+.connector-label-target {
+  display: block;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border-radius: 9999px;
+  border: 1.5px dashed var(--color-accent-400);
+  background: var(--color-canvas);
+  opacity: 0.7;
+  cursor: text;
+  transition: opacity 100ms ease, border-color 100ms ease;
+}
+
+.connector-label-target:hover {
+  opacity: 1;
+  border-color: var(--color-accent-500);
+}
+
 /* Smart alignment guide lines shown while dragging shapes */
 .alignment-guide {
   stroke: #f43f5e;

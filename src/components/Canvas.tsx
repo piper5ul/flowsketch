@@ -172,10 +172,28 @@ export function Canvas() {
     [tool, screenToFlowPosition, addShape, setTool, setEditingNodeId, addNodes, addEdges, defaultConnector],
   );
 
+  // A fresh connector renders no label element, so there is nothing to
+  // double-click on the label itself. Double-clicking anywhere along the
+  // connector opens its label for editing, matching Whimsical.
+  const onEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: { id: string }) => {
+      setEditingEdgeId(edge.id);
+    },
+    [setEditingEdgeId],
+  );
+
   const onCanvasDoubleClick = useCallback(
     (event: React.MouseEvent) => {
       const target = event.target as HTMLElement;
-      if (target.closest('.react-flow__node') || target.closest('.react-flow__edge')) return;
+      // Edge labels (and the add-label target) are portalled into the label
+      // renderer, outside `.react-flow__edge`, so they need their own guard.
+      if (
+        target.closest('.react-flow__node') ||
+        target.closest('.react-flow__edge') ||
+        target.closest('.react-flow__edgelabel-renderer')
+      ) {
+        return;
+      }
       if (tool !== 'select') return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const id = addShape('text', { x: position.x - 80, y: position.y - 20 });
@@ -548,6 +566,7 @@ export function Canvas() {
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
         onNodeClick={onNodeClick}
+        onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={30}

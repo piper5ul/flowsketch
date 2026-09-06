@@ -16,7 +16,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - **Elbow (Manhattan) routing** with automatic obstacle avoidance
 - **Straight connectors** for direct point-to-point lines
 - Three line styles: solid, dashed, dotted
-- Editable connector labels (select a connector and press Enter to add one)
+- Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter)
 - Draggable bend-point handles on elbow connectors
 - Free-standing arrows that can be placed and dragged anywhere
 

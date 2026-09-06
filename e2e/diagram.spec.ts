@@ -49,6 +49,69 @@ test('a new user can create a diagram, add a labeled shape, and see it survive a
   await expect(page.locator('.react-flow__node', { hasText: 'Hello from e2e' })).toBeVisible();
 });
 
+/**
+ * Draws a rectangle and quick-adds a neighbour to its right, leaving exactly
+ * two shapes joined by one horizontal connector.
+ */
+async function drawConnectedPair(page: Page) {
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 500, y: 400 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+
+  // Quick-add buttons only appear while the shape is hovered. QUICK_ADD in
+  // ShapeNode is ordered top, right, bottom, left — index 1 spawns to the right.
+  await node.hover();
+  await node.locator('.quick-add-btn').nth(1).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+
+  // A horizontal connector's path has a zero-height box, so callers drive the
+  // mouse by coordinate rather than using Playwright's element-centre click.
+  return (await page.locator('.react-flow__edge-interaction').first().boundingBox())!;
+}
+
+test('double-clicking a connector opens its label for editing', async ({ page }) => {
+  await signUp(page);
+  const edgeBox = await drawConnectedPair(page);
+
+  // Click a quarter of the way along the path, clear of the add-label target
+  // that appears at the midpoint once the connector is selected.
+  const x = edgeBox.x + edgeBox.width * 0.25;
+  const y = edgeBox.y + edgeBox.height / 2;
+  await page.mouse.dblclick(x, y);
+  await expect(page.locator('.react-flow__edgelabel-renderer [contenteditable="true"]')).toBeFocused();
+  await page.keyboard.type('yes');
+  await page.keyboard.press('Escape');
+
+  await expect(page.locator('.react-flow__edgelabel-renderer').getByText('yes')).toBeVisible();
+  // The double-click must edit the connector, not drop a text shape on the canvas.
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+});
+
+test('a selected connector offers a click target for adding its first label', async ({ page }) => {
+  await signUp(page);
+  const edgeBox = await drawConnectedPair(page);
+
+  await page.mouse.click(edgeBox.x + edgeBox.width * 0.25, edgeBox.y + edgeBox.height / 2);
+  const addLabel = page.locator('.connector-label-target');
+  await expect(addLabel).toBeVisible();
+
+  await addLabel.click();
+  await expect(page.locator('.react-flow__edgelabel-renderer [contenteditable="true"]')).toBeFocused();
+  await page.keyboard.type('maybe');
+  await page.keyboard.press('Escape');
+
+  await expect(page.locator('.react-flow__edgelabel-renderer').getByText('maybe')).toBeVisible();
+  // Once the connector has a label the bare target is gone.
+  await expect(addLabel).toHaveCount(0);
+});
+
 test('the dashboard lists a created diagram and can open it again', async ({ page }) => {
   await signUp(page);
 

@@ -9,6 +9,7 @@ import {
   ChevronUp,
   ChevronDown,
   Link2,
+  Tag,
   X,
 } from 'lucide-react';
 import clsx from 'clsx';
@@ -57,6 +58,7 @@ export function FloatingToolbar() {
   const updateSelectedNodesStyle = useDiagramStore((s) => s.updateSelectedNodesStyle);
   const updateSelectedEdgesStyle = useDiagramStore((s) => s.updateSelectedEdgesStyle);
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
+  const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
   const bringToFront = useDiagramStore((s) => s.bringToFront);
   const sendToBack = useDiagramStore((s) => s.sendToBack);
@@ -210,6 +212,16 @@ export function FloatingToolbar() {
                 )}
               >
                 <ArrowEndIcon side="end" />
+              </button>
+            </Tooltip>
+
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <Tooltip label="Add label" shortcut="↵" side="top">
+              <button
+                onClick={() => setEditingEdgeId(selectedEdges[0].id)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
+              >
+                <Tag size={16} />
               </button>
             </Tooltip>
           </>
