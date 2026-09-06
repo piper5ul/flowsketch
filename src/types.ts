@@ -126,8 +126,13 @@ export interface ConnectorData {
    */
   startArrowStyle?: ArrowStyle;
   endArrowStyle?: ArrowStyle;
-  /** A single user-dragged waypoint the routed path is pulled through. */
-  waypoint?: { x: number; y: number } | null;
+  /**
+   * The user-dragged bends the path is pulled through, in order from the
+   * source end to the target end. Absent (or empty) is a route nobody has
+   * touched; diagrams written before v3 of the format held a single `waypoint`
+   * instead, which `migrateDiagramData` rewrites as a one-entry list.
+   */
+  waypoints?: { x: number; y: number }[];
   sourceAnchor?: EdgeAnchor | null;
   targetAnchor?: EdgeAnchor | null;
   [key: string]: unknown;

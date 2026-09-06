@@ -485,7 +485,7 @@ export function FloatingToolbar() {
   const startArrowStyle = selectedEdges[0]?.data?.startArrowStyle ?? DEFAULT_START_ARROW;
   const endArrowStyle = selectedEdges[0]?.data?.endArrowStyle ?? DEFAULT_END_ARROW;
   // Only a dragged bend can be reset, so the button is dead weight without one.
-  const hasWaypoint = selectedEdges.some((e) => e.data?.waypoint);
+  const hasWaypoints = selectedEdges.some((e) => (e.data?.waypoints?.length ?? 0) > 0);
 
   return (
     <div
@@ -529,8 +529,8 @@ export function FloatingToolbar() {
             <Tooltip label="Reset route" side="top">
               <button
                 aria-label="Reset route"
-                onClick={() => updateSelectedEdgesStyle({ waypoint: null })}
-                disabled={!hasWaypoint}
+                onClick={() => updateSelectedEdgesStyle({ waypoints: [] })}
+                disabled={!hasWaypoints}
                 className={BUTTON_CLASS}
               >
                 <RotateCcw size={16} />

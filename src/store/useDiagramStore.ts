@@ -306,11 +306,14 @@ interface DiagramState {
   updateEdgeData: (id: string, data: Partial<ConnectorData>) => void;
   updateSelectedEdgesStyle: (patch: Partial<ConnectorData>) => void;
   reconnectEdgeEndpoint: (edgeId: string, end: 'source' | 'target', nodeId: string, anchor: EdgeAnchor) => void;
+  insertEdgeWaypoint: (id: string, index: number, point: { x: number; y: number }) => void;
+  removeEdgeWaypoint: (id: string, index: number) => void;
 
   // Continuous interactions: `beginInteraction` records the one entry, the
   // transient updaters then run per pointermove without touching history.
   beginInteraction: () => void;
   updateEdgeDataTransient: (id: string, data: Partial<ConnectorData>) => void;
+  setEdgeWaypointTransient: (id: string, index: number, point: { x: number; y: number }) => void;
   moveNodesTransient: (positions: Record<string, { x: number; y: number }>) => void;
   /** Resizes a node without history — for sizes derived from content, not from a user gesture. */
   setNodeSizeTransient: (id: string, size: { width?: number; height?: number }) => void;
@@ -943,6 +946,23 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
+  // Mid-drag: the one bend under the pointer moves and the rest stay put. The
+  // entry the drag is worth was pushed before it started — by `beginInteraction`
+  // for a bend that was already there, or by the insert that created one.
+  setEdgeWaypointTransient: (id, index, point) => {
+    set((s) => ({
+      edges: s.edges.map((e) => {
+        if (e.id !== id) return e;
+        const waypoints = e.data?.waypoints ?? [];
+        if (index < 0 || index >= waypoints.length) return e;
+        return {
+          ...e,
+          data: { ...e.data!, waypoints: waypoints.map((w, i) => (i === index ? point : w)) },
+        };
+      }),
+    }));
+  },
+
   moveNodesTransient: (positions) => {
     set((s) => ({
       nodes: s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n)),
@@ -976,6 +996,38 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
               },
             }
           : e,
+      ),
+    }));
+  },
+
+  // A bend dragged out of a run of the path takes that run's index, so the
+  // list stays in path order however many bends a connector collects. An index
+  // past the end appends, which is what an elbow's extra corners can ask for:
+  // the router turns one bend into several points on the path.
+  insertEdgeWaypoint: (id, index, point) => {
+    const edge = get().edges.find((e) => e.id === id);
+    if (!edge) return;
+    const waypoints = edge.data?.waypoints ?? [];
+    const at = Math.max(0, Math.min(index, waypoints.length));
+    pushHistory(get());
+    set((s) => ({
+      edges: s.edges.map((e) =>
+        e.id === id
+          ? { ...e, data: { ...e.data!, waypoints: [...waypoints.slice(0, at), point, ...waypoints.slice(at)] } }
+          : e,
+      ),
+    }));
+  },
+
+  // Double-clicking a bend drops it; the run either side of it becomes one.
+  removeEdgeWaypoint: (id, index) => {
+    const edge = get().edges.find((e) => e.id === id);
+    const waypoints = edge?.data?.waypoints ?? [];
+    if (!edge || index < 0 || index >= waypoints.length) return;
+    pushHistory(get());
+    set((s) => ({
+      edges: s.edges.map((e) =>
+        e.id === id ? { ...e, data: { ...e.data!, waypoints: waypoints.filter((_, i) => i !== index) } } : e,
       ),
     }));
   },

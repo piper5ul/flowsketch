@@ -107,6 +107,66 @@ describe('migrateDiagramData', () => {
     });
   });
 
+  describe('v2 -> v3: the one bend becomes a list of them', () => {
+    /** A v2 edge, with `data` overridden by `patch`. */
+    function v2Edge(patch: Record<string, unknown>) {
+      return {
+        version: 2,
+        nodes: [],
+        edges: [{
+          id: 'e1', source: 'n1', target: 'n2', type: 'connector',
+          data: { stroke: '#123456', startArrowStyle: 'none', endArrowStyle: 'arrow', ...patch },
+        }],
+      };
+    }
+
+    it('carries a dragged bend over as the one entry of the list', () => {
+      const { data } = migrateDiagramData(v2Edge({ waypoint: { x: 40, y: 90 } })).edges[0]!;
+      expect(data).toMatchObject({ waypoints: [{ x: 40, y: 90 }] });
+    });
+
+    it('drops the key it replaced, so nothing can read the old bend again', () => {
+      const { data } = migrateDiagramData(v2Edge({ waypoint: { x: 40, y: 90 } })).edges[0]!;
+      expect(data).not.toHaveProperty('waypoint');
+    });
+
+    it('leaves a connector nobody has bent without a list at all', () => {
+      for (const patch of [{ waypoint: null }, {}]) {
+        const { data } = migrateDiagramData(v2Edge(patch)).edges[0]!;
+        expect(data, JSON.stringify(patch)).not.toHaveProperty('waypoints');
+        expect(data).not.toHaveProperty('waypoint');
+      }
+    });
+
+    it('drops a bend that is not a pair of finite numbers', () => {
+      // `data` is a free-form JSON column; a half-written point would be fed
+      // to the router as a vertex.
+      for (const waypoint of ['nope', 42, [], { x: 1 }, { x: 1, y: '2' }, { x: NaN, y: 0 }]) {
+        const { data } = migrateDiagramData(v2Edge({ waypoint })).edges[0]!;
+        expect(data, JSON.stringify(waypoint)).not.toHaveProperty('waypoints');
+      }
+    });
+
+    it('leaves the rest of an edge alone', () => {
+      const edge = migrateDiagramData(v2Edge({ waypoint: { x: 1, y: 2 }, label: 'yes' })).edges[0]!;
+      expect(edge).toMatchObject({ id: 'e1', source: 'n1', target: 'n2', type: 'connector' });
+      expect(edge.data).toMatchObject({ label: 'yes', stroke: '#123456', endArrowStyle: 'arrow' });
+    });
+
+    it('is idempotent — migrating twice equals migrating once', () => {
+      const once = migrateDiagramData(v2Edge({ waypoint: { x: 40, y: 90 } }));
+      expect(migrateDiagramData(once)).toEqual(once);
+    });
+
+    it('carries a v0 bend all the way through to the list', () => {
+      const { data } = migrateDiagramData({
+        nodes: [],
+        edges: [{ id: 'e1', source: 'n1', target: 'n2', data: { stroke: '#123456', waypoint: { x: 7, y: 8 } } }],
+      }).edges[0]!;
+      expect(data).toMatchObject({ waypoints: [{ x: 7, y: 8 }], endArrowStyle: 'arrow' });
+    });
+  });
+
   it('leaves a payload that has no viewport without one', () => {
     // Every diagram written before the viewport was stored, which is all of
     // them: the canvas has to fall back to framing the content itself.

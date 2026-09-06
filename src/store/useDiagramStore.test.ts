@@ -238,12 +238,12 @@ describe('undo / redo', () => {
 
     store().beginInteraction();
     for (const x of [10, 20, 30]) {
-      store().updateEdgeDataTransient(edgeId, { waypoint: { x, y: 0 } });
+      store().updateEdgeDataTransient(edgeId, { waypoints: [{ x, y: 0 }] });
     }
-    expect(store().edges[0].data!.waypoint).toEqual({ x: 30, y: 0 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 30, y: 0 }]);
 
     store().undo();
-    expect(store().edges[0].data!.waypoint).toBeUndefined();
+    expect(store().edges[0].data!.waypoints).toBeUndefined();
     // One entry only: the two shapes from before the drag are still there.
     expect(store().nodes).toHaveLength(2);
   });
@@ -934,16 +934,106 @@ describe('updateEdgeData', () => {
     expect(store().edges[0].markerEnd).toBe(before);
   });
 
-  it('clears a waypoint, and undo puts the routed bend back', () => {
+  it('clears every waypoint, and undo puts the routed bends back', () => {
     const id = edgeId();
     store().beginInteraction();
-    store().updateEdgeDataTransient(id, { waypoint: { x: 40, y: 90 } });
+    store().updateEdgeDataTransient(id, { waypoints: [{ x: 40, y: 90 }, { x: 60, y: 120 }] });
 
-    store().updateEdgeData(id, { waypoint: null });
-    expect(store().edges[0].data!.waypoint).toBeNull();
+    store().updateEdgeData(id, { waypoints: [] });
+    expect(store().edges[0].data!.waypoints).toEqual([]);
 
     store().undo();
-    expect(store().edges[0].data!.waypoint).toEqual({ x: 40, y: 90 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 40, y: 90 }, { x: 60, y: 120 }]);
+  });
+});
+
+describe('connector waypoints', () => {
+  /** An edge already bent twice, and its id. */
+  function bentEdgeId() {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const id = store().edges[0].id;
+    store().beginInteraction();
+    store().updateEdgeDataTransient(id, { waypoints: [{ x: 10, y: 10 }, { x: 30, y: 30 }] });
+    return id;
+  }
+
+  it('inserts a bend at the index of the run it was dragged out of', () => {
+    const id = bentEdgeId();
+    store().insertEdgeWaypoint(id, 1, { x: 20, y: 20 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 20, y: 20 }, { x: 30, y: 30 }]);
+  });
+
+  it('inserts at either end, and clamps an index past the last run', () => {
+    const id = bentEdgeId();
+    store().insertEdgeWaypoint(id, 0, { x: 1, y: 1 });
+    store().insertEdgeWaypoint(id, 99, { x: 9, y: 9 });
+    expect(store().edges[0].data!.waypoints).toEqual([
+      { x: 1, y: 1 }, { x: 10, y: 10 }, { x: 30, y: 30 }, { x: 9, y: 9 },
+    ]);
+  });
+
+  it('gives a connector with no bends its first one', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const id = store().edges[0].id;
+    store().insertEdgeWaypoint(id, 0, { x: 5, y: 5 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 5, y: 5 }]);
+  });
+
+  it('undoes an insert, bend and all', () => {
+    const id = bentEdgeId();
+    store().insertEdgeWaypoint(id, 1, { x: 20, y: 20 });
+    store().undo();
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 30, y: 30 }]);
+  });
+
+  it('removes the bend at an index, and undo puts it back', () => {
+    const id = bentEdgeId();
+    store().removeEdgeWaypoint(id, 0);
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 30, y: 30 }]);
+
+    store().undo();
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 30, y: 30 }]);
+  });
+
+  it('ignores a remove that names no bend, and costs no history entry', () => {
+    const id = bentEdgeId();
+    const before = store().edges[0].data!.waypoints;
+    const canUndo = store().canUndo;
+    for (const index of [-1, 2, 99]) store().removeEdgeWaypoint(id, index);
+    expect(store().edges[0].data!.waypoints).toBe(before);
+    expect(store().canUndo).toBe(canUndo);
+  });
+
+  it('moves one bend of many while a drag is in flight', () => {
+    const id = bentEdgeId();
+    store().beginInteraction();
+    for (const y of [40, 50, 60]) store().setEdgeWaypointTransient(id, 1, { x: 30, y });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 30, y: 60 }]);
+  });
+
+  it('records no entry of its own for a transient move, so one undo ends the drag', () => {
+    const id = bentEdgeId();
+    store().beginInteraction();
+    store().setEdgeWaypointTransient(id, 0, { x: 99, y: 99 });
+    store().undo();
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 30, y: 30 }]);
+  });
+
+  it('leaves a bend nobody is dragging alone', () => {
+    const id = bentEdgeId();
+    for (const index of [-1, 2, 99]) store().setEdgeWaypointTransient(id, index, { x: 0, y: 0 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 30, y: 30 }]);
+  });
+
+  it('does nothing at all for an edge that is not there', () => {
+    const id = bentEdgeId();
+    store().insertEdgeWaypoint('nope', 0, { x: 1, y: 1 });
+    store().removeEdgeWaypoint('nope', 0);
+    store().setEdgeWaypointTransient('nope', 0, { x: 1, y: 1 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 10, y: 10 }, { x: 30, y: 30 }]);
+    expect(store().edges.find((e) => e.id === id)).toBeDefined();
   });
 });
 
@@ -963,13 +1053,13 @@ describe('updateSelectedEdgesStyle', () => {
   it('resets the route of every selected connector, and undo restores it', () => {
     const id = selectedEdgeId();
     store().beginInteraction();
-    store().updateEdgeDataTransient(id, { waypoint: { x: 40, y: 90 } });
+    store().updateEdgeDataTransient(id, { waypoints: [{ x: 40, y: 90 }] });
 
-    store().updateSelectedEdgesStyle({ waypoint: null });
-    expect(store().edges[0].data!.waypoint).toBeNull();
+    store().updateSelectedEdgesStyle({ waypoints: [] });
+    expect(store().edges[0].data!.waypoints).toEqual([]);
 
     store().undo();
-    expect(store().edges[0].data!.waypoint).toEqual({ x: 40, y: 90 });
+    expect(store().edges[0].data!.waypoints).toEqual([{ x: 40, y: 90 }]);
   });
 
   it('leaves connectors outside the selection alone', () => {
@@ -978,11 +1068,11 @@ describe('updateSelectedEdgesStyle', () => {
     store().addConnectedShape(b, 'right');
     const other = store().edges.find((e) => e.id !== id)!.id;
     store().beginInteraction();
-    store().updateEdgeDataTransient(other, { waypoint: { x: 1, y: 2 } });
+    store().updateEdgeDataTransient(other, { waypoints: [{ x: 1, y: 2 }] });
     useDiagramStore.setState((s) => ({ edges: s.edges.map((e) => ({ ...e, selected: e.id === id })) }));
 
-    store().updateSelectedEdgesStyle({ waypoint: null });
-    expect(store().edges.find((e) => e.id === other)!.data!.waypoint).toEqual({ x: 1, y: 2 });
+    store().updateSelectedEdgesStyle({ waypoints: [] });
+    expect(store().edges.find((e) => e.id === other)!.data!.waypoints).toEqual([{ x: 1, y: 2 }]);
   });
 });
 
