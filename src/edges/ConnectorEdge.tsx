@@ -8,13 +8,18 @@ import {
   type EdgeAnchor,
   type Rect,
 } from '../lib/edgeGeometry';
-import { buildConnectorPath, controlThrough, interpolatePolyline, type Point } from '../lib/connectorPath';
+import {
+  buildConnectorPath,
+  interpolatePolyline,
+  type PathSegment,
+  type Point,
+} from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
-import type { ConnectorKind, FontSize } from '../types';
+import type { FontSize } from '../types';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 11, medium: 12, large: 15 };
 
@@ -74,6 +79,53 @@ function nearestTOnPolyline(
   return bestT;
 }
 
+/**
+ * The point on `points` nearest to `p` — how a bend the router only passed
+ * close to (it turns at right angles, so it rarely lands on one exactly) is
+ * drawn on the line the user can see rather than beside it.
+ */
+function snapToPolyline(points: Point[], p: Point): Point {
+  return interpolatePolyline(points, nearestTOnPolyline(points, p.x, p.y));
+}
+
+function polylineLength(points: Point[]): number {
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    total += Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y);
+  }
+  return total;
+}
+
+/** How close a handle may sit to the label before it is slid clear of it. */
+const LABEL_CLEARANCE_PX = 16;
+
+/**
+ * The shortest run that gets a handle of its own. Anything shorter is mostly
+ * covered by the joints at either end of it.
+ */
+const MIN_SEGMENT_PX = 28;
+
+/**
+ * A run's handle, moved out from under the label.
+ *
+ * The label (or, on a connector that has none, the button that adds one) sits
+ * on the path and takes its own pointer events, so a handle underneath it
+ * cannot be grabbed — and the run in the middle of a connector is exactly the
+ * one a user reaches for first. A colliding handle slides along the path,
+ * which keeps it on a curve rather than on the chord, and never past a third
+ * of its own run.
+ */
+function clearOfLabel(segment: PathSegment, points: Point[], label: Point): Point {
+  const { handle } = segment;
+  if (Math.hypot(handle.x - label.x, handle.y - label.y) >= LABEL_CLEARANCE_PX) return handle;
+  const total = polylineLength(points);
+  if (total < 1) return handle;
+  const shift = Math.min(LABEL_CLEARANCE_PX + 8, segment.length / 3) / total;
+  const t = nearestTOnPolyline(points, handle.x, handle.y);
+  // Towards the source, unless that is the end the handle is already near.
+  return interpolatePolyline(points, t > shift ? t - shift : t + shift);
+}
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -96,16 +148,15 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const updateEdgeDataTransient = useDiagramStore((s) => s.updateEdgeDataTransient);
   const moveNodesTransient = useDiagramStore((s) => s.moveNodesTransient);
   const reconnectEdgeEndpoint = useDiagramStore((s) => s.reconnectEdgeEndpoint);
+  const setEdgeWaypointTransient = useDiagramStore((s) => s.setEdgeWaypointTransient);
+  const insertEdgeWaypoint = useDiagramStore((s) => s.insertEdgeWaypoint);
+  const removeEdgeWaypoint = useDiagramStore((s) => s.removeEdgeWaypoint);
   const editingEdgeId = useDiagramStore((s) => s.editingEdgeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const { screenToFlowPosition } = useReactFlow();
   const editing = editingEdgeId === id;
   const labelRef = useRef<HTMLDivElement>(null);
   const pathPointsRef = useRef<Point[]>([]);
-  // What the bend drag needs from the render that laid the path out. Held in a
-  // ref because the handler is a `useCallback` declared before the geometry —
-  // the endpoint nodes may be missing, so the layout runs after an early return.
-  const dragRef = useRef<{ kind: ConnectorKind; source: Point; target: Point } | null>(null);
 
   useEffect(() => {
     if (editing) {
@@ -121,30 +172,60 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     updateEdgeData(id, { label: labelRef.current?.innerText ?? '' });
   }, [id, updateEdgeData, setEditingEdgeId]);
 
-  const onWaypointPointerDown = useCallback(
-    (e: React.PointerEvent) => {
+  /** Follows the pointer for as long as a drag lasts, then tidies up after it. */
+  const trackPointer = useCallback((onMove: (flow: Point) => void) => {
+    const move = (ev: PointerEvent) => onMove(screenToFlowPosition({ x: ev.clientX, y: ev.clientY }));
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  }, [screenToFlowPosition]);
+
+  /** Drags the bend at `index`; the pointer is where the bend goes. */
+  const onBendPointerDown = useCallback(
+    (index: number) => (e: React.PointerEvent) => {
       e.stopPropagation();
       e.preventDefault();
       const begin = historyOnce();
-      const onMove = (ev: PointerEvent) => {
+      trackPointer((flow) => {
         begin();
-        const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
-        const layout = dragRef.current;
-        // A curve is pulled by a control point off the curve; the other kinds
-        // pass through the waypoint, so the pointer is the waypoint.
-        const waypoint = layout?.kind === 'curved'
-          ? controlThrough(layout.source, flow, layout.target)
-          : { x: flow.x, y: flow.y };
-        updateEdgeDataTransient(id, { waypoints: [waypoint] });
-      };
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+        setEdgeWaypointTransient(id, index, { x: flow.x, y: flow.y });
+      });
     },
-    [id, screenToFlowPosition, updateEdgeDataTransient],
+    [id, trackPointer, setEdgeWaypointTransient],
+  );
+
+  /**
+   * Drags one run of the path. The first move drops a new bend where the handle
+   * was — the one history entry the whole drag is worth — and carries on as
+   * that bend's own drag, so a run is grabbed and pulled in a single gesture.
+   *
+   * An elbow only turns at right angles, so a run of one slides across itself
+   * rather than following the pointer: a horizontal run moves up and down, a
+   * vertical one side to side. That is what makes an elbow's segments slide.
+   */
+  const onSegmentPointerDown = useCallback(
+    (index: number, segment: PathSegment, handle: Point, orthogonal: boolean) => (e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      let inserted = false;
+      trackPointer((flow) => {
+        const point = !orthogonal
+          ? { x: flow.x, y: flow.y }
+          : segment.orientation === 'h'
+            ? { x: handle.x, y: flow.y }
+            : { x: flow.x, y: handle.y };
+        if (inserted) {
+          setEdgeWaypointTransient(id, index, point);
+        } else {
+          inserted = true;
+          insertEdgeWaypoint(id, index, point);
+        }
+      });
+    },
+    [id, trackPointer, insertEdgeWaypoint, setEdgeWaypointTransient],
   );
 
   const onEndpointPointerDown = useCallback(
@@ -290,7 +371,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
         }).points;
   }
 
-  const { d: svgPathString, center, points: pathPoints, segments } = buildConnectorPath(connectorType, {
+  const { d: svgPathString, points: pathPoints, segments } = buildConnectorPath(connectorType, {
     source: { x: sx, y: sy },
     target: { x: tx, y: ty },
     sourceSide: sourceAnchor.side,
@@ -298,22 +379,40 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     waypoints,
     routed,
   });
-  const edgeCenterX = center.x;
-  const edgeCenterY = center.y;
-
-  // Grab handles for the individual runs of an elbow. The other kinds have no
-  // straight runs to grab, so their only handle is the bend at the centre.
-  const segmentHandles = connectorType === 'elbow'
-    ? segments.filter(
-        (s) => s.length >= 28 && Math.hypot(s.handle.x - edgeCenterX, s.handle.y - edgeCenterY) >= 10,
-      )
-    : [];
 
   pathPointsRef.current = pathPoints;
-  dragRef.current = { kind: connectorType, source: { x: sx, y: sy }, target: { x: tx, y: ty } };
 
   const labelT = data?.labelT ?? 0.5;
   const labelPos = interpolatePolyline(pathPoints, labelT);
+
+  /**
+   * Where a bend dragged out of the path at `at` belongs in the list: after
+   * every bend the path already passes on its way there. On a straight or
+   * curved connector that is simply the run's own index; on an elbow, whose
+   * corners are the router's rather than the user's, counting along the path is
+   * what keeps the list in the order the connector is drawn in.
+   */
+  const insertIndexAt = (at: Point) => {
+    const t = nearestTOnPolyline(pathPoints, at.x, at.y);
+    return waypoints.filter((w) => nearestTOnPolyline(pathPoints, w.x, w.y) < t).length;
+  };
+
+  // One grab handle per run of the path, in the middle of it. A run too short
+  // to hold a handle without covering the joints at either end of it goes
+  // without one.
+  const segmentHandles = segments
+    .map((segment, index) => {
+      const at = clearOfLabel(segment, pathPoints, labelPos);
+      return { segment, index, at, insertAt: insertIndexAt(at) };
+    })
+    .filter(({ segment }) => segment.length >= MIN_SEGMENT_PX);
+
+  // A joint on every bend the connector has collected, drawn on the line even
+  // when the router could only route near it.
+  const bendJoints = waypoints.map((waypoint, index) => ({
+    index,
+    at: snapToPolyline(pathPoints, waypoint),
+  }));
 
   return (
     <>
@@ -357,35 +456,36 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           >
             <div className="connector-joint connector-joint--endpoint" />
           </div>
-          {segmentHandles.map((h, i) => (
+          {segmentHandles.map(({ segment, index, at, insertAt }) => (
             <div
-              key={i}
-              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${h.handle.x}px, ${h.handle.y}px)` }}
-              className={`connector-joint-hit nodrag nopan connector-joint-hit--${h.orientation}`}
-              onPointerDown={onWaypointPointerDown}
+              key={`segment-${index}`}
+              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)` }}
+              className={`connector-joint-hit nodrag nopan connector-joint-hit--${segment.orientation}`}
+              title="Drag to bend"
+              onPointerDown={onSegmentPointerDown(insertAt, segment, at, connectorType === 'elbow')}
             >
-              <div className={`connector-joint connector-joint--segment connector-joint--segment-${h.orientation}`} />
+              <div className={`connector-joint connector-joint--segment connector-joint--segment-${segment.orientation}`} />
             </div>
           ))}
 
-          {/* Bend-point handle at geometric center — hidden for floating arrows (they use whole-edge drag instead) */}
-          {!isFloatingArrow && (
+          {bendJoints.map(({ index, at }) => (
             <div
-              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${edgeCenterX}px, ${edgeCenterY}px)` }}
+              key={`bend-${index}`}
+              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${at.x}px, ${at.y}px)` }}
               className="connector-joint-hit nodrag nopan"
-              title={waypoints.length > 0 ? 'Double-click to reset the route' : undefined}
-              onPointerDown={onWaypointPointerDown}
-              // Undoes a dragged bend. The handle sits where a double-click
-              // would otherwise start editing the label (or drop a text shape
-              // on the pane), so the event stops here either way.
+              title="Double-click to remove this bend"
+              onPointerDown={onBendPointerDown(index)}
+              // Drops the bend. The joint sits where a double-click would
+              // otherwise start editing the label (or drop a text shape on the
+              // pane), so the event stops here either way.
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                if (waypoints.length > 0) updateEdgeData(id, { waypoints: [] });
+                removeEdgeWaypoint(id, index);
               }}
             >
               <div className="connector-joint connector-joint--bend" />
             </div>
-          )}
+          ))}
 
         </EdgeLabelRenderer>
       )}

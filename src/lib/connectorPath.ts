@@ -44,8 +44,6 @@ export interface PathSegment {
 export interface ConnectorPath {
   /** The `d` attribute of the rendered path. */
   d: string;
-  /** The middle of the path; the origin of the label's 0–1 offset. */
-  center: Point;
   /** A polyline following the path, for interpolating the label along it. */
   points: Point[];
   /** The runs between consecutive bends, each with the handle that grabs it. */
@@ -266,15 +264,6 @@ export function interpolatePolyline(pts: Point[], t: number): Point {
   return pts[pts.length - 1];
 }
 
-/**
- * The middle of a cornered path: its middle vertex, so the handle sits on a
- * bend rather than at half its length — except on a corner-free run, where that
- * vertex *is* the target and the handle would hide the endpoint's own.
- */
-function polylineCenter(points: Point[]): Point {
-  return points.length === 2 ? midpoint(points[0], points[1]) : points[Math.floor(points.length / 2)];
-}
-
 /** One run per pair of consecutive points, each grabbed at its midpoint. */
 function segmentsOf(points: Point[]): PathSegment[] {
   const segments: PathSegment[] = [];
@@ -299,12 +288,7 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
     // The router already threaded the bends: it was handed them as vertices,
     // and `routed` is the orthogonal run of corners that came back.
     const points = cleanPath([source, ...(routed ?? []), target]);
-    return {
-      d: smoothStepPath(points),
-      center: polylineCenter(points),
-      points,
-      segments: segmentsOf(points),
-    };
+    return { d: smoothStepPath(points), points, segments: segmentsOf(points) };
   }
 
   if (kind === 'curved') {
@@ -316,7 +300,6 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
       const points = sampleCubics(cubics);
       return {
         d: cubicPath(cubics),
-        center: interpolatePolyline(points, 0.5),
         points,
         // A run of a spline bulges off its chord, so its handle is taken from
         // the curve itself rather than from the two bends it joins.
@@ -331,23 +314,19 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
       targetY: target.y,
       targetPosition: POSITION[targetSide],
     });
-    const center = { x: labelX, y: labelY };
+    // The curve's own midpoint: where its one handle sits, and the point the
+    // quadratic that stands in for it while sampling is drawn through.
+    const mid = { x: labelX, y: labelY };
     return {
       d,
-      center,
-      points: sampleQuadratic(source, controlThrough(source, center, target), target),
-      segments: [runBetween(source, target, center)],
+      points: sampleQuadratic(source, controlThrough(source, mid, target), target),
+      segments: [runBetween(source, target, mid)],
     };
   }
 
   if (waypoints.length > 0) {
     const points = [source, ...waypoints, target];
-    return {
-      d: polylinePath(points),
-      center: polylineCenter(points),
-      points,
-      segments: segmentsOf(points),
-    };
+    return { d: polylinePath(points), points, segments: segmentsOf(points) };
   }
 
   const [d, labelX, labelY] = getStraightPath({
@@ -356,6 +335,6 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
     targetX: target.x,
     targetY: target.y,
   });
-  const center = { x: labelX, y: labelY };
-  return { d, center, points: [source, target], segments: [runBetween(source, target, center)] };
+  const mid = { x: labelX, y: labelY };
+  return { d, points: [source, target], segments: [runBetween(source, target, mid)] };
 }

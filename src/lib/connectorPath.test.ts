@@ -67,18 +67,19 @@ const THREE: Point[] = [{ x: 60, y: 220 }, { x: 130, y: 260 }, { x: 190, y: 200 
 
 describe('buildConnectorPath', () => {
   describe('straight', () => {
-    it('draws one segment between the anchors', () => {
+    it('draws one segment between the anchors, grabbed in the middle', () => {
       const path = buildConnectorPath('straight', ends);
       expect(path.d).toBe('M 0,0L 200,100');
       expect(path.points).toEqual([SOURCE, TARGET]);
-      expect(path.center).toEqual({ x: 100, y: 50 });
+      expect(path.segments).toHaveLength(1);
+      expect(path.segments[0].handle).toEqual({ x: 100, y: 50 });
     });
 
-    it('bends through a waypoint, and puts the handle on it', () => {
+    it('bends through a waypoint, and offers a handle either side of it', () => {
       const path = buildConnectorPath('straight', { ...ends, waypoints: [{ x: 40, y: 160 }] });
       expect(path.d).toBe('M 0 0 L 40 160 L 200 100');
-      expect(path.center).toEqual({ x: 40, y: 160 });
       expect(path.points).toEqual([SOURCE, { x: 40, y: 160 }, TARGET]);
+      expect(path.segments.map((s) => s.handle)).toEqual([{ x: 20, y: 80 }, { x: 120, y: 130 }]);
     });
 
     it('runs through every waypoint, in order', () => {
@@ -98,15 +99,18 @@ describe('buildConnectorPath', () => {
       expect(path.d.match(/Q/g)).toHaveLength(2);
     });
 
-    it('puts the handle on the middle corner rather than half way along', () => {
+    it('grabs each run of corners in the middle of that run', () => {
       const path = buildConnectorPath('elbow', { ...ends, routed: [{ x: 100, y: 0 }, { x: 100, y: 100 }] });
-      expect(path.center).toEqual({ x: 100, y: 100 });
+      expect(path.segments.map((s) => s.handle)).toEqual([
+        { x: 50, y: 0 }, { x: 100, y: 50 }, { x: 150, y: 100 },
+      ]);
     });
 
-    it('centres the handle on a corner-free run, so it never hides an endpoint', () => {
+    it('has one run, grabbed at its midpoint, when the route needs no corner', () => {
       const path = buildConnectorPath('elbow', { ...ends, routed: [] });
       expect(path.points).toEqual([SOURCE, TARGET]);
-      expect(path.center).toEqual({ x: 100, y: 50 });
+      expect(path.segments).toHaveLength(1);
+      expect(path.segments[0].handle).toEqual({ x: 100, y: 50 });
     });
 
     it('is the only kind that reads `routed` — the others ignore it', () => {
@@ -158,9 +162,11 @@ describe('buildConnectorPath', () => {
       expect(points[points.length - 1]).toEqual(TARGET);
     });
 
-    it('puts the handle half way along the curve it drew', () => {
+    it('takes each handle off the curve rather than off the chord below it', () => {
       const path = buildConnectorPath('curved', { ...ends, waypoints: THREE });
-      expect(distanceToPolyline(path.points, path.center)).toBeLessThan(1);
+      for (const segment of path.segments) {
+        expect(distanceToPolyline(path.points, segment.handle)).toBeLessThan(1);
+      }
     });
   });
 
@@ -178,15 +184,6 @@ describe('buildConnectorPath', () => {
         const { points } = elbowThrough(waypoints);
         for (const w of waypoints) {
           expect(distanceToPolyline(points, w), `elbow misses (${w.x},${w.y})`).toBeLessThanOrEqual(20);
-        }
-      }
-    });
-
-    it('puts the handle on the path', () => {
-      for (const kind of ['straight', 'elbow', 'curved'] as const) {
-        for (const waypoints of [NONE, ONE, THREE]) {
-          const path = buildConnectorPath(kind, { ...ends, waypoints, routed: [{ x: 100, y: 0 }] });
-          expect(distanceToPolyline(path.points, path.center), `${kind}/${waypoints.length}`).toBeLessThan(1);
         }
       }
     });

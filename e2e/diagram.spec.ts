@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 /**
@@ -666,6 +666,56 @@ test('the toolbar swaps a connector\'s end arrowhead for a circle', async ({ pag
       return page.locator(`marker[id="${markerId}"]`).count();
     })
     .toBe(1);
+});
+
+/**
+ * Drags an element from the centre of its box by (dx, dy). React only sees a
+ * drag if it sees the moves, so the pointer travels in steps rather than
+ * jumping, and the press and release are separate events either side of them.
+ */
+async function dragBy(page: Page, target: Locator, dx: number, dy: number) {
+  const box = (await target.boundingBox())!;
+  const fromX = box.x + box.width / 2;
+  const fromY = box.y + box.height / 2;
+  await page.mouse.move(fromX, fromY);
+  await page.mouse.down();
+  for (const step of [0.25, 0.5, 0.75, 1]) {
+    await page.mouse.move(fromX + dx * step, fromY + dy * step);
+  }
+  await page.mouse.up();
+}
+
+test('a connector collects bends: drag a run to add one, double-click it to drop it', async ({ page }) => {
+  await signUp(page);
+  await selectConnector(page);
+
+  const bends = page.locator('.connector-joint--bend');
+  const runs = page.locator('.connector-joint--segment');
+  // The pair is joined by one straight run, and nobody has bent it yet.
+  await expect(runs).toHaveCount(1);
+  await expect(bends).toHaveCount(0);
+
+  // Dragging the run's handle down drops a bend under the pointer, and the
+  // route now turns: the two runs either side of the bend get handles of
+  // their own.
+  await dragBy(page, runs.first(), 0, 60);
+  await expect(bends).toHaveCount(1);
+  await expect(runs).not.toHaveCount(1);
+
+  // The bend itself is draggable, and taking it further leaves the connector
+  // still bent exactly once.
+  const runsAfterInsert = await runs.count();
+  await dragBy(page, bends.first(), 0, 40);
+  await expect(bends).toHaveCount(1);
+  await expect(runs).not.toHaveCount(0);
+
+  // Double-clicking the bend drops it, and the route goes back to being one
+  // run between the two shapes.
+  const bendBox = (await bends.first().boundingBox())!;
+  await page.mouse.dblclick(bendBox.x + bendBox.width / 2, bendBox.y + bendBox.height / 2);
+  await expect(bends).toHaveCount(0);
+  await expect(runs).toHaveCount(1);
+  expect(runsAfterInsert).toBeGreaterThan(1);
 });
 
 test('the colour palette hides for an image-only selection and comes back for a mixed one', async ({ page }) => {
