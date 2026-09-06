@@ -51,6 +51,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
+- Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
 - Auto-save to server (diagrams persist across sessions)
 
 ### Collaboration-Ready Backend

@@ -529,6 +529,27 @@ test('right-clicking a shape opens a context menu that deletes it', async ({ pag
   await expect(menu).toBeHidden();
 });
 
+test('the minimap is off until it is switched on, and is still on after a reload', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // Something to see on the map, so "visible" means it actually drew.
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+  const minimap = page.locator('.react-flow__minimap');
+  await expect(minimap).toBeHidden();
+
+  await page.getByRole('button', { name: 'Minimap' }).click();
+  await expect(minimap).toBeVisible();
+
+  // The preference lives in localStorage, not in the diagram, so it survives
+  // the reload without a save.
+  await page.reload();
+  await expect(page.locator('.react-flow__minimap')).toBeVisible();
+});
+
 test('X selects the hexagon tool', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);

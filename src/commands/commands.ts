@@ -1,4 +1,5 @@
 import { renderDiagramPng } from '../lib/exportImage';
+import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import type { FontSize, ShapeKind, Tool } from '../types';
 import { createRegistry } from './registry';
@@ -477,6 +478,18 @@ export const commands: Command[] = [
   // written here the way they are printed on the key.
   ...alignCommands(),
   ...distributeCommands(),
+
+  // ---- view: canvas chrome -----------------------------------------------
+  // Both toggles live in `useViewPreferences` rather than the diagram store:
+  // they are per-browser preferences, not part of any diagram. Neither takes a
+  // keystroke — the letters left are worth more to a tool — so they reach the
+  // user through the bottom bar, and through here for the sake of one list.
+  {
+    id: 'view.toggleMinimap',
+    title: 'Show minimap',
+    group: 'view',
+    run: () => useViewPreferences.getState().toggleMinimap(),
+  },
 ];
 
 export const registry = createRegistry(commands);

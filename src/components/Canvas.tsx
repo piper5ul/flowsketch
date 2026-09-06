@@ -9,6 +9,7 @@ import {
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
+import { useViewPreferences } from '../store/useViewPreferences';
 import { makeEdgeData } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { useImageInsert } from '../lib/useImageInsert';
@@ -22,6 +23,7 @@ import { FloatingToolbar } from './FloatingToolbar';
 import { BottomBar } from './BottomBar';
 import { TopBar } from './TopBar';
 import { AlignmentGuides } from './AlignmentGuides';
+import { CanvasMiniMap } from './CanvasMiniMap';
 import { TextFormatBar } from './TextFormatBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
@@ -44,6 +46,7 @@ export function Canvas() {
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
+  const minimap = useViewPreferences((s) => s.minimap);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
@@ -409,6 +412,7 @@ export function Canvas() {
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#D6D9E4" className="rf-canvas" />
         <ConnectorMarkerDefs />
         <AlignmentGuides />
+        {minimap && <CanvasMiniMap />}
       </ReactFlow>
 
       <TopBar />

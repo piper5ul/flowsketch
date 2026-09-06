@@ -78,6 +78,21 @@ body {
   z-index: 1000;
 }
 
+/* The minimap wears the bottom bar's card and sits directly above it. React
+   Flow positions it through `.react-flow__panel.bottom.right`, so the override
+   has to match on two classes to outrank that. */
+.react-flow__minimap.rf-minimap {
+  bottom: 76px;
+  right: 20px;
+  margin: 0;
+  width: 176px;
+  height: 112px;
+  border-radius: 16px;
+  background-color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 10px 30px -10px rgba(20, 20, 50, 0.25), 0 0 0 1px rgba(0, 0, 0, 0.04);
+  backdrop-filter: blur(8px);
+}
+
 /* Connection handle hit areas — invisible but interactive for drag-to-connect.
    The handle itself is a large invisible hit area; a ::after pseudo-element
    renders the small visible dot when needed. */
