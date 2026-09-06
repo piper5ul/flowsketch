@@ -179,6 +179,14 @@ function SaveIndicator({ status }: { status: SaveStatus }) {
       </span>
     );
   }
+  if (status === 'retrying') {
+    // Amber, not red: the edit is not lost, the autosaver is still working on it.
+    return (
+      <span className="ml-1 flex items-center gap-1.5 text-xs text-amber-500">
+        <Loader2 size={12} className="animate-spin" /> Retrying...
+      </span>
+    );
+  }
   if (status === 'error') {
     return <span className="ml-1 text-xs text-red-500">Save failed</span>;
   }

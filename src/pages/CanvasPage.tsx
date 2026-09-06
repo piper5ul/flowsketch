@@ -53,8 +53,20 @@ export function CanvasPage() {
     if (loading || loadError || !id) return;
 
     const autosaver = createAutosaver({
-      save: () => useDiagramStore.getState().saveDiagram(),
+      save: async () => {
+        await useDiagramStore.getState().saveDiagram();
+        // `saveDiagram` reports a failure through `saveStatus` rather than by
+        // rejecting — its other callers `void` it, where a rejection would be
+        // unhandled. The autosaver retries on a rejection, so the status is
+        // translated back into one here.
+        if (useDiagramStore.getState().saveStatus === 'error') throw new Error('Save failed');
+      },
       delayMs: AUTOSAVE_DELAY_MS,
+      // `idle` / `pending` / `saving` are already reflected by `saveDiagram`;
+      // only the autosaver knows that another attempt is coming.
+      onStateChange: (state) => {
+        if (state === 'retrying' || state === 'error') useDiagramStore.setState({ saveStatus: state });
+      },
     });
 
     // The dashboard card's preview. Rate-limited rather than debounced: one
