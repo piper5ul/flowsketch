@@ -378,7 +378,12 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     try {
       await api.saveDiagram(
         diagramId,
-        { title, data: serializeDiagram(nodes, edges) },
+        {
+          // The API rejects a blank title, so a diagram whose name the user
+          // cleared would fail every autosave from then on.
+          title: title.trim() || 'Untitled',
+          data: serializeDiagram(nodes, edges),
+        },
         options,
       );
       set({ saveStatus: 'saved' });

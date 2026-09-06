@@ -622,6 +622,19 @@ describe('saveDiagram', () => {
     expect(store().saveStatus).toBe('saved');
   });
 
+  it('falls back to Untitled rather than sending a title the server rejects', async () => {
+    // The API 400s an empty title, which would strand the diagram unsaved.
+    store().setTitle('   ');
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith('test', expect.objectContaining({ title: 'Untitled' }), undefined);
+  });
+
+  it('trims the title it sends', async () => {
+    store().setTitle('  Flow chart  ');
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith('test', expect.objectContaining({ title: 'Flow chart' }), undefined);
+  });
+
   it('reports a failed save with a toast as well as the status', async () => {
     saveDiagram.mockRejectedValueOnce(new Error('offline'));
     await store().saveDiagram();
