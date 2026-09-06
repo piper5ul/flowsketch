@@ -540,3 +540,42 @@ test('X selects the hexagon tool', async ({ page }) => {
   await expect(node).toHaveCount(1);
   await expect(node.locator('[data-shape="hexagon"]')).toHaveCount(1);
 });
+
+/**
+ * Selects the one connector `drawConnectedPair` drew, by clicking a quarter of
+ * the way along it — clear of the add-label target that appears at its
+ * midpoint once it is selected.
+ */
+async function selectConnector(page: Page) {
+  const box = await drawConnectedPair(page);
+  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height / 2);
+  await expect(page.getByRole('button', { name: 'End arrowhead' })).toBeVisible();
+  return page.locator('.react-flow__edge-path').first();
+}
+
+test('the toolbar redraws a connector as a curve', async ({ page }) => {
+  await signUp(page);
+  const edgePath = await selectConnector(page);
+
+  // The pair is drawn as an elbow, and quick-add aligns the two shapes, so the
+  // route it starts with is one straight run with no curve in it.
+  await expect(edgePath).not.toHaveAttribute('d', /[CQ]/);
+
+  await page.getByRole('button', { name: 'Curved line' }).click();
+  // A curve is a cubic, or a quadratic once a bend has been dragged onto it.
+  await expect(edgePath).toHaveAttribute('d', /[CQ]/);
+});
+
+test('the toolbar swaps a connector\'s end arrowhead for a circle', async ({ page }) => {
+  await signUp(page);
+  const edgePath = await selectConnector(page);
+
+  await expect(edgePath).toHaveAttribute('marker-end', /arrow/);
+
+  await page.getByRole('button', { name: 'End arrowhead' }).click();
+  await page.getByRole('button', { name: 'Circle', exact: true }).click();
+
+  // The marker is one this app defines — React Flow has no circle of its own.
+  await expect(edgePath).toHaveAttribute('marker-end', /circle/);
+  await expect(page.locator('marker[id*="circle"]')).toHaveCount(1);
+});
