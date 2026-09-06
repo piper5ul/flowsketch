@@ -36,6 +36,7 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
   const shapeRef = useRef<HTMLDivElement>(null);
 
   const isTextShape = data.shape === 'text';
+  const isImageNode = data.shape === 'image';
 
   /**
    * Text shapes size themselves to their content: the width stays under the
@@ -81,6 +82,51 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
     updateNodeData(id, { label: ref.current?.innerText ?? '' });
     syncTextHeight();
   }, [id, updateNodeData, setEditingNodeId, syncTextHeight]);
+
+  // An image node is the image and nothing else: no border, no fill, no label
+  // to edit and no quick-add buttons — connectors still attach through the
+  // same handles every other shape uses.
+  if (isImageNode) {
+    return (
+      <div className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}>
+        <img
+          src={data.imageSrc}
+          alt=""
+          className="h-full w-full object-contain"
+          draggable={false}
+          style={{
+            outline: selected ? '1.5px solid var(--color-accent-500)' : undefined,
+            outlineOffset: 2,
+          }}
+        />
+        <NodeResizer
+          isVisible={selected && !data.locked}
+          keepAspectRatio
+          minWidth={20}
+          minHeight={20}
+          lineStyle={{ borderColor: 'transparent', borderWidth: 6 }}
+          handleStyle={{
+            width: 0,
+            height: 0,
+            opacity: 0,
+            border: 'none',
+            background: 'transparent',
+            pointerEvents: 'none',
+          }}
+        />
+        {HANDLES.map((h) => (
+          <Handle
+            key={h.id}
+            id={h.id}
+            type="source"
+            position={h.position}
+            className="shape-handle"
+            style={h.style}
+          />
+        ))}
+      </div>
+    );
+  }
 
   // Floating arrows hang off 1×1 rectangles with transparent fill and stroke.
   // Text shapes are transparent too, so they must be excluded explicitly or

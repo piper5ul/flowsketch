@@ -1,4 +1,8 @@
-export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'sticky' | 'text' | 'pill' | 'triangle' | 'hexagon' | 'cylinder';
+/**
+ * `image` is not a drawing tool: images are inserted (paste, drop, file
+ * picker), never drawn, so it has no `Tool` counterpart and no rail shortcut.
+ */
+export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'sticky' | 'text' | 'pill' | 'triangle' | 'hexagon' | 'cylinder' | 'image';
 export type ConnectorKind = 'straight' | 'elbow';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 export type Direction = 'top' | 'right' | 'bottom' | 'left';

@@ -189,6 +189,7 @@ interface DiagramState {
   onConnect: (connection: Connection) => void;
 
   addShape: (shape: ShapeKind, position: { x: number; y: number }) => string;
+  addImageNode: (image: { src: string; width: number; height: number; position: { x: number; y: number } }) => string;
   addConnectedShape: (sourceId: string, direction: Direction) => string | null;
   updateNodeData: (id: string, data: Partial<ShapeData>) => void;
   updateSelectedNodesStyle: (patch: Partial<Pick<ShapeData, 'fill' | 'stroke'>>) => void;
@@ -475,6 +476,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       triangle: { width: 140, height: 120 },
       hexagon: { width: 160, height: 100 },
       cylinder: { width: 120, height: 130 },
+      // Never used in practice: images are inserted through `addImageNode`,
+      // which always knows the real pixel size. Present so the table stays
+      // exhaustive over ShapeKind.
+      image: { width: 240, height: 180 },
     };
     const node: ShapeNode = {
       id,
@@ -489,6 +494,24 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       },
     };
     set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'text' ? id : null }));
+    return id;
+  },
+
+  // An inserted image (paste, drop, file picker). Its node is the image: no
+  // fill, no stroke, no label — so the caller has to supply the size it should
+  // be drawn at rather than falling back to a shape default.
+  addImageNode: ({ src, width, height, position }) => {
+    pushHistory(get());
+    const id = nanoid(8);
+    const node: ShapeNode = {
+      id,
+      type: 'shape',
+      position,
+      width,
+      height,
+      data: { label: '', shape: 'image', fill: 'transparent', stroke: 'transparent', imageSrc: src },
+    };
+    set((s) => ({ nodes: [...s.nodes, node] }));
     return id;
   },
 

@@ -638,3 +638,41 @@ describe('saveDiagram', () => {
     expect(useToastStore.getState().toasts).toHaveLength(1);
   });
 });
+
+describe('addImageNode', () => {
+  it('adds a dedicated image node at the given position and size', () => {
+    const id = store().addImageNode({
+      src: '/api/images/abc',
+      width: 320,
+      height: 180,
+      position: { x: 40, y: 60 },
+    });
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node).toMatchObject({
+      type: 'shape',
+      position: { x: 40, y: 60 },
+      width: 320,
+      height: 180,
+      data: { shape: 'image', imageSrc: '/api/images/abc' },
+    });
+  });
+
+  it('carries no fill or stroke of its own — the image is the whole node', () => {
+    const id = store().addImageNode({ src: '/api/images/abc', width: 10, height: 10, position: { x: 0, y: 0 } });
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node.data.fill).toBe('transparent');
+    expect(node.data.stroke).toBe('transparent');
+  });
+
+  it('is undoable', () => {
+    store().addImageNode({ src: '/api/images/abc', width: 10, height: 10, position: { x: 0, y: 0 } });
+    expect(store().nodes).toHaveLength(1);
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('does not leave the node in text-editing mode', () => {
+    const id = store().addImageNode({ src: '/api/images/abc', width: 10, height: 10, position: { x: 0, y: 0 } });
+    expect(store().editingNodeId).not.toBe(id);
+  });
+});
