@@ -17,6 +17,7 @@ import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { api } from '../lib/api';
+import { toastError } from './useToastStore';
 
 // Re-exported here because this is where the rest of the app reaches for it.
 export { computeMarkers };
@@ -188,6 +189,16 @@ interface DiagramState {
   onConnect: (connection: Connection) => void;
 
   addShape: (shape: ShapeKind, position: { x: number; y: number }) => string;
+  addImageNode: (image: { src: string; width: number; height: number; position: { x: number; y: number } }) => string;
+
+  // An insert whose upload is still in flight. The placeholder itself is not
+  // an edit — history is recorded when (and only when) the upload lands.
+  addImagePlaceholder: (box: { width: number; height: number; position: { x: number; y: number } }) => string;
+  resolveImagePlaceholder: (
+    id: string,
+    image: { src: string; width: number; height: number; position: { x: number; y: number } },
+  ) => void;
+  removeImagePlaceholder: (id: string) => void;
   addConnectedShape: (sourceId: string, direction: Direction) => string | null;
   updateNodeData: (id: string, data: Partial<ShapeData>) => void;
   updateSelectedNodesStyle: (patch: Partial<Pick<ShapeData, 'fill' | 'stroke'>>) => void;
@@ -242,11 +253,15 @@ function historyFlags() {
   return { canUndo: past.length > 0, canRedo: future.length > 0 };
 }
 
-function pushHistory(state: DiagramState) {
+function pushSnapshot(snapshot: Snapshot) {
   if (suppressHistory) return;
-  past = [...past.slice(-49), snapshotOf(state)];
+  past = [...past.slice(-49), snapshot];
   future = [];
   useDiagramStore.setState(historyFlags());
+}
+
+function pushHistory(state: DiagramState) {
+  pushSnapshot(snapshotOf(state));
 }
 
 /** The `ConnectorData` fields `computeMarkers` reads. */
@@ -356,18 +371,28 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges } = get();
+    const { diagramId, title, nodes, edges, saveStatus } = get();
     if (!diagramId) return;
+    const wasFailing = saveStatus === 'error';
     set({ saveStatus: 'saving' });
     try {
       await api.saveDiagram(
         diagramId,
-        { title, data: serializeDiagram(nodes, edges) },
+        {
+          // The API rejects a blank title, so a diagram whose name the user
+          // cleared would fail every autosave from then on.
+          title: title.trim() || 'Untitled',
+          data: serializeDiagram(nodes, edges),
+        },
         options,
       );
       set({ saveStatus: 'saved' });
     } catch {
       set({ saveStatus: 'error' });
+      // Autosave retries on the next edit, so a broken connection would
+      // otherwise stack one toast per keystroke. Only the first failure of a
+      // run is announced; the SaveIndicator carries the state after that.
+      if (!wasFailing) toastError('Save failed — retrying on your next change');
     }
   },
 
@@ -469,6 +494,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       triangle: { width: 140, height: 120 },
       hexagon: { width: 160, height: 100 },
       cylinder: { width: 120, height: 130 },
+      // Never used in practice: images are inserted through `addImageNode`,
+      // which always knows the real pixel size. Present so the table stays
+      // exhaustive over ShapeKind.
+      image: { width: 240, height: 180 },
     };
     const node: ShapeNode = {
       id,
@@ -484,6 +513,70 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     };
     set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'text' ? id : null }));
     return id;
+  },
+
+  // An inserted image (paste, drop, file picker). Its node is the image: no
+  // fill, no stroke, no label — so the caller has to supply the size it should
+  // be drawn at rather than falling back to a shape default.
+  addImageNode: ({ src, width, height, position }) => {
+    pushHistory(get());
+    const id = nanoid(8);
+    const node: ShapeNode = {
+      id,
+      type: 'shape',
+      position,
+      width,
+      height,
+      data: { label: '', shape: 'image', fill: 'transparent', stroke: 'transparent', imageSrc: src },
+    };
+    set((s) => ({ nodes: [...s.nodes, node] }));
+    return id;
+  },
+
+  // A grey box standing in for an image while its bytes are on their way to
+  // the server. Deliberately not undoable: an upload that later fails would
+  // otherwise leave a ⌘Z that appears to do nothing.
+  addImagePlaceholder: ({ width, height, position }) => {
+    const id = nanoid(8);
+    const node: ShapeNode = {
+      id,
+      type: 'shape',
+      position,
+      width,
+      height,
+      data: { label: '', shape: 'image', fill: 'transparent', stroke: 'transparent', uploading: true },
+    };
+    set((s) => ({ nodes: [...s.nodes, node] }));
+    return id;
+  },
+
+  resolveImagePlaceholder: (id, { src, width, height, position }) => {
+    const state = get();
+    // The user can delete or undo the placeholder away mid-upload; when they
+    // have, the arriving image has nowhere to go and nothing to record.
+    if (!state.nodes.some((n) => n.id === id)) return;
+
+    // The one history entry for the whole insert, holding the diagram as it
+    // was *before* the placeholder appeared — which is where ⌘Z should land.
+    pushSnapshot({ nodes: state.nodes.filter((n) => n.id !== id), edges: state.edges });
+
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              position,
+              width,
+              height,
+              data: { label: '', shape: 'image', fill: 'transparent', stroke: 'transparent', imageSrc: src },
+            }
+          : n,
+      ),
+    }));
+  },
+
+  removeImagePlaceholder: (id) => {
+    set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) }));
   },
 
   // Click a directional handle on a hovered shape to instantly spawn a

@@ -36,6 +36,11 @@ export function TopBar() {
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
+          // Clearing the field is a normal thing to do while retyping a name,
+          // so the fallback waits until the user leaves it rather than
+          // fighting them mid-edit.
+          onBlur={() => setTitle(title.trim() || 'Untitled')}
+          aria-label="Diagram title"
           className="min-w-0 max-w-[16rem] bg-transparent text-[14px] font-semibold text-ink-900 outline-none"
         />
         <Tooltip label={starred ? 'Unstar' : 'Star'} side="bottom">

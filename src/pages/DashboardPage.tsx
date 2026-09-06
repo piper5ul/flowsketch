@@ -5,6 +5,8 @@ import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
 import type { DiagramMeta } from '../../shared/types';
 import { Tooltip, TooltipProvider } from '../components/Tooltip';
+import { Toasts } from '../components/Toasts';
+import { toastError } from '../store/useToastStore';
 
 export function DashboardPage() {
   const { data: session } = useSession();
@@ -36,13 +38,21 @@ export function DashboardPage() {
 
   const toggleStar = useCallback(async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const result = await api.toggleStar(id);
-    setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, starred: result.starred } : d)));
+    try {
+      const result = await api.toggleStar(id);
+      setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, starred: result.starred } : d)));
+    } catch {
+      toastError('Could not update the star. Please try again.');
+    }
   }, []);
 
   const deleteDiagram = useCallback(async (id: string) => {
-    await api.deleteDiagram(id);
-    setDiagrams((prev) => prev.filter((d) => d.id !== id));
+    try {
+      await api.deleteDiagram(id);
+      setDiagrams((prev) => prev.filter((d) => d.id !== id));
+    } catch {
+      toastError('Could not delete the diagram. Please try again.');
+    }
     openMenu(null);
   }, [openMenu]);
 
@@ -108,6 +118,8 @@ export function DashboardPage() {
             </div>
           )}
         </main>
+
+        <Toasts />
       </div>
     </TooltipProvider>
   );

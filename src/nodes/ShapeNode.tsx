@@ -5,6 +5,8 @@ import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { Direction, FontSize, VerticalAlign } from '../types';
 import { isDarkFill } from '../lib/palette';
+import { isAnchorNode } from '../lib/nodeKinds';
+import { useShiftKey } from '../lib/useShiftKey';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
 
@@ -32,10 +34,14 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
+  // Holding ⇧ while dragging a corner locks the aspect ratio, as in every
+  // other design tool. Image nodes are locked whether or not it is held.
+  const shiftHeld = useShiftKey();
   const ref = useRef<HTMLDivElement>(null);
   const shapeRef = useRef<HTMLDivElement>(null);
 
   const isTextShape = data.shape === 'text';
+  const isImageNode = data.shape === 'image';
 
   /**
    * Text shapes size themselves to their content: the width stays under the
@@ -82,12 +88,64 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
     syncTextHeight();
   }, [id, updateNodeData, setEditingNodeId, syncTextHeight]);
 
-  // Floating arrows hang off 1×1 rectangles with transparent fill and stroke.
-  // Text shapes are transparent too, so they must be excluded explicitly or
-  // they render as an empty anchor box with no editable text at all.
-  const isAnchor =
-    data.shape !== 'text' && data.fill === 'transparent' && data.stroke === 'transparent';
-  if (isAnchor) {
+  // A grey box holding the image's place while its bytes upload. No handles
+  // and no resizer: it is about to be replaced by the real thing.
+  if (isImageNode && data.uploading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded-md border-[1.5px] border-dashed border-ink-600/30 bg-black/[0.03] text-[13px] font-medium text-ink-600/60">
+        Uploading…
+      </div>
+    );
+  }
+
+  // An image node is the image and nothing else: no border, no fill, no label
+  // to edit and no quick-add buttons — connectors still attach through the
+  // same handles every other shape uses.
+  if (isImageNode) {
+    return (
+      <div className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}>
+        <img
+          src={data.imageSrc}
+          alt=""
+          className="h-full w-full object-contain"
+          draggable={false}
+          style={{
+            outline: selected ? '1.5px solid var(--color-accent-500)' : undefined,
+            outlineOffset: 2,
+          }}
+        />
+        <NodeResizer
+          isVisible={selected && !data.locked}
+          keepAspectRatio
+          minWidth={20}
+          minHeight={20}
+          lineStyle={{ borderColor: 'transparent', borderWidth: 6 }}
+          handleStyle={{
+            width: 0,
+            height: 0,
+            opacity: 0,
+            border: 'none',
+            background: 'transparent',
+            pointerEvents: 'none',
+          }}
+        />
+        {HANDLES.map((h) => (
+          <Handle
+            key={h.id}
+            id={h.id}
+            type="source"
+            position={h.position}
+            className="shape-handle"
+            style={h.style}
+          />
+        ))}
+      </div>
+    );
+  }
+
+  // Floating arrows hang off 1×1 rectangles with transparent fill and stroke;
+  // those render as bare handles, with no shape chrome around them.
+  if (isAnchorNode(data)) {
     return (
       <div className="relative h-full w-full">
         {HANDLES.map((h) => (
@@ -252,6 +310,7 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
 
       <NodeResizer
         isVisible={selected && !isLocked}
+        keepAspectRatio={shiftHeld}
         minWidth={60}
         minHeight={40}
         lineStyle={{ borderColor: 'transparent', borderWidth: 6 }}

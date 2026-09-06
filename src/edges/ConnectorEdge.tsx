@@ -10,6 +10,7 @@ import {
 } from '../lib/edgeGeometry';
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
+import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { FontSize } from '../types';
@@ -318,8 +319,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   if (!sourceNode || !targetNode) return null;
 
-  const isFloatingArrow = sourceNode.data.fill === 'transparent' && sourceNode.data.stroke === 'transparent' &&
-    targetNode.data.fill === 'transparent' && targetNode.data.stroke === 'transparent';
+  const isFloatingArrow = isAnchorNode(sourceNode.data) && isAnchorNode(targetNode.data);
 
   const floating = floatingEdgeSides(rectOfNode(sourceNode), rectOfNode(targetNode));
   const sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };

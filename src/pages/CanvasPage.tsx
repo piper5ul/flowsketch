@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Canvas } from '../components/Canvas';
+import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { api } from '../lib/api';
@@ -109,6 +110,7 @@ export function CanvasPage() {
         <div className="h-screen w-screen overflow-hidden">
           <Canvas />
         </div>
+        <Toasts />
       </ReactFlowProvider>
     </TooltipProvider>
   );

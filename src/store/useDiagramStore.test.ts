@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
+import { useToastStore } from './useToastStore';
+import { api } from '../lib/api';
+
+vi.mock('../lib/api', () => ({
+  api: { saveDiagram: vi.fn(async () => undefined) },
+}));
+
+const saveDiagram = vi.mocked(api.saveDiagram);
 
 const store = () => useDiagramStore.getState();
 
@@ -592,5 +600,166 @@ describe('serializeDiagram', () => {
     store().addConnectedShape(a, 'right');
     const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges)));
     expect(migrateDiagramData(saved)).toEqual(saved);
+  });
+});
+
+describe('saveDiagram', () => {
+  beforeEach(() => {
+    saveDiagram.mockClear();
+    saveDiagram.mockResolvedValue(undefined);
+    useToastStore.getState().clear();
+  });
+
+  it('does nothing without a diagram id', async () => {
+    useDiagramStore.setState({ diagramId: null });
+    await store().saveDiagram();
+    expect(saveDiagram).not.toHaveBeenCalled();
+  });
+
+  it('marks the diagram saved once the request resolves', async () => {
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith('test', expect.anything(), undefined);
+    expect(store().saveStatus).toBe('saved');
+  });
+
+  it('falls back to Untitled rather than sending a title the server rejects', async () => {
+    // The API 400s an empty title, which would strand the diagram unsaved.
+    store().setTitle('   ');
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith('test', expect.objectContaining({ title: 'Untitled' }), undefined);
+  });
+
+  it('trims the title it sends', async () => {
+    store().setTitle('  Flow chart  ');
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith('test', expect.objectContaining({ title: 'Flow chart' }), undefined);
+  });
+
+  it('reports a failed save with a toast as well as the status', async () => {
+    saveDiagram.mockRejectedValueOnce(new Error('offline'));
+    await store().saveDiagram();
+    expect(store().saveStatus).toBe('error');
+    expect(useToastStore.getState().toasts).toMatchObject([
+      { kind: 'error', message: 'Save failed — retrying on your next change' },
+    ]);
+  });
+
+  it('does not stack a toast per failed attempt while the save is still broken', async () => {
+    saveDiagram.mockRejectedValue(new Error('offline'));
+    await store().saveDiagram();
+    await store().saveDiagram();
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+  });
+});
+
+describe('addImageNode', () => {
+  it('adds a dedicated image node at the given position and size', () => {
+    const id = store().addImageNode({
+      src: '/api/images/abc',
+      width: 320,
+      height: 180,
+      position: { x: 40, y: 60 },
+    });
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node).toMatchObject({
+      type: 'shape',
+      position: { x: 40, y: 60 },
+      width: 320,
+      height: 180,
+      data: { shape: 'image', imageSrc: '/api/images/abc' },
+    });
+  });
+
+  it('carries no fill or stroke of its own — the image is the whole node', () => {
+    const id = store().addImageNode({ src: '/api/images/abc', width: 10, height: 10, position: { x: 0, y: 0 } });
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node.data.fill).toBe('transparent');
+    expect(node.data.stroke).toBe('transparent');
+  });
+
+  it('is undoable', () => {
+    store().addImageNode({ src: '/api/images/abc', width: 10, height: 10, position: { x: 0, y: 0 } });
+    expect(store().nodes).toHaveLength(1);
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('does not leave the node in text-editing mode', () => {
+    const id = store().addImageNode({ src: '/api/images/abc', width: 10, height: 10, position: { x: 0, y: 0 } });
+    expect(store().editingNodeId).not.toBe(id);
+  });
+});
+
+describe('image placeholders', () => {
+  const placeholder = () =>
+    store().addImagePlaceholder({ width: 200, height: 140, position: { x: 10, y: 20 } });
+
+  it('adds a node marked as uploading', () => {
+    const id = placeholder();
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node).toMatchObject({
+      width: 200,
+      height: 140,
+      position: { x: 10, y: 20 },
+      data: { shape: 'image', uploading: true },
+    });
+  });
+
+  it('is not itself undoable — an upload in flight is not an edit yet', () => {
+    placeholder();
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('swaps in the uploaded image, at the size and position it is drawn at', () => {
+    const id = placeholder();
+    store().resolveImagePlaceholder(id, {
+      src: '/api/images/abc',
+      width: 400,
+      height: 300,
+      position: { x: 1, y: 2 },
+    });
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node).toMatchObject({
+      width: 400,
+      height: 300,
+      position: { x: 1, y: 2 },
+      data: { shape: 'image', imageSrc: '/api/images/abc' },
+    });
+    expect(node.data.uploading).toBeUndefined();
+  });
+
+  it('makes the finished insert one undo step back to before the placeholder', () => {
+    const id = placeholder();
+    store().resolveImagePlaceholder(id, {
+      src: '/api/images/abc',
+      width: 10,
+      height: 10,
+      position: { x: 0, y: 0 },
+    });
+    expect(store().canUndo).toBe(true);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('removes a placeholder whose upload failed, recording nothing', () => {
+    const id = placeholder();
+    store().removeImagePlaceholder(id);
+    expect(store().nodes).toHaveLength(0);
+    // A failed upload must not leave a dead ⌘Z behind.
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('ignores a resolution for a placeholder the user already undid away', () => {
+    const id = placeholder();
+    store().removeImagePlaceholder(id);
+    store().resolveImagePlaceholder(id, {
+      src: '/api/images/abc',
+      width: 10,
+      height: 10,
+      position: { x: 0, y: 0 },
+    });
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
   });
 });

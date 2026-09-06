@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import clsx from 'clsx';
 import {
@@ -15,9 +15,11 @@ import {
   Triangle,
   Hexagon,
   Database,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
+import { useImageInsert } from '../lib/useImageInsert';
 import type { Tool } from '../types';
 
 function RailButton({
@@ -71,6 +73,19 @@ export function LeftRail() {
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
   const setDefaultStyle = useDiagramStore((s) => s.setDefaultStyle);
   const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
+  const insertImages = useImageInsert();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const onFilesPicked = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      // Clearing the input lets the same file be picked twice in a row, which
+      // would otherwise fire no change event the second time.
+      event.target.value = '';
+      insertImages(files);
+    },
+    [insertImages],
+  );
 
   return (
     <div className="pointer-events-none absolute left-4 top-1/2 z-20 -translate-y-1/2">
@@ -99,6 +114,20 @@ export function LeftRail() {
         <RailButton active={tool === 'text'} label="Text" shortcut="T" onClick={() => setTool('text')}>
           <Type size={18} />
         </RailButton>
+
+        {/* An image is inserted, not drawn, so this is a one-shot action
+            rather than a tool the canvas stays in. */}
+        <RailButton label="Insert image" onClick={() => fileInputRef.current?.click()}>
+          <ImageIcon size={18} />
+        </RailButton>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={onFilesPicked}
+        />
 
         <div className="my-1 h-px bg-white/10" />
 

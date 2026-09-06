@@ -11,6 +11,8 @@ import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { makeEdgeData } from '../lib/defaults';
 import { renderDiagramPng } from '../lib/exportImage';
+import { isAnchorNode } from '../lib/nodeKinds';
+import { useImageInsert } from '../lib/useImageInsert';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { LeftRail } from './LeftRail';
@@ -62,6 +64,7 @@ export function Canvas() {
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
+  const insertImages = useImageInsert();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevToolRef = useRef<Tool>('select');
   const connectorSourceRef = useRef<string | null>(null);
@@ -82,8 +85,8 @@ export function Canvas() {
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: ShapeNode) => {
       if (tool !== 'connector') return;
-      const isAnchor = node.data.fill === 'transparent' && node.data.stroke === 'transparent';
-      if (isAnchor) return;
+      // A floating arrow's endpoints are not shapes the user can connect to.
+      if (isAnchorNode(node.data)) return;
 
       if (!connectorSourceRef.current) {
         connectorSourceRef.current = node.id;
@@ -190,6 +193,25 @@ export function Canvas() {
     [tool, screenToFlowPosition, addShape, setEditingNodeId],
   );
 
+  // Dropping image files anywhere on the canvas inserts them where they
+  // landed. `onDragOver` must preventDefault or the browser takes over and
+  // navigates the tab to the dropped file.
+  const onDragOver = useCallback((event: React.DragEvent) => {
+    if (!Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  const onDrop = useCallback(
+    (event: React.DragEvent) => {
+      const files = Array.from(event.dataTransfer.files).filter((f) => f.type.startsWith('image/'));
+      if (files.length === 0) return;
+      event.preventDefault();
+      insertImages(files, { x: event.clientX, y: event.clientY });
+    },
+    [insertImages],
+  );
+
   // Dragging a connector out to empty canvas creates a new connected shape,
   // mirroring Whimsical's "drag to create" flow.
   const onConnectEnd = useCallback(
@@ -230,50 +252,24 @@ export function Canvas() {
   useEffect(() => {
     let clipboard: ClipboardPayload | null = null;
 
+    // Pasted images are uploaded and referenced by URL. Inlining them as
+    // base64 used to blow a screenshot-sized paste past the 5 MB limit on the
+    // diagram's JSON body, which failed the save rather than the paste.
     function onPaste(e: ClipboardEvent) {
       if (isTypingTarget(e.target)) return;
       const items = e.clipboardData?.items;
       if (!items) return;
+
+      const files: File[] = [];
       for (const item of items) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result as string;
-            const img = new window.Image();
-            img.onload = () => {
-              const maxW = 400;
-              const scale = img.width > maxW ? maxW / img.width : 1;
-              const w = Math.round(img.width * scale);
-              const h = Math.round(img.height * scale);
-              const id = nanoid(8);
-              const center = screenToFlowPosition({
-                x: window.innerWidth / 2,
-                y: window.innerHeight / 2,
-              });
-              addNodes({
-                id,
-                type: 'shape',
-                position: { x: center.x - w / 2, y: center.y - h / 2 },
-                width: w,
-                height: h,
-                data: {
-                  label: '',
-                  shape: 'rectangle',
-                  fill: '#ffffff',
-                  stroke: '#e5e7eb',
-                  imageSrc: dataUrl,
-                },
-              });
-            };
-            img.src = dataUrl;
-          };
-          reader.readAsDataURL(file);
-          return;
-        }
+        if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
       }
+      if (files.length === 0) return;
+
+      e.preventDefault();
+      insertImages(files);
     }
 
     function onKeyDown(e: KeyboardEvent) {
@@ -528,10 +524,16 @@ export function Canvas() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('paste', onPaste);
     };
-  }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, screenToFlowPosition, addNodes]);
+  }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, insertImages]);
 
   return (
-    <div ref={wrapperRef} className="relative h-full w-full" onDoubleClick={onCanvasDoubleClick}>
+    <div
+      ref={wrapperRef}
+      className="relative h-full w-full"
+      onDoubleClick={onCanvasDoubleClick}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       <ReactFlow
         nodes={nodes}
         edges={edges}

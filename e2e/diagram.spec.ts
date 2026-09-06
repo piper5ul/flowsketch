@@ -15,6 +15,19 @@ async function signUp(page: Page) {
   return email;
 }
 
+/** A 64×64 checkerboard PNG, 165 bytes — small enough to inline. */
+const TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAbElEQVR42u3XMQ0AIAxFQeQgAiUoQSKuwECZukC4hLEDN738svoMX20jfLfdFwAAAACAFOCVj57uAQAAAAByACUGAAAAsAeUGAAAAMAeUGIAAAAAe0CJAQAAAOwBJQYAAACwB5QYAAAA4BvABjVC6Vo+2hhHAAAAAElFTkSuQmCC';
+
+/** Opens a new diagram and waits for its canvas. */
+async function newDiagram(page: Page) {
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  return pane;
+}
+
 test('unauthenticated visitors are sent to the login page', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveURL(/\/login$/);
@@ -228,4 +241,98 @@ test('deleting a diagram from the dashboard asks for confirmation first', async 
   await page.getByRole('button', { name: 'Confirm delete' }).click();
   await expect(page.getByRole('heading', { name: 'No diagrams yet' })).toBeVisible();
   await expect(page.getByText('Untitled')).toHaveCount(0);
+});
+
+test('a pasted image is uploaded and referenced by URL, not embedded as base64', async ({ page }) => {
+  await signUp(page);
+  await newDiagram(page);
+
+  // Playwright cannot put an image on the OS clipboard, so the paste event is
+  // synthesised with the same shape the browser would deliver.
+  await page.evaluate(async (base64) => {
+    // This file compiles without the DOM lib, so the browser-only globals are
+    // reached through a narrow structural view of `globalThis`.
+    const browser = globalThis as unknown as {
+      document: { dispatchEvent: (event: unknown) => void };
+      DataTransfer: new () => { items: { add: (file: unknown) => void } };
+      ClipboardEvent: new (type: string, init: Record<string, unknown>) => unknown;
+    };
+
+    const res = await fetch(`data:image/png;base64,${base64}`);
+    const file = new File([await res.blob()], 'tile.png', { type: 'image/png' });
+    const data = new browser.DataTransfer();
+    data.items.add(file);
+    browser.document.dispatchEvent(
+      new browser.ClipboardEvent('paste', { clipboardData: data, bubbles: true }),
+    );
+  }, TINY_PNG_BASE64);
+
+  const image = page.locator('.react-flow__node img[src^="/api/images/"]');
+  await expect(image).toHaveCount(1);
+  // The image the server stored is what actually renders, not a data URL.
+  await expect(image).toHaveJSProperty('complete', true);
+  expect(await image.evaluate((el) => el.naturalWidth)).toBe(64);
+
+  await expect(page.getByText('Saved')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.react-flow__node img[src^="/api/images/"]')).toHaveCount(1);
+});
+
+test('the rail\'s image button inserts a picked file, and it survives a reload', async ({ page }) => {
+  await signUp(page);
+  await newDiagram(page);
+
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Insert image' }).click(),
+  ]);
+  await chooser.setFiles({
+    name: 'tile.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(TINY_PNG_BASE64, 'base64'),
+  });
+
+  const image = page.locator('.react-flow__node img[src^="/api/images/"]');
+  await expect(image).toHaveCount(1);
+  await expect(image).toHaveJSProperty('complete', true);
+
+  await expect(page.getByText('Saved')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.react-flow__node img[src^="/api/images/"]')).toHaveCount(1);
+});
+
+test('an image dropped onto the canvas lands where it was dropped', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // An empty diagram frames itself the moment its first node appears, which
+  // would move the dropped image out from under the drop point. One shape up
+  // front gets that out of the way.
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 900, y: 500 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+  // A real OS drag cannot be driven from Playwright, so the drop event carries
+  // a DataTransfer built in the page.
+  const dataTransfer = await page.evaluateHandle(async (base64) => {
+    const browser = globalThis as unknown as {
+      DataTransfer: new () => { items: { add: (file: unknown) => void } };
+    };
+    const res = await fetch(`data:image/png;base64,${base64}`);
+    const data = new browser.DataTransfer();
+    data.items.add(new File([await res.blob()], 'tile.png', { type: 'image/png' }));
+    return data;
+  }, TINY_PNG_BASE64);
+
+  const box = (await pane.boundingBox())!;
+  const drop = { x: box.x + 300, y: box.y + 200 };
+  await pane.dispatchEvent('drop', { dataTransfer, clientX: drop.x, clientY: drop.y });
+
+  const image = page.locator('.react-flow__node img[src^="/api/images/"]');
+  await expect(image).toHaveCount(1);
+
+  // It lands under the pointer, not at the centre of the viewport.
+  const dropped = (await image.boundingBox())!;
+  expect(Math.abs(dropped.x + dropped.width / 2 - drop.x)).toBeLessThan(20);
+  expect(Math.abs(dropped.y + dropped.height / 2 - drop.y)).toBeLessThan(20);
 });
