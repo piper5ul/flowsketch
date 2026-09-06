@@ -314,6 +314,32 @@ export type SaveStatus =
  */
 export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'skipped';
 
+/**
+ * How a collaborative diagram is written: not at all, by this module.
+ *
+ * Once the Yjs document is bound (`src/lib/collab/binding.ts`), the document
+ * *is* the save — the server renders `Diagram.data` from it — so `saveDiagram`
+ * must not `PUT` a whole copy of the board over the top of everybody's merged
+ * edits. What it does instead is ask whether this browser's edits have reached
+ * the server, which is the same question "Saved" has always answered.
+ *
+ * Registered from outside rather than imported, for the reason
+ * `setUnauthorizedHandler` is: `useCollabStore` reads this store, and an import
+ * the other way would be a cycle. `null` means the open diagram is not
+ * collaborative — a public share page, or a session whose socket was refused —
+ * and the JSON save below is still the only thing writing it.
+ */
+let flushDocument: (() => Promise<boolean>) | null = null;
+
+export function setDocumentFlush(flush: (() => Promise<boolean>) | null): void {
+  flushDocument = flush;
+}
+
+/** True while the open diagram's contents are being written to the document. */
+export function isDocumentBound(): boolean {
+  return flushDocument !== null;
+}
+
 /** Where the row actually is, once a save has been refused as stale. */
 export interface SaveConflict {
   /** The `updatedAt` the server reports — i.e. what another tab wrote. */
@@ -360,7 +386,7 @@ export interface LoadDiagramOptions {
   shareToken?: string | null;
 }
 
-interface DiagramState {
+export interface DiagramState {
   diagramId: string | null;
   title: string;
   starred: boolean;
@@ -407,6 +433,19 @@ interface DiagramState {
   /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
   canUndo: boolean;
   canRedo: boolean;
+  /**
+   * Bumped by every *transient* write — a frame of a drag, a slider being
+   * moved, a text shape growing to fit what is being typed into it.
+   *
+   * It exists for the collaboration binding (`src/lib/collab/binding.ts`),
+   * which has to tell a gesture in progress from the edit it ends in: pushing
+   * every frame of a drag into the shared document would put sixty updates a
+   * second on the wire for one shape moving. A counter rather than a flag
+   * because the binding compares the state it was given with the one before it
+   * and nothing has to remember to switch it off; nothing else reads it, and it
+   * is not serialized.
+   */
+  transientSeq: number;
 
   /** @throws when `data` was written by a newer version — see `migrateDiagramData`. */
   loadDiagram: (
@@ -763,6 +802,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   defaultConnector: 'elbow',
   canUndo: false,
   canRedo: false,
+  transientSeq: 0,
 
   loadDiagram: (id, title, starred, data, updatedAt, options) => {
     // Migrate before touching any state: a payload from a newer build throws,
@@ -807,6 +847,22 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
+
+    // A collaborative diagram is already being written, continuously, by the
+    // socket. There is no body to send and no `ifUnmodifiedSince` to send it
+    // with — the conflict this tab used to be refused for is now a merge — so
+    // all that is left is to report whether the edit has left the browser. A
+    // "no" is a dropped socket, which the autosaver retries like any failure.
+    if (flushDocument) {
+      const flushed = await flushDocument();
+      if (flushed) {
+        set({ saveStatus: 'saved', conflict: null });
+        return 'saved';
+      }
+      set({ saveStatus: saveStatus === 'retrying' ? 'retrying' : 'error' });
+      return 'error';
+    }
+
     try {
       const result = await api.saveDiagram(
         diagramId,
@@ -886,6 +942,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const resized = changes.some((c) => c.type === 'dimensions' && c.resizing === false);
     if (dragEnded || structural || resized) pushHistory(get());
 
+    // A frame of a drag or of a resize, with the release still to come — the
+    // same thing the transient actions below record, and marked the same way so
+    // the collaboration binding waits for the gesture to finish.
+    const mid = (isDragging || changes.some((c) => c.type === 'dimensions' && c.resizing === true))
+      && !dragEnded && !resized;
+    const transient = mid ? (s: DiagramState) => ({ transientSeq: s.transientSeq + 1 }) : () => ({});
+
     if (isDragging) {
       const state = get();
       const posChanges = changes.filter(
@@ -936,7 +999,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         if (dx !== 0 || dy !== 0) {
           for (const d of dragged) d.change.position = { x: d.relX + dx, y: d.relY + dy };
         }
-        set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides }));
+        set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides, ...transient(s) }));
         return;
       }
     }
@@ -946,7 +1009,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       return;
     }
 
-    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes) }));
+    set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), ...transient(s) }));
   },
 
   onEdgesChange: (changes) => {
@@ -1362,6 +1425,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   updateEdgeDataTransient: (id, data) => {
     set((s) => ({
       edges: s.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, ...data } } : e)),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 
@@ -1379,12 +1443,14 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           data: { ...e.data!, waypoints: waypoints.map((w, i) => (i === index ? point : w)) },
         };
       }),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 
   moveNodesTransient: (positions) => {
     set((s) => ({
       nodes: s.nodes.map((n) => (positions[n.id] ? { ...n, position: positions[n.id] } : n)),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 
@@ -1397,6 +1463,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           ? { ...n, width: size.width ?? n.width, height: size.height ?? n.height }
           : n,
       ),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 
@@ -1416,6 +1483,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
             }
           : e,
       ),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 
@@ -1549,6 +1617,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       nodes: s.nodes.map((n) =>
         n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
       ),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 

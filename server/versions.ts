@@ -28,6 +28,7 @@ import { publicDiagram, requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { syncDiagramImages } from './diagramImages.js';
+import { liveDiagramData } from './collab/live.js';
 import { authedUser } from './types.js';
 import { createVersionBody, validateBody, type CreateVersionBody } from './validation.js';
 import type { DiagramVersion, DiagramVersionMeta } from '../shared/types.js';
@@ -271,7 +272,12 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
 
     const version = await writeVersion({
       diagramId: req.params.id,
-      data: access.diagram.data,
+      // The board as it is *now*. For a diagram somebody has open that is the
+      // live document, not the JSON column, which the collaboration server
+      // rewrites on a debounce and so is up to ten seconds behind — and a
+      // snapshot the user asked for by name must be of what they are looking
+      // at, not of where it was a moment ago.
+      data: liveDiagramData(req.params.id) ?? access.diagram.data,
       title: access.diagram.title,
       createdById: authedUser(req).id,
       ownerId: access.diagram.userId,
@@ -312,9 +318,13 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     return;
   }
 
+  // The state being replaced, from the live document when there is one: the
+  // whole point of this snapshot is that a restore can be walked back, and
+  // walking back to a board ten seconds older than the one that was replaced
+  // would lose exactly the edits nobody meant to discard.
   await writeVersion({
     diagramId: req.params.id,
-    data: access.diagram.data,
+    data: liveDiagramData(req.params.id) ?? access.diagram.data,
     title: access.diagram.title,
     createdById: authedUser(req).id,
     ownerId: access.diagram.userId,

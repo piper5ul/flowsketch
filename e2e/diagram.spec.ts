@@ -583,18 +583,30 @@ test('a diagram reopens at the zoom it was left at', async ({ page }) => {
   const zoomReset = page.getByRole('button', { name: 'Reset zoom' });
   const opened = await zoomReset.textContent();
 
-  // The autosave the zoom triggers, rather than a timeout: the thumbnail save
-  // goes to the same route, so the body is what tells the two apart.
-  const viewportSaved = page.waitForResponse((response) => {
-    if (response.request().method() !== 'PUT' || !response.ok()) return false;
-    const body = response.request().postDataJSON() as { data?: { viewport?: unknown } } | null;
-    return !!body?.data?.viewport;
-  });
-
   const zoomIn = page.getByRole('button', { name: 'Zoom in' });
   await zoomIn.click();
   await zoomIn.click();
-  await viewportSaved;
+
+  // The camera reaches the server through the shared document, and the JSON a
+  // reload reads is re-rendered from that a moment later — so the barrier is
+  // the *stored* viewport agreeing with a zoom the buttons have finished
+  // animating to. That is the invariant as well as the wait: what was saved is
+  // the document's, not something this page `PUT` there.
+  const diagramId = page.url().split('/d/')[1];
+  await expect
+    .poll(
+      async () => {
+        const body = (await (await page.request.get(`/api/diagrams/${diagramId}`)).json()) as {
+          data?: { viewport?: { zoom?: number } };
+        };
+        const zoom = body.data?.viewport?.zoom;
+        const stored = typeof zoom === 'number' ? `${Math.round(zoom * 100)}%` : 'nothing stored';
+        const shown = await zoomReset.textContent();
+        return stored === shown && shown !== opened ? 'stored' : `stored ${stored}, showing ${shown}`;
+      },
+      { timeout: 25_000 },
+    )
+    .toBe('stored');
 
   const zoomed = await zoomReset.textContent();
   expect(zoomed).not.toBe(opened);
@@ -850,19 +862,63 @@ test('the format bar underlines a label being edited', async ({ page }) => {
   await expect(node.locator('[contenteditable]')).toHaveCSS('text-decoration-line', 'underline');
 });
 
-test('a second tab editing the same diagram is caught before its work is overwritten', async ({ page, context }) => {
-  // Two pages, three debounced saves and a refused fourth: give it more than the default budget.
+/**
+ * Where every node on the board is, by id.
+ *
+ * React Flow puts a node's flow position in its own `transform`, and the pan
+ * and zoom on the viewport above it — so this is the board's own coordinates
+ * and two windows scrolled differently still report the same thing.
+ */
+async function nodePositions(page: Page): Promise<Record<string, string>> {
+  return page.evaluate(() => {
+    // This file compiles without the DOM lib — see the paste test.
+    const { document } = globalThis as unknown as {
+      document: {
+        querySelectorAll: (selector: string) => Iterable<{
+          getAttribute: (name: string) => string | null;
+          style: { transform: string };
+        }>;
+      };
+    };
+    return Object.fromEntries(
+      [...document.querySelectorAll('.react-flow__node')].map((el) => [
+        el.getAttribute('data-id') ?? '',
+        el.style.transform,
+      ]),
+    );
+  });
+}
+
+/** Waits until both windows draw the board in exactly the same place. */
+async function expectSameBoard(a: Page, b: Page) {
+  await expect
+    .poll(
+      async () => {
+        const [left, right] = await Promise.all([nodePositions(a), nodePositions(b)]);
+        return JSON.stringify(left) === JSON.stringify(right)
+          ? 'same'
+          : `${JSON.stringify(left)} != ${JSON.stringify(right)}`;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe('same');
+}
+
+/** Draws an unlabelled rectangle at `at` and returns it. */
+async function drawShapeIn(page: Page, pane: Locator, at: { x: number; y: number }) {
+  const before = await page.locator('.react-flow__node').count();
+  await page.keyboard.press('r');
+  await pane.click({ position: at });
+  await expect(page.locator('.react-flow__node')).toHaveCount(before + 1);
+  return page.locator('.react-flow__node').nth(before);
+}
+
+test('two tabs on one diagram merge instead of racing each other', async ({ page, context }) => {
+  // Two pages and several round trips through the collaboration socket.
   test.setTimeout(90_000);
   await signUp(page);
   const pane = await newDiagram(page);
-
-  await page.keyboard.press('r');
-  await pane.click({ position: { x: 400, y: 300 } });
-  const first = page.locator('.react-flow__node').first();
-  await first.dblclick();
-  await page.keyboard.type('First tab');
-  await page.keyboard.press('Escape');
-  await expect(page.getByText('Saved')).toBeVisible();
+  await drawLabelledShape(page, pane, 'First tab');
 
   // The same diagram, in the same session, in a second tab.
   const second = await context.newPage();
@@ -871,35 +927,90 @@ test('a second tab editing the same diagram is caught before its work is overwri
   await expect(secondPane).toBeVisible();
   await expect(second.locator('.react-flow__node').first()).toContainText('First tab');
 
-  await second.keyboard.press('r');
-  await secondPane.click({ position: { x: 800, y: 300 } });
-  const added = second.locator('.react-flow__node').nth(1);
+  // The second tab draws a shape. Before document sync this was the write that
+  // moved the row past what the first tab was building on.
+  const added = await drawShapeIn(second, secondPane, { x: 800, y: 300 });
   await added.dblclick();
   await second.keyboard.type('Second tab');
   await second.keyboard.press('Escape');
-  await expect(second.getByText('Saved')).toBeVisible();
 
-  // Back to the first tab, the way the user would switch to it. Explicit
-  // because a background tab has its animation frames throttled by the
-  // browser, and every actionability check Playwright makes on it waits on
-  // one — which is what left this test a few seconds off its own timeout.
+  // The first tab sees it arrive rather than being refused for not knowing
+  // about it — no reload, no banner.
   await page.bringToFront();
-
-  // The first tab is now building on a version the server has moved past, so
-  // its next autosave is refused rather than silently dropping "Second tab".
-  await first.dblclick();
-  await page.keyboard.type(' edited');
-  await page.keyboard.press('Escape');
-  const banner = page.getByRole('alert').filter({ hasText: 'changed in another tab' });
-  await expect(banner).toBeVisible();
-
-  // Reload takes the other tab's version, discarding this one's unsaved edit.
-  await banner.getByRole('button', { name: 'Reload' }).click();
-  await expect(banner).toBeHidden();
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(page.locator('.react-flow__node').nth(1)).toContainText('Second tab');
 
+  // And its own next edit lands on top of the other tab's work instead of
+  // being told the diagram changed underneath it.
+  const first = page.locator('.react-flow__node').first();
+  await first.dblclick();
+  await page.keyboard.type(' edited');
+  await page.keyboard.press('Escape');
+  await expect(first).toContainText('First tab edited');
+  await expect(page.getByRole('alert').filter({ hasText: 'changed in another tab' })).toHaveCount(0);
+
+  await expect(second.locator('.react-flow__node').first()).toContainText('First tab edited');
+  await expectSameBoard(page, second);
   await second.close();
+});
+
+test('two people edit one diagram at once and both windows end up identical', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  const alpha = await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await drawShapeIn(page, pane, { x: 400, y: 560 });
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  const guestEmail = await signUp(guestPage, 'Grace Hopper');
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(guestEmail);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(guestEmail)).toBeVisible();
+  // Out of the way: it covers the canvas the two of them are about to work on.
+  await page.getByRole('button', { name: 'Close share dialog' }).click();
+
+  await guestPage.goto(page.url());
+  const guestPane = guestPage.locator('.react-flow__pane');
+  await expect(guestPane).toBeVisible();
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2);
+  await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+
+  // Ada drags a shape. Grace sees it move, on the board she is already looking
+  // at — no reload, and nothing she had to ask for.
+  const before = await nodePositions(guestPage);
+  await dragBy(page, alpha, 160, 40);
+  await expect.poll(async () => (await nodePositions(guestPage))[Object.keys(before)[0]], {
+    timeout: 15_000,
+  }).not.toBe(Object.values(before)[0]);
+  await expectSameBoard(page, guestPage);
+
+  // Grace draws one. Ada sees it appear.
+  await drawShapeIn(guestPage, guestPane, { x: 900, y: 200 });
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expectSameBoard(page, guestPage);
+
+  // Both of them drag at the same time, each holding a different shape: the
+  // case a whole-copy save could only resolve by losing one of them.
+  const guestBeta = guestPage.locator('.react-flow__node').nth(1);
+  await Promise.all([dragBy(page, alpha, -90, 120), dragBy(guestPage, guestBeta, 200, -60)]);
+
+  await expectSameBoard(page, guestPage);
+  const merged = await nodePositions(page);
+  expect(Object.keys(merged)).toHaveLength(3);
+
+  // …and the board that was merged in memory is the board that was stored.
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect.poll(async () => nodePositions(page), { timeout: 15_000 }).toEqual(merged);
+  await expectSameBoard(page, guestPage);
+
+  await guest.close();
 });
 
 test('a public link opens the diagram read-only, and revoking it kills the URL', async ({ page, browser }) => {

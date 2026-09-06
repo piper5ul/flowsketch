@@ -134,11 +134,41 @@ model Diagram {
   versions DiagramVersion[]
   threads  CommentThread[]
   images   DiagramImage[]
+  /// The live collaborative document, once this diagram has been opened by a
+  /// client that speaks it. Optional: a diagram that predates realtime — or one
+  /// nobody has opened since — has none, and `data` is the whole of it.
+  doc      DiagramDoc?
 
   @@index([userId, updatedAt(sort: Desc)])
   /// Counting each folder's diagrams, and (once there are enough of them)
   /// listing one folder's.
   @@index([folderId])
+}
+
+/// The Yjs document behind a diagram — the source of truth for its contents
+/// once anybody has opened it collaboratively.
+///
+/// `state` is `Y.encodeStateAsUpdate(doc)`: the whole document as one binary
+/// update, which is what Yjs merges rather than a log this server has to
+/// replay. Hocuspocus writes it on a debounce while people are editing, and
+/// `Diagram.data` is re-rendered from it in the same write — JSON stays the
+/// *output* everything else reads (the dashboard, exports, versions, the public
+/// page, the image index), and this is the input.
+///
+/// A row appears the first time a diagram is opened over the collaboration
+/// socket: `fetch` seeds the document from `Diagram.data` when there is nothing
+/// here yet (the **lazy upgrade** — nothing is migrated in bulk). Its presence
+/// is therefore also the answer to "is this diagram collaborative?", which is
+/// what lets `PUT /api/diagrams/:id` keep accepting a whole-copy `data` write
+/// for a diagram that has never had one and refuse it for one that has.
+///
+/// Cascades from the diagram: a deleted diagram has no document.
+model DiagramDoc {
+  diagramId String   @id
+  state     Bytes
+  updatedAt DateTime @updatedAt
+
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
 }
 
 /// Which uploaded images a diagram's *current* JSON draws — the index behind

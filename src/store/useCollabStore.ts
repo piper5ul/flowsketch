@@ -21,7 +21,8 @@ import {
   type PresenceStatus,
   type PresenceUser,
 } from '../lib/collab/presence';
-import { useDiagramStore } from './useDiagramStore';
+import { bindDocToStore, type DocBinding } from '../lib/collab/binding';
+import { serializeDiagram, setDocumentFlush, useDiagramStore } from './useDiagramStore';
 
 interface CollabState {
   /** Everyone here but you, in a stable order. Empty when not connected. */
@@ -37,11 +38,20 @@ interface CollabState {
   /** The diagram this connection is for, or `null` when there is none. */
   diagramId: string | null;
   /**
-   * Opens presence for `diagramId`. Safe to call again for the same diagram —
-   * React's StrictMode double-mounts every effect, and a second socket would
-   * show the user their own ghost in the "who's here" strip.
+   * Opens the connection for `diagramId`: presence, and — once the server's
+   * first document message has landed — the two-way binding between the shared
+   * document and the diagram store.
+   *
+   * Safe to call again for the same diagram: React's StrictMode double-mounts
+   * every effect, and a second socket would show the user their own ghost in
+   * the "who's here" strip.
    */
-  connect: (diagramId: string, user: PresenceUser, origin: string) => void;
+  connect: (
+    diagramId: string,
+    user: PresenceUser,
+    origin: string,
+    options?: { readOnly?: boolean },
+  ) => void;
   disconnect: () => void;
   /** Report the pointer in flow coordinates, or `null` when it leaves. */
   reportCursor: (cursor: PresenceCursor | null) => void;
@@ -49,8 +59,19 @@ interface CollabState {
 
 /** The live connection. One at a time; see the note at the top of the file. */
 let connection: PresenceConnection | null = null;
+/** The store ↔ document binding, once the document has synced. */
+let binding: DocBinding | null = null;
 /** Unsubscribes the selection mirror below. */
 let unsubscribeSelection: (() => void) | null = null;
+
+/**
+ * The transaction origin every edit this browser makes carries.
+ *
+ * A module constant rather than one per connection: it is only ever compared
+ * with itself, to tell "I wrote this" from "somebody else did", and a symbol
+ * that outlives a reconnect keeps that answer stable across one.
+ */
+const LOCAL_ORIGIN = Symbol('flowsketch:local');
 
 /** The ids of the selected nodes, which is the whole of what peers are told. */
 function selectedNodeIds(nodes: { id: string; selected?: boolean }[]): string[] {
@@ -60,6 +81,13 @@ function selectedNodeIds(nodes: { id: string; selected?: boolean }[]): string[] 
 function teardown() {
   unsubscribeSelection?.();
   unsubscribeSelection = null;
+  // Before the socket goes: the binding writes any gesture still in hand, and
+  // it has to be able to send it.
+  binding?.destroy();
+  binding = null;
+  // The diagram is not collaborative any more, so the JSON save is the only
+  // thing that could write it — which is what an unbound store already does.
+  setDocumentFlush(null);
   connection?.destroy();
   connection = null;
 }
@@ -70,15 +98,37 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   status: 'disconnected',
   diagramId: null,
 
-  connect: (diagramId, user, origin) => {
+  connect: (diagramId, user, origin, options) => {
     if (get().diagramId === diagramId && connection) return;
     teardown();
     set({ diagramId, peers: [], selectionOwners: new Map(), status: 'connecting' });
+
+    // The board as the page loaded it, kept until the document arrives. The
+    // canvas is interactive the whole time the socket is opening, and the
+    // binding needs to know which of the shapes on it are *this* browser's
+    // work — see `BindDocOptions.baseline`.
+    const { nodes, edges, viewport } = useDiagramStore.getState();
+    const baseline = serializeDiagram(nodes, edges, viewport);
 
     connection = connectPresence({
       diagramId,
       user,
       origin,
+      // Fires on the first sync and on every reconnect, so it has to be
+      // idempotent: a binding that already exists is the right one.
+      onSynced: () => {
+        if (get().diagramId !== diagramId || !connection || binding) return;
+        // The page can have moved on to another diagram while the socket was
+        // opening. Binding then would push this board into that document.
+        if (useDiagramStore.getState().diagramId !== diagramId) return;
+        binding = bindDocToStore(connection.document, useDiagramStore, LOCAL_ORIGIN, {
+          readOnly: options?.readOnly ?? false,
+          baseline,
+        });
+        // From here "Saved" means "the document reached the server", and the
+        // JSON `PUT` stops carrying diagram data at all.
+        if (!options?.readOnly) setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
+      },
       // Guarded on the diagram id: a callback from the connection being torn
       // down can still land after the next one has been opened, and it must not
       // wipe the new connection's peers.

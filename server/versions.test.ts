@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import fs from 'node:fs';
@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AuthUser } from './types.js';
 import { serveForFile } from './testServer.js';
+import { setLiveDiagramReader } from './collab/live.js';
 
 // Retention can now delete image files (a snapshot may have been the last thing
 // drawing one), so point the storage layer somewhere disposable.
@@ -36,6 +37,11 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       findMany: vi.fn(),
       deleteMany: vi.fn(),
       createMany: vi.fn(),
+    },
+    // Read by a `PUT` that carries `data`, to refuse a whole-copy write to a
+    // diagram that is being edited live.
+    diagramDoc: {
+      findUnique: vi.fn(),
     },
     $transaction: vi.fn(),
     diagramMember: {
@@ -145,6 +151,9 @@ beforeEach(() => {
   // "no live diagram claims this image" case looks like.
   prismaMock.diagramImage.findMany.mockResolvedValue([]);
   prismaMock.image.findMany.mockResolvedValue([]);
+  // Not a collaborative diagram: the `PUT` recording under test is the one a
+  // diagram nobody has opened over the socket still makes.
+  prismaMock.diagramDoc.findUnique.mockResolvedValue(null);
   nothingToPrune();
 });
 
@@ -465,6 +474,21 @@ describe('GET /api/diagrams/:id/versions/:versionId', () => {
 });
 
 describe('POST /api/diagrams/:id/versions', () => {
+  it('snapshots what the live document holds, not the row it is ahead of', async () => {
+    const live = { version: 3, nodes: [{ id: 'live', type: 'shape', position: { x: 0, y: 0 }, data: {} }], edges: [] };
+    setLiveDiagramReader((diagramId) => (diagramId === 'd1' ? live : null));
+    onTestFinished(() => setLiveDiagramReader(null));
+    prismaMock.diagram.findFirst.mockResolvedValue(ownedRow({ data: { nodes: [], edges: [] }, title: 'Now' }));
+
+    await request(server).post('/api/diagrams/d1/versions').send({ label: 'By hand' }).expect(201);
+
+    // `Diagram.data` is rendered from the document on a debounce, so a manual
+    // snapshot of the row would freeze a board the user was never looking at.
+    expect(prismaMock.diagramVersion.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ data: live }) }),
+    );
+  });
+
   it('snapshots the current data with the label, whatever the interval says', async () => {
     process.env.VERSION_INTERVAL_MS = String(60 * 60 * 1000);
     prismaMock.diagram.findFirst.mockResolvedValue(ownedRow({ data: AFTER, title: 'Roadmap' }));

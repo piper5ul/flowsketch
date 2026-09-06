@@ -25,6 +25,7 @@
     "prepare": "simple-git-hooks"
   },
   "dependencies": {
+    "@hocuspocus/extension-database": "^4.6.0",
     "@hocuspocus/provider": "^4.6.0",
     "@hocuspocus/server": "^4.6.0",
     "@prisma/adapter-pg": "^7.9.1",
