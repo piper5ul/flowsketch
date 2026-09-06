@@ -10,13 +10,13 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - **9 shape types** — Rectangle, Pill, Diamond, Hexagon, Cylinder, Ellipse, Triangle, Sticky Note, Text
 - Drag-and-drop from the left toolbar to add shapes
 - Resize any shape by dragging selection handles
-- Smart alignment guides with snap-to-grid while dragging
+- Smart alignment guides that snap to neighboring shapes while dragging
 
 ### Connectors
 - **Elbow (Manhattan) routing** with automatic obstacle avoidance
 - **Straight connectors** for direct point-to-point lines
 - Three line styles: solid, dashed, dotted
-- Editable connector labels (click the midpoint to add a label)
+- Editable connector labels (select a connector and press Enter to add one)
 - Draggable bend-point handles on elbow connectors
 - Free-standing arrows that can be placed and dragged anywhere
 
@@ -71,43 +71,54 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
    ```bash
    git clone https://github.com/piper5ul/flowsketch.git
    cd flowsketch
-   npm install
+   npm install --legacy-peer-deps
    ```
+   (`--legacy-peer-deps` works around an npm 10.9 resolver crash with this dependency set.)
 
-2. **Configure environment**
+2. **Start Postgres and MailDev**
+   ```bash
+   docker compose up -d
+   ```
+   Or point `.env` at your own Postgres 15+ and any SMTP server.
+
+3. **Configure environment**
    ```bash
    cp .env.example .env
    ```
-   Edit `.env` with your database credentials:
+   The defaults match `docker-compose.yml`. Set `BETTER_AUTH_SECRET` to a random string:
    ```
-   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/flowsketch
+   DATABASE_URL=postgresql://postgres@localhost:5432/flowsketch
    BETTER_AUTH_SECRET=your-random-secret-here
-   BETTER_AUTH_URL=http://localhost:5173
+   BETTER_AUTH_URL=http://localhost:5199
    SMTP_HOST=localhost
    SMTP_PORT=1025
    PORT=3001
    ```
 
-3. **Set up the database**
+4. **Set up the database**
    ```bash
    npx prisma db push
    ```
 
-4. **Start the dev server**
+5. **Start the dev server**
    ```bash
    npm run dev
    ```
-   This starts both the Vite frontend (port 5173) and the Express API server (port 3001) concurrently.
+   This starts both the Vite frontend (port 5199) and the Express API server (port 3001) concurrently.
 
-5. **Open** [http://localhost:5173](http://localhost:5173)
+6. **Open** [http://localhost:5199](http://localhost:5199)
 
-### Optional: Email with MailDev
+Verification and password-reset emails land in MailDev at [http://localhost:1080](http://localhost:1080). Email verification is not required to sign in.
 
-For local email verification during development:
+## Testing
+
 ```bash
-npx maildev
+npm run check      # lint + typecheck + unit tests (also runs as a pre-commit hook)
+npm test           # Vitest: geometry, router, store, API routes — no database needed
+npm run test:e2e   # Playwright against the running app: sign-up, draw, edit, autosave, reload
 ```
-Then open [http://localhost:1080](http://localhost:1080) to view sent emails.
+
+CI runs all of the above on every pull request, with Playwright against a fresh Postgres. See [CONTRIBUTING.md](CONTRIBUTING.md) for where to put new tests and the branch/PR workflow.
 
 ## Project Structure
 
@@ -121,11 +132,14 @@ flowsketch/
 │   ├── pages/           # Dashboard, canvas, login, signup pages
 │   ├── store/           # Zustand diagram store
 │   └── types.ts         # Shared TypeScript types
-├── server/              # Express API server + BetterAuth
+├── server/              # Express API server + BetterAuth (+ router.test.ts)
+├── e2e/                 # Playwright end-to-end tests
 ├── prisma/              # Database schema
 ├── shared/              # Types shared between client and server
 └── public/              # Static assets
 ```
+
+Unit tests live next to the code they cover (`src/lib/*.test.ts`, `src/store/*.test.ts`).
 
 ## Scripts
 
@@ -138,6 +152,10 @@ flowsketch/
 | `npm run db:push` | Push Prisma schema to database |
 | `npm run db:studio` | Open Prisma Studio GUI |
 | `npm run lint` | Run oxlint |
+| `npm run typecheck` | `tsc -b` across app, server, and tests |
+| `npm test` | Unit tests (Vitest) |
+| `npm run test:e2e` | End-to-end tests (Playwright) |
+| `npm run check` | Lint + typecheck + unit tests |
 
 ## License
 
