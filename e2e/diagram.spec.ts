@@ -173,6 +173,57 @@ test('a text shape grows to fit the paragraph typed into it', async ({ page }) =
   expect(compact.height).toBeLessThanOrEqual(48);
 });
 
+test('the selection toolbar aligns, distributes and bolds a multi-selection', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // Three rectangles at different heights and uneven horizontal gaps. The tool
+  // falls back to select after each placement, so R is pressed each time.
+  for (const position of [{ x: 300, y: 300 }, { x: 520, y: 340 }, { x: 800, y: 290 }]) {
+    await page.keyboard.press('r');
+    await pane.click({ position });
+  }
+  const nodes = page.locator('.react-flow__node');
+  await expect(nodes).toHaveCount(3);
+
+  await page.keyboard.press('Meta+a');
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(3);
+
+  /** The three nodes' boxes, left to right. */
+  async function boxes() {
+    const measured = await Promise.all((await nodes.all()).map(async (n) => (await n.boundingBox())!));
+    return measured.sort((a, b) => a.x - b.x);
+  }
+
+  await page.getByRole('button', { name: 'Arrange' }).click();
+  await page.getByRole('button', { name: 'Align top' }).click();
+
+  await expect
+    .poll(async () => {
+      const [a, b, c] = await boxes();
+      return Math.max(Math.abs(a.y - b.y), Math.abs(b.y - c.y));
+    })
+    .toBeLessThanOrEqual(1);
+
+  await page.getByRole('button', { name: 'Distribute horizontally' }).click();
+
+  await expect
+    .poll(async () => {
+      const [a, b, c] = await boxes();
+      return Math.abs((b.x - (a.x + a.width)) - (c.x - (b.x + b.width)));
+    })
+    .toBeLessThanOrEqual(1);
+
+  // Close the popover by toggling its trigger — Escape would reach the canvas.
+  await page.getByRole('button', { name: 'Arrange' }).click();
+
+  // Text formatting on the selection toolbar applies to every selected node.
+  await page.getByRole('button', { name: 'Bold' }).click();
+  for (let i = 0; i < 3; i++) {
+    await expect(page.locator('.react-flow__node [contenteditable]').nth(i)).toHaveCSS('font-weight', '700');
+  }
+});
+
 test('the dashboard lists a created diagram and can open it again', async ({ page }) => {
   await signUp(page);
 
