@@ -51,4 +51,9 @@ describe('canSwapShapeKind', () => {
   it('refuses a locked shape', () => {
     expect(canSwapShapeKind(data({ locked: true }))).toBe(false);
   });
+
+  it('refuses the anchor nodes a floating arrow hangs off', () => {
+    // Redrawing one as a star would give a 1×1 invisible endpoint a silhouette.
+    expect(canSwapShapeKind(data({ fill: 'transparent', stroke: 'transparent' }))).toBe(false);
+  });
 });
