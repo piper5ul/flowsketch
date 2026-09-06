@@ -9,6 +9,7 @@ import type {
   DiagramRole,
   DiagramVersion,
   DiagramVersionMeta,
+  FolderInfo,
   SharedDiagram,
 } from '../../shared/types';
 
@@ -151,6 +152,40 @@ export const api = {
 
   toggleStar: (id: string) =>
     request<{ starred: boolean }>(`/api/diagrams/${id}/star`, { method: 'PATCH' }),
+
+  /**
+   * The caller's own folders, oldest first, each with its diagram count.
+   * There is no shared half: a folder is one person's filing.
+   */
+  listFolders: () => request<FolderInfo[]>('/api/folders'),
+
+  createFolder: (name: string) =>
+    request<FolderInfo>('/api/folders', { method: 'POST', body: JSON.stringify({ name }) }),
+
+  renameFolder: (id: string, name: string) =>
+    request<FolderInfo>(`/api/folders/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+
+  /**
+   * Removes a folder. The diagrams in it are **not** deleted — they come back
+   * to the root of the dashboard — so the caller refreshes its list rather
+   * than dropping the cards that were in it.
+   */
+  deleteFolder: (id: string) =>
+    request(`/api/folders/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  /**
+   * Files a diagram into one of the caller's folders, or `null` to move it
+   * back to the root. Owner-only, like the star: a folder is the owner's, so
+   * an id belonging to somebody else rejects with `API error: 404`.
+   */
+  moveDiagramToFolder: (id: string, folderId: string | null) =>
+    request<{ updatedAt: string }>(`/api/diagrams/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ folderId }),
+    }),
 
   /**
    * Turns the public read-only link on, or returns the one already there —

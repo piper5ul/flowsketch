@@ -1,12 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { filterDiagrams, loadDiagrams, sortDiagrams, splitByOwnership } from './diagramList';
+import {
+  applyFolderSelection,
+  countByFolder,
+  filterDiagrams,
+  loadDiagrams,
+  loadFolders,
+  sortDiagrams,
+  splitByOwnership,
+} from './diagramList';
 import { api } from './api';
 import { useToastStore } from '../store/useToastStore';
 import type { DiagramMeta } from '../../shared/types';
 
-vi.mock('./api', () => ({ api: { listDiagrams: vi.fn() } }));
+vi.mock('./api', () => ({ api: { listDiagrams: vi.fn(), listFolders: vi.fn() } }));
 
 const listDiagrams = vi.mocked(api.listDiagrams);
+const listFolders = vi.mocked(api.listFolders);
 
 function meta(id: string, overrides: Partial<DiagramMeta> = {}): DiagramMeta {
   return {
@@ -141,5 +150,78 @@ describe('splitByOwnership', () => {
 
   it('gives both sections back empty for an empty list', () => {
     expect(splitByOwnership([])).toEqual({ owned: [], shared: [] });
+  });
+});
+
+describe('loadFolders', () => {
+  it('returns the folders the API handed back', async () => {
+    const folders = [{ id: 'f1', name: 'Client work', createdAt: '2026-01-01T00:00:00.000Z', diagramCount: 2 }];
+    listFolders.mockResolvedValue(folders);
+    await expect(loadFolders()).resolves.toEqual(folders);
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('falls back to no folders rather than rejecting: the grid still works without a sidebar', async () => {
+    listFolders.mockRejectedValue(new Error('API error: 500'));
+    await expect(loadFolders()).resolves.toEqual([]);
+    expect(useToastStore.getState().toasts).toHaveLength(1);
+  });
+});
+
+describe('applyFolderSelection', () => {
+  const filed = meta('filed', { folderId: 'f1' });
+  const elsewhere = meta('elsewhere', { folderId: 'f2' });
+  const loose = meta('loose');
+  const starred = meta('starred', { starred: true, folderId: 'f1' });
+  const theirs = meta('theirs', { role: 'editor', ownerName: 'Ada' });
+  const sections = { owned: [filed, elsewhere, loose, starred], shared: [theirs] };
+
+  it('shows the whole dashboard for "all diagrams", shared section included', () => {
+    expect(applyFolderSelection(sections, { kind: 'all' })).toEqual(sections);
+  });
+
+  it('narrows to one folder and drops the shared section', () => {
+    const result = applyFolderSelection(sections, { kind: 'folder', id: 'f1' });
+    expect(result.owned.map((d) => d.id)).toEqual(['filed', 'starred']);
+    expect(result.shared).toEqual([]);
+  });
+
+  it('gives an empty owned list for a folder holding nothing', () => {
+    expect(applyFolderSelection(sections, { kind: 'folder', id: 'empty' })).toEqual({ owned: [], shared: [] });
+  });
+
+  it('narrows to the starred diagrams, wherever they are filed', () => {
+    const result = applyFolderSelection(sections, { kind: 'starred' });
+    expect(result.owned.map((d) => d.id)).toEqual(['starred']);
+    expect(result.shared).toEqual([]);
+  });
+
+  it('shows only the shared section for "shared with me"', () => {
+    expect(applyFolderSelection(sections, { kind: 'shared' })).toEqual({ owned: [], shared: [theirs] });
+  });
+
+  it('never files somebody else\'s diagram into a folder', () => {
+    // The server sends `folderId: null` on a shared diagram, so no selection
+    // but "all" and "shared with me" can reach it.
+    const result = applyFolderSelection(sections, { kind: 'folder', id: 'f1' });
+    expect(result.owned).not.toContain(theirs);
+  });
+});
+
+describe('countByFolder', () => {
+  it('counts the diagrams in each folder', () => {
+    const counts = countByFolder([
+      meta('a', { folderId: 'f1' }),
+      meta('b', { folderId: 'f1' }),
+      meta('c', { folderId: 'f2' }),
+      meta('d'),
+    ]);
+    expect(counts.get('f1')).toBe(2);
+    expect(counts.get('f2')).toBe(1);
+  });
+
+  it('leaves a folder holding nothing out of the map', () => {
+    expect(countByFolder([meta('a')]).has('f1')).toBe(false);
+    expect(countByFolder([]).size).toBe(0);
   });
 });
