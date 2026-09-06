@@ -15,6 +15,19 @@ async function signUp(page: Page) {
   return email;
 }
 
+/** A 64×64 checkerboard PNG, 165 bytes — small enough to inline. */
+const TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAbElEQVR42u3XMQ0AIAxFQeQgAiUoQSKuwECZukC4hLEDN738svoMX20jfLfdFwAAAACAFOCVj57uAQAAAAByACUGAAAAsAeUGAAAAMAeUGIAAAAAe0CJAQAAAOwBJQYAAACwB5QYAAAA4BvABjVC6Vo+2hhHAAAAAElFTkSuQmCC';
+
+/** Opens a new diagram and waits for its canvas. */
+async function newDiagram(page: Page) {
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  return pane;
+}
+
 test('unauthenticated visitors are sent to the login page', async ({ page }) => {
   await page.goto('/');
   await expect(page).toHaveURL(/\/login$/);
@@ -228,4 +241,39 @@ test('deleting a diagram from the dashboard asks for confirmation first', async 
   await page.getByRole('button', { name: 'Confirm delete' }).click();
   await expect(page.getByRole('heading', { name: 'No diagrams yet' })).toBeVisible();
   await expect(page.getByText('Untitled')).toHaveCount(0);
+});
+
+test('a pasted image is uploaded and referenced by URL, not embedded as base64', async ({ page }) => {
+  await signUp(page);
+  await newDiagram(page);
+
+  // Playwright cannot put an image on the OS clipboard, so the paste event is
+  // synthesised with the same shape the browser would deliver.
+  await page.evaluate(async (base64) => {
+    // This file compiles without the DOM lib, so the browser-only globals are
+    // reached through a narrow structural view of `globalThis`.
+    const browser = globalThis as unknown as {
+      document: { dispatchEvent: (event: unknown) => void };
+      DataTransfer: new () => { items: { add: (file: unknown) => void } };
+      ClipboardEvent: new (type: string, init: Record<string, unknown>) => unknown;
+    };
+
+    const res = await fetch(`data:image/png;base64,${base64}`);
+    const file = new File([await res.blob()], 'tile.png', { type: 'image/png' });
+    const data = new browser.DataTransfer();
+    data.items.add(file);
+    browser.document.dispatchEvent(
+      new browser.ClipboardEvent('paste', { clipboardData: data, bubbles: true }),
+    );
+  }, TINY_PNG_BASE64);
+
+  const image = page.locator('.react-flow__node img[src^="/api/images/"]');
+  await expect(image).toHaveCount(1);
+  // The image the server stored is what actually renders, not a data URL.
+  await expect(image).toHaveJSProperty('complete', true);
+  expect(await image.evaluate((el) => el.naturalWidth)).toBe(64);
+
+  await expect(page.getByText('Saved')).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.react-flow__node img[src^="/api/images/"]')).toHaveCount(1);
 });

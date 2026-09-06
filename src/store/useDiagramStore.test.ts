@@ -676,3 +676,77 @@ describe('addImageNode', () => {
     expect(store().editingNodeId).not.toBe(id);
   });
 });
+
+describe('image placeholders', () => {
+  const placeholder = () =>
+    store().addImagePlaceholder({ width: 200, height: 140, position: { x: 10, y: 20 } });
+
+  it('adds a node marked as uploading', () => {
+    const id = placeholder();
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node).toMatchObject({
+      width: 200,
+      height: 140,
+      position: { x: 10, y: 20 },
+      data: { shape: 'image', uploading: true },
+    });
+  });
+
+  it('is not itself undoable — an upload in flight is not an edit yet', () => {
+    placeholder();
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('swaps in the uploaded image, at the size and position it is drawn at', () => {
+    const id = placeholder();
+    store().resolveImagePlaceholder(id, {
+      src: '/api/images/abc',
+      width: 400,
+      height: 300,
+      position: { x: 1, y: 2 },
+    });
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node).toMatchObject({
+      width: 400,
+      height: 300,
+      position: { x: 1, y: 2 },
+      data: { shape: 'image', imageSrc: '/api/images/abc' },
+    });
+    expect(node.data.uploading).toBeUndefined();
+  });
+
+  it('makes the finished insert one undo step back to before the placeholder', () => {
+    const id = placeholder();
+    store().resolveImagePlaceholder(id, {
+      src: '/api/images/abc',
+      width: 10,
+      height: 10,
+      position: { x: 0, y: 0 },
+    });
+    expect(store().canUndo).toBe(true);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('removes a placeholder whose upload failed, recording nothing', () => {
+    const id = placeholder();
+    store().removeImagePlaceholder(id);
+    expect(store().nodes).toHaveLength(0);
+    // A failed upload must not leave a dead ⌘Z behind.
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('ignores a resolution for a placeholder the user already undid away', () => {
+    const id = placeholder();
+    store().removeImagePlaceholder(id);
+    store().resolveImagePlaceholder(id, {
+      src: '/api/images/abc',
+      width: 10,
+      height: 10,
+      position: { x: 0, y: 0 },
+    });
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
+  });
+});

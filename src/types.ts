@@ -43,6 +43,8 @@ export interface ShapeData {
   link?: string;
   locked?: boolean;
   imageSrc?: string;
+  /** Set on an `image` node whose bytes are still uploading. */
+  uploading?: boolean;
   [key: string]: unknown;
 }
 

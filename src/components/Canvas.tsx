@@ -12,6 +12,7 @@ import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode 
 import { makeEdgeData } from '../lib/defaults';
 import { renderDiagramPng } from '../lib/exportImage';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { useImageInsert } from '../lib/useImageInsert';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { LeftRail } from './LeftRail';
@@ -63,6 +64,7 @@ export function Canvas() {
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
+  const insertImages = useImageInsert();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevToolRef = useRef<Tool>('select');
   const connectorSourceRef = useRef<string | null>(null);
@@ -231,50 +233,24 @@ export function Canvas() {
   useEffect(() => {
     let clipboard: ClipboardPayload | null = null;
 
+    // Pasted images are uploaded and referenced by URL. Inlining them as
+    // base64 used to blow a screenshot-sized paste past the 5 MB limit on the
+    // diagram's JSON body, which failed the save rather than the paste.
     function onPaste(e: ClipboardEvent) {
       if (isTypingTarget(e.target)) return;
       const items = e.clipboardData?.items;
       if (!items) return;
+
+      const files: File[] = [];
       for (const item of items) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          if (!file) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            const dataUrl = reader.result as string;
-            const img = new window.Image();
-            img.onload = () => {
-              const maxW = 400;
-              const scale = img.width > maxW ? maxW / img.width : 1;
-              const w = Math.round(img.width * scale);
-              const h = Math.round(img.height * scale);
-              const id = nanoid(8);
-              const center = screenToFlowPosition({
-                x: window.innerWidth / 2,
-                y: window.innerHeight / 2,
-              });
-              addNodes({
-                id,
-                type: 'shape',
-                position: { x: center.x - w / 2, y: center.y - h / 2 },
-                width: w,
-                height: h,
-                data: {
-                  label: '',
-                  shape: 'rectangle',
-                  fill: '#ffffff',
-                  stroke: '#e5e7eb',
-                  imageSrc: dataUrl,
-                },
-              });
-            };
-            img.src = dataUrl;
-          };
-          reader.readAsDataURL(file);
-          return;
-        }
+        if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+        const file = item.getAsFile();
+        if (file) files.push(file);
       }
+      if (files.length === 0) return;
+
+      e.preventDefault();
+      insertImages(files);
     }
 
     function onKeyDown(e: KeyboardEvent) {
@@ -529,7 +505,7 @@ export function Canvas() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('paste', onPaste);
     };
-  }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, screenToFlowPosition, addNodes]);
+  }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, insertImages]);
 
   return (
     <div ref={wrapperRef} className="relative h-full w-full" onDoubleClick={onCanvasDoubleClick}>

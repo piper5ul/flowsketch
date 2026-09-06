@@ -88,6 +88,16 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
     syncTextHeight();
   }, [id, updateNodeData, setEditingNodeId, syncTextHeight]);
 
+  // A grey box holding the image's place while its bytes upload. No handles
+  // and no resizer: it is about to be replaced by the real thing.
+  if (isImageNode && data.uploading) {
+    return (
+      <div className="flex h-full w-full items-center justify-center rounded-md border-[1.5px] border-dashed border-ink-600/30 bg-black/[0.03] text-[13px] font-medium text-ink-600/60">
+        Uploading…
+      </div>
+    );
+  }
+
   // An image node is the image and nothing else: no border, no fill, no label
   // to edit and no quick-add buttons — connectors still attach through the
   // same handles every other shape uses.
