@@ -11,11 +11,28 @@ import {
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import type { DiagramData, DiagramRole, DiagramViewport } from '../../shared/types';
-import type { ConnectorData, ConnectorKind, Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
+import type {
+  ConnectorData,
+  ConnectorKind,
+  DiagramNodeType,
+  Direction,
+  EdgeAnchor,
+  ShapeData,
+  ShapeKind,
+  Tool,
+} from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
-import { canSwapShapeKind } from '../lib/nodeKinds';
+import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import {
+  absolutePosition,
+  boundsOf,
+  innermostContaining,
+  normalizeParentage,
+  sortParentsFirst,
+  subtreeIds,
+} from '../lib/nodeTree';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import {
   alignNodes,
@@ -150,8 +167,36 @@ function computeAlignmentSnap(
   return { dx, dy, guides };
 }
 
-export type ShapeNode = Node<ShapeData, 'shape'>;
+/**
+ * A node on the board — a drawn shape, or one of the two containers.
+ *
+ * All three carry a `ShapeData` and live in the same array, so the store's
+ * actions stay total over it; `type` is the discriminator (see
+ * `DiagramNodeType`). The name is historical: for most of this app's life a
+ * node *was* a shape.
+ */
+export type ShapeNode = Node<ShapeData, DiagramNodeType>;
 export type ConnectorEdge = Edge<ConnectorData, 'connector'>;
+
+/** How far a group's box stands off the shapes inside it. */
+const GROUP_PADDING = 16;
+
+/** A frame's size when it is first drawn. */
+const FRAME_WIDTH = 480;
+const FRAME_HEIGHT = 320;
+
+/** A frame's title before the user renames it. */
+export const DEFAULT_FRAME_TITLE = 'Frame';
+
+/**
+ * A container's `data`. It is a `ShapeData` because every node's is — the
+ * rectangle named here draws nothing, since `GroupNode` and `FrameNode` paint
+ * themselves. The transparent fill and stroke are what keep a container out of
+ * the toolbar's colour controls and out of `canSwapShapeKind`.
+ */
+function containerData(label: string): ShapeData {
+  return { label, shape: 'rectangle', fill: 'transparent', stroke: 'transparent' };
+}
 
 /**
  * A node's box. `width`/`height` are what the store sets; `measured` is what
@@ -170,6 +215,46 @@ function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
   return nodes
     .filter((n) => n.selected)
     .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
+}
+
+/** Every node by id, for the parent-chain walks in `src/lib/nodeTree.ts`. */
+function nodesById(nodes: ShapeNode[]): Map<string, ShapeNode> {
+  return new Map(nodes.map((n) => [n.id, n]));
+}
+
+/** A node's box in absolute (board) coordinates, ancestors folded in. */
+function absoluteBounds(node: ShapeNode, byId: Map<string, ShapeNode>) {
+  const { x, y } = absolutePosition(node, byId);
+  return { x, y, w: nodeWidth(node), h: nodeHeight(node) };
+}
+
+/**
+ * True for a node that can be put in a group.
+ *
+ * A floating arrow's two invisible endpoints are not shapes the user drew and
+ * have no business being re-parented — but a *container* wears the same
+ * transparent fill and stroke, which is what `isAnchorNode` reads, so groups
+ * and frames have to be let back in explicitly. That is what makes a group of
+ * groups possible.
+ */
+export function canGroupNode(node: ShapeNode): boolean {
+  return isContainerNode(node) || !isAnchorNode(node.data);
+}
+
+/** True when `groupSelected` would actually make a group of what is selected. */
+export function canGroupSelection(nodes: ShapeNode[]): boolean {
+  return outermostSelected(nodes).length >= 2;
+}
+
+/**
+ * The selected nodes that would become a group's direct children: the ones
+ * whose own parent is not also selected, since a child already travels with it.
+ */
+function outermostSelected(nodes: ShapeNode[]): ShapeNode[] {
+  const selectedIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+  return nodes.filter(
+    (n) => n.selected && canGroupNode(n) && (n.parentId === undefined || !selectedIds.has(n.parentId)),
+  );
 }
 
 /**
@@ -332,6 +417,36 @@ interface DiagramState {
   onConnect: (connection: Connection) => void;
 
   addShape: (shape: ShapeKind, position: { x: number; y: number }) => string;
+  /**
+   * Draws a frame — a titled section — with its top-left at `position`.
+   * Inserted at the *start* of the array, because a frame is the ground its
+   * contents sit on and must be drawn behind them.
+   */
+  addFrame: (position: { x: number; y: number }) => string;
+
+  /**
+   * Wraps the selection in a group: one invisible box, sized to what is inside
+   * it plus a margin, that moves everything with it. Needs two nodes that are
+   * not already travelling together, and selects the group it makes.
+   */
+  groupSelected: () => void;
+  /**
+   * Undoes that for every selected group: its children go back to where they
+   * are on the board and inherit the group's own parent, and the group itself
+   * goes. One history entry however many groups were selected.
+   */
+  ungroupSelected: () => void;
+  /**
+   * Settles which frame each of `nodeIds` is now in, from where it was dropped.
+   *
+   * This is the whole of what makes a frame a container: dropping a shape
+   * inside one makes it a child, dragging it out makes it a top-level node
+   * again, and positions are converted so nothing moves on screen. Group
+   * membership is left alone — a group is joined and left with ⌘G / ⌘⇧G, not
+   * by dragging. Records one history entry, and none when nothing changed
+   * hands.
+   */
+  reparentByPosition: (nodeIds: string[]) => void;
   addImageNode: (image: { src: string; width: number; height: number; position: { x: number; y: number } }) => string;
 
   // An insert whose upload is still in flight. The placeholder itself is not
@@ -495,7 +610,22 @@ function isNoOpPatch<T extends object>(current: T, patch: Partial<T>): boolean {
   return (Object.keys(patch) as (keyof T)[]).every((key) => Object.is(current[key], patch[key]));
 }
 
-/** Clone nodes/edges with fresh ids, offset positions, and edges remapped onto the clones. */
+/**
+ * Clone nodes/edges with fresh ids, offset positions, and edges remapped onto
+ * the clones.
+ *
+ * Parenting survives the copy, which is what makes duplicating a group or a
+ * frame duplicate the thing inside it rather than a hollow box. Two rules
+ * follow from a child's position being relative to its parent:
+ *
+ * - a clone whose parent was copied too points at the *copy*, and is not
+ *   offset — its parent already moved, and stepping both would double it;
+ * - a clone whose parent was left behind keeps the original as its parent, so
+ *   duplicating one shape inside a frame leaves the copy in that frame.
+ *
+ * The ids are all minted before anything is rewritten, so a parent that
+ * happens to come after its child in the list still maps.
+ */
 function cloneSubgraph(
   nodes: ShapeNode[],
   edges: ConnectorEdge[],
@@ -503,13 +633,16 @@ function cloneSubgraph(
   selected = true,
 ): { nodes: ShapeNode[]; edges: ConnectorEdge[] } {
   const idMap = new Map<string, string>();
+  for (const n of nodes) idMap.set(n.id, nanoid(8));
+
   const clonedNodes = nodes.map((n) => {
-    const newId = nanoid(8);
-    idMap.set(n.id, newId);
+    const parentCopied = n.parentId !== undefined && idMap.has(n.parentId);
+    const step = parentCopied ? 0 : offset;
     return {
       ...n,
-      id: newId,
-      position: { x: n.position.x + offset, y: n.position.y + offset },
+      id: idMap.get(n.id)!,
+      ...(n.parentId !== undefined ? { parentId: idMap.get(n.parentId) ?? n.parentId } : {}),
+      position: { x: n.position.x + step, y: n.position.y + step },
       selected,
     };
   });
@@ -520,13 +653,19 @@ function cloneSubgraph(
     target: idMap.get(e.target) ?? e.target,
     selected,
   }));
-  return { nodes: clonedNodes, edges: clonedEdges };
+  return { nodes: sortParentsFirst(clonedNodes), edges: clonedEdges };
 }
 
 function serializeNodes(nodes: ShapeNode[]) {
   return nodes.map((n) => ({
     id: n.id, type: n.type, position: n.position,
     width: n.width, height: n.height, data: n.data,
+    // Only written when there is one, so an ordinary diagram's JSON is byte for
+    // byte what it always was. `extent` is React Flow's own containment rule;
+    // nothing sets it today, and it round-trips so that a build which does is
+    // not silently undone by one that does not.
+    ...(n.parentId !== undefined ? { parentId: n.parentId } : {}),
+    ...(n.extent !== undefined ? { extent: n.extent } : {}),
   }));
 }
 
@@ -603,7 +742,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // from whatever the server just handed back.
       loadedAt: updatedAt ?? null,
       conflict: null,
-      nodes: migrated.nodes as unknown as ShapeNode[],
+      // `Diagram.data` is a free-form JSON column: a stored `parentId` may
+      // point at a node that is no longer there, and React Flow throws on that
+      // rather than drawing the board at all. Normalizing here is the one door
+      // every diagram comes through, migration included.
+      nodes: normalizeParentage(migrated.nodes as unknown as ShapeNode[]),
       edges: migrated.edges as unknown as ConnectorEdge[],
       // Cleared, not kept: /d/A -> /d/B reuses this store, and B must not open
       // on A's camera.
@@ -702,18 +845,30 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         (c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true,
       );
       const draggedIds = new Set(posChanges.map((c) => c.id));
+      // Guides are drawn on the board, so both sides of the comparison are in
+      // board coordinates: a node inside a container carries a position that is
+      // an offset from it, and lining a shape up against that raw number would
+      // snap it to a place nothing is.
+      const byId = nodesById(state.nodes);
       const others = state.nodes
         .filter((n) => !draggedIds.has(n.id))
-        .map((n) => ({ x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
+        .map((n) => absoluteBounds(n, byId));
 
-      // Where each dragged node would land before any snapping.
+      // Where each dragged node would land before any snapping. The offset the
+      // snap produces is a delta, so it applies to the relative position React
+      // Flow wants back just as well as to the absolute one it is computed from.
       const dragged = posChanges.flatMap((change) => {
         const node = state.nodes.find((n) => n.id === change.id);
         if (!node) return [];
+        const relX = change.position?.x ?? node.position.x;
+        const relY = change.position?.y ?? node.position.y;
+        const origin = absolutePosition({ ...node, position: { x: 0, y: 0 } }, byId);
         return [{
           change,
-          x: change.position?.x ?? node.position.x,
-          y: change.position?.y ?? node.position.y,
+          relX,
+          relY,
+          x: relX + origin.x,
+          y: relY + origin.y,
           w: nodeWidth(node),
           h: nodeHeight(node),
         }];
@@ -732,7 +887,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         const { dx, dy, guides } = computeAlignmentSnap({ x, y, w, h }, others);
 
         if (dx !== 0 || dy !== 0) {
-          for (const d of dragged) d.change.position = { x: d.x + dx, y: d.y + dy };
+          for (const d of dragged) d.change.position = { x: d.relX + dx, y: d.relY + dy };
         }
         set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides }));
         return;
@@ -811,6 +966,161 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     };
     set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'text' ? id : null }));
     return id;
+  },
+
+  addFrame: (position) => {
+    pushHistory(get());
+    const id = nanoid(8);
+    const node: ShapeNode = {
+      id,
+      type: 'frame',
+      position,
+      width: FRAME_WIDTH,
+      height: FRAME_HEIGHT,
+      data: containerData(DEFAULT_FRAME_TITLE),
+    };
+    // A frame is a section of the board, not something drawn on top of it: it
+    // goes to the front of the array so everything already there — and
+    // everything dropped into it later — is drawn over it.
+    set((s) => ({ nodes: [node, ...s.nodes] }));
+    return id;
+  },
+
+  groupSelected: () => {
+    const state = get();
+    const members = outermostSelected(state.nodes);
+    if (members.length < 2) return;
+
+    const byId = nodesById(state.nodes);
+    const bounds = boundsOf(members.map((n) => absoluteBounds(n, byId)));
+    if (!bounds) return;
+
+    // Grouping shapes that already share a container keeps them in it: the
+    // group slots in between. A selection spanning two containers cannot, so
+    // the group goes to the board itself.
+    const sharedParentId = members.every((n) => n.parentId === members[0].parentId)
+      ? members[0].parentId
+      : undefined;
+    const origin =
+      sharedParentId !== undefined && byId.has(sharedParentId)
+        ? absolutePosition(byId.get(sharedParentId)!, byId)
+        : { x: 0, y: 0 };
+
+    const x = bounds.x - GROUP_PADDING;
+    const y = bounds.y - GROUP_PADDING;
+    const groupId = nanoid(8);
+    const group: ShapeNode = {
+      id: groupId,
+      type: 'group',
+      position: { x: x - origin.x, y: y - origin.y },
+      width: bounds.w + GROUP_PADDING * 2,
+      height: bounds.h + GROUP_PADDING * 2,
+      selected: true,
+      data: containerData(''),
+      ...(sharedParentId !== undefined ? { parentId: sharedParentId } : {}),
+    };
+
+    const memberIds = new Set(members.map((n) => n.id));
+    // Everything under a member travels with it, and has to stay behind its own
+    // parent in the array.
+    const moving = subtreeIds(state.nodes, memberIds);
+    const rest = state.nodes.filter((n) => !moving.has(n.id));
+    const moved = state.nodes
+      .filter((n) => moving.has(n.id))
+      .map((n) => {
+        if (!memberIds.has(n.id)) return { ...n, selected: false };
+        const abs = absolutePosition(n, byId);
+        return { ...n, parentId: groupId, position: { x: abs.x - x, y: abs.y - y }, selected: false };
+      });
+
+    pushHistory(state);
+    // The group and its contents go to the end: a group the user has just made
+    // is the thing they are working on, and this keeps every parent ahead of
+    // its children without having to thread the subtree back into place.
+    set({
+      nodes: [...rest.map((n) => ({ ...n, selected: false })), group, ...moved],
+      edges: state.edges.map((e) => ({ ...e, selected: false })),
+    });
+  },
+
+  ungroupSelected: () => {
+    const state = get();
+    const groups = state.nodes.filter((n) => n.selected && isGroupNode(n));
+    if (groups.length === 0) return;
+
+    const dissolved = new Map(groups.map((g) => [g.id, g]));
+    pushHistory(state);
+    set({
+      nodes: sortParentsFirst(
+        state.nodes
+          .filter((n) => !dissolved.has(n.id))
+          .map((n) => {
+            const parent = n.parentId !== undefined ? dissolved.get(n.parentId) : undefined;
+            if (!parent) return n;
+            // The child's offset within the group plus the group's own offset
+            // is its offset within whatever the group was in — which is exactly
+            // its position on the board when the group had no parent.
+            return {
+              ...n,
+              ...(parent.parentId !== undefined ? { parentId: parent.parentId } : { parentId: undefined }),
+              position: {
+                x: n.position.x + parent.position.x,
+                y: n.position.y + parent.position.y,
+              },
+              // The freed children become the selection, so the ⌘G that made
+              // the group and the ⌘⇧G that undoes it leave the same shapes in
+              // hand.
+              selected: true,
+            };
+          }),
+      ),
+    });
+  },
+
+  reparentByPosition: (nodeIds) => {
+    const state = get();
+    const byId = nodesById(state.nodes);
+    const dragged = new Set(nodeIds);
+    const frames = state.nodes.filter(isFrameNode);
+
+    const moved = state.nodes.filter((node) => {
+      if (!dragged.has(node.id)) return false;
+      // A child dragged along with its parent has not been dropped anywhere.
+      if (node.parentId !== undefined && dragged.has(node.parentId)) return false;
+      // A group's membership is explicit; only the group itself can change frame.
+      const parent = node.parentId !== undefined ? byId.get(node.parentId) : undefined;
+      return !parent || isFrameNode(parent);
+    });
+
+    const changes = new Map<string, { parentId: string | undefined; position: { x: number; y: number } }>();
+    for (const node of moved) {
+      const bounds = absoluteBounds(node, byId);
+      // A frame cannot be dropped into itself or into one of its own children.
+      const own = subtreeIds(state.nodes, [node.id]);
+      const candidates = frames
+        .filter((f) => !own.has(f.id))
+        .map((f) => ({ ...f, ...absoluteBounds(f, byId) }));
+      const target = innermostContaining(bounds, candidates, byId);
+
+      const nextParentId = target?.id;
+      if ((node.parentId ?? undefined) === nextParentId) continue;
+      const origin = target ? absolutePosition(byId.get(target.id)!, byId) : { x: 0, y: 0 };
+      changes.set(node.id, {
+        parentId: nextParentId,
+        position: { x: bounds.x - origin.x, y: bounds.y - origin.y },
+      });
+    }
+    if (changes.size === 0) return;
+
+    pushHistory(state);
+    set({
+      nodes: sortParentsFirst(
+        state.nodes.map((n) => {
+          const change = changes.get(n.id);
+          return change ? { ...n, parentId: change.parentId, position: change.position } : n;
+        }),
+      ),
+    });
   },
 
   // An inserted image (paste, drop, file picker). Its node is the image: no
@@ -1113,14 +1423,17 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     })),
 
   // Node stacking order follows array order (later = drawn on top), so
-  // z-ordering is just a matter of reordering `nodes`.
+  // z-ordering is just a matter of reordering `nodes` — and then of putting
+  // every parent back ahead of its children, which is the order React Flow has
+  // to read them in. `sortParentsFirst` is the identity on a diagram with no
+  // containers in it, so an ordinary board reorders exactly as it always did.
   bringToFront: () => {
     pushHistory(get());
     set((s) => {
       const selected = s.nodes.filter((n) => n.selected);
       if (selected.length === 0) return {};
       const rest = s.nodes.filter((n) => !n.selected);
-      return { nodes: [...rest, ...selected] };
+      return { nodes: sortParentsFirst([...rest, ...selected]) };
     });
   },
 
@@ -1130,7 +1443,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       const selected = s.nodes.filter((n) => n.selected);
       if (selected.length === 0) return {};
       const rest = s.nodes.filter((n) => !n.selected);
-      return { nodes: [...selected, ...rest] };
+      return { nodes: sortParentsFirst([...selected, ...rest]) };
     });
   },
 
@@ -1143,7 +1456,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           [nodes[i], nodes[i + 1]] = [nodes[i + 1], nodes[i]];
         }
       }
-      return { nodes };
+      return { nodes: sortParentsFirst(nodes) };
     });
   },
 
@@ -1156,7 +1469,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           [nodes[i], nodes[i - 1]] = [nodes[i - 1], nodes[i]];
         }
       }
-      return { nodes };
+      return { nodes: sortParentsFirst(nodes) };
     });
   },
 
@@ -1257,11 +1570,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // unselected and underneath, while the originals travel with the pointer.
   duplicateSelection: ({ offset = 30, select = true }: { offset?: number; select?: boolean } = {}) => {
     const state = get();
-    const selNodes = state.nodes.filter((n) => n.selected);
+    // A container is one thing: copying a group copies what is inside it, so
+    // the selection is widened to the whole subtree before anything is cloned.
+    const selIds = subtreeIds(state.nodes, state.nodes.filter((n) => n.selected).map((n) => n.id));
+    const selNodes = state.nodes.filter((n) => selIds.has(n.id));
     if (selNodes.length === 0) return;
     pushHistory(state);
 
-    const selIds = new Set(selNodes.map((n) => n.id));
     const selEdges = state.edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
     const clones = cloneSubgraph(selNodes, selEdges, offset, select);
 
@@ -1272,8 +1587,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
             edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...clones.edges],
           }
         : {
-            // Clones go first so they render behind the originals.
-            nodes: [...clones.nodes, ...s.nodes],
+            // Clones go first so they render behind the originals — and then
+            // parents back ahead of their own children.
+            nodes: sortParentsFirst([...clones.nodes, ...s.nodes]),
             edges: [...s.edges, ...clones.edges],
           },
     );
@@ -1286,10 +1602,21 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     pushHistory(get());
 
     const pasted = cloneSubgraph(clip.nodes, clip.edges, offset);
-    set((s) => ({
-      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...pasted.nodes],
-      edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...pasted.edges],
-    }));
+    set((s) => {
+      // A copy carries the container it was taken from, which the *other*
+      // diagram it is pasted into does not have. React Flow throws on a parent
+      // that is not there, so a clone whose parent did not come with it lands
+      // on the board itself; a clipboard pasted back where it came from keeps
+      // every parent it had.
+      const present = new Set([...s.nodes, ...pasted.nodes].map((n) => n.id));
+      const nodes = pasted.nodes.map((n) =>
+        n.parentId !== undefined && !present.has(n.parentId) ? { ...n, parentId: undefined } : n,
+      );
+      return {
+        nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...nodes],
+        edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...pasted.edges],
+      };
+    });
 
     return {
       nodes: pasted.nodes.map((n) => ({ ...n, selected: false })),
@@ -1297,12 +1624,18 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     };
   },
 
+  // Deleting a container deletes what is in it: a group or a frame is one
+  // thing on the board, and leaving its contents behind — at positions that
+  // were relative to a node that no longer exists — is not a state React Flow
+  // can draw. A locked shape still sits the delete out, but only in its own
+  // right: locking a shape does not pin the group around it open.
   deleteSelection: () => {
     pushHistory(get());
     set((s) => {
-      const deletedNodeIds = new Set(s.nodes.filter((n) => n.selected && !n.data.locked).map((n) => n.id));
+      const selected = s.nodes.filter((n) => n.selected && !n.data.locked).map((n) => n.id);
+      const deletedNodeIds = subtreeIds(s.nodes, selected);
       return {
-        nodes: s.nodes.filter((n) => !n.selected || n.data.locked),
+        nodes: s.nodes.filter((n) => !deletedNodeIds.has(n.id) && (!n.selected || n.data.locked)),
         edges: s.edges.filter((e) => !e.selected && !deletedNodeIds.has(e.source) && !deletedNodeIds.has(e.target)),
       };
     });

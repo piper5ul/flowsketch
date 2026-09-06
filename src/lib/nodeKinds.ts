@@ -1,4 +1,28 @@
-import type { ShapeData, ShapeKind } from '../types';
+import type { DiagramNodeType, ShapeData, ShapeKind } from '../types';
+
+/** Just enough of a node to ask what kind of node it is. */
+type Typed = { type?: DiagramNodeType | string };
+
+/**
+ * True for the invisible box that makes a handful of shapes move as one.
+ *
+ * A container is told from a drawn shape by its `type` and never by its data:
+ * a group's fill and stroke are both `transparent`, which is exactly what
+ * `isAnchorNode` looks for, so asking the data would confuse the two.
+ */
+export function isGroupNode(node: Typed): boolean {
+  return node.type === 'group';
+}
+
+/** True for a titled section shapes join by being dropped into it. */
+export function isFrameNode(node: Typed): boolean {
+  return node.type === 'frame';
+}
+
+/** True for either container — the nodes other nodes can hang off. */
+export function isContainerNode(node: Typed): boolean {
+  return isGroupNode(node) || isFrameNode(node);
+}
 
 /**
  * Every shape kind, at runtime. Built from an exhaustive record rather than

@@ -24,9 +24,20 @@ export interface DiagramViewport {
 export interface SerializedNode {
   id: string;
   type: string;
+  /**
+   * Relative to the node's parent when it has one — a container moves what is
+   * inside it, so a child's position is an offset, not a place on the board.
+   */
   position: { x: number; y: number };
   width?: number;
   height?: number;
+  /**
+   * The group or frame this node belongs to. A parent is always written before
+   * its children, which is the order React Flow has to read them in.
+   */
+  parentId?: string;
+  /** React Flow's containment rule for a child, when one has been set. */
+  extent?: 'parent' | [[number, number], [number, number]];
   data: Record<string, unknown>;
 }
 

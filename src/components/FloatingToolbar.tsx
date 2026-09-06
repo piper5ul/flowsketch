@@ -4,6 +4,8 @@ import * as Popover from '@radix-ui/react-popover';
 import {
   Trash2,
   CornerDownRight,
+  Group,
+  Ungroup,
   ArrowRight,
   BringToFront,
   SendToBack,
@@ -19,7 +21,8 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { useDiagramStore } from '../store/useDiagramStore';
+import { canGroupSelection, useDiagramStore } from '../store/useDiagramStore';
+import { absolutePosition } from '../lib/nodeTree';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
 import { TextFormatControls } from './TextFormatControls';
@@ -32,7 +35,7 @@ import {
   DEFAULT_START_ARROW,
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
-import { canRoundCorners, canSwapShapeKind } from '../lib/nodeKinds';
+import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode } from '../lib/nodeKinds';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
 import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
 import type { ArrowStyle, ConnectorKind, ShapeData, ShapeKind, StrokeStyle, StrokeWidth } from '../types';
@@ -399,6 +402,8 @@ export function FloatingToolbar() {
   const setSelectedShapeKind = useDiagramStore((s) => s.setSelectedShapeKind);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
+  const groupSelected = useDiagramStore((s) => s.groupSelected);
+  const ungroupSelected = useDiagramStore((s) => s.ungroupSelected);
   const bringToFront = useDiagramStore((s) => s.bringToFront);
   const sendToBack = useDiagramStore((s) => s.sendToBack);
   const bringForward = useDiagramStore((s) => s.bringForward);
@@ -415,7 +420,14 @@ export function FloatingToolbar() {
   // and `updateSelectedNodesStyle` both skip it. So a selection of nothing but
   // images gets neither the text controls nor the colour palette; one that also
   // holds a real shape gets both, and they apply to that shape.
-  const styleableNodes = useMemo(() => selectedNodes.filter((n) => n.data.shape !== 'image'), [selectedNodes]);
+  // A container paints itself from the theme rather than from a fill and a
+  // stroke, so it sits the colour and text controls out alongside images.
+  const styleableNodes = useMemo(
+    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n)),
+    [selectedNodes],
+  );
+  const canGroup = useMemo(() => canGroupSelection(nodes), [nodes]);
+  const hasGroup = useMemo(() => selectedNodes.some(isGroupNode), [selectedNodes]);
   // The shapes `setSelectedShapeKind` would actually redraw, so the button is
   // offered exactly when pressing it would do something.
   const swappableNodes = useMemo(() => selectedNodes.filter((n) => canSwapShapeKind(n.data)), [selectedNodes]);
@@ -448,7 +460,14 @@ export function FloatingToolbar() {
 
   const anchor = useMemo(() => {
     if (selectedNodes.length > 0) {
-      const bounds = getNodesBounds(selectedNodes);
+      // A node inside a container holds a position relative to it, and the
+      // toolbar is placed on the board — so the bounds are taken over absolute
+      // positions, or selecting a shape in a frame would park the toolbar near
+      // the origin instead of over the shape.
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      const bounds = getNodesBounds(
+        selectedNodes.map((n) => ({ ...n, position: absolutePosition(n, byId) })),
+      );
       return { x: bounds.x + bounds.width / 2, y: bounds.y };
     }
     if (selectedEdges.length > 0) {
@@ -650,6 +669,26 @@ export function FloatingToolbar() {
                 <SendToBack size={16} />
               </button>
             </Tooltip>
+          </>
+        )}
+
+        {!isEdgeMode && (canGroup || hasGroup) && (
+          <>
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            {canGroup && (
+              <Tooltip label="Group" shortcut="⌘G" side="top">
+                <button aria-label="Group" onClick={groupSelected} className={BUTTON_CLASS}>
+                  <Group size={16} />
+                </button>
+              </Tooltip>
+            )}
+            {hasGroup && (
+              <Tooltip label="Ungroup" shortcut="⌘⇧G" side="top">
+                <button aria-label="Ungroup" onClick={ungroupSelected} className={BUTTON_CLASS}>
+                  <Ungroup size={16} />
+                </button>
+              </Tooltip>
+            )}
           </>
         )}
 

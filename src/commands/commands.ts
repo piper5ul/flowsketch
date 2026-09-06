@@ -1,4 +1,7 @@
 import { renderDiagramPng } from '../lib/exportImage';
+import { isGroupNode } from '../lib/nodeKinds';
+import { subtreeIds } from '../lib/nodeTree';
+import { canGroupSelection } from '../store/useDiagramStore';
 import { useSearchStore } from '../store/useSearchStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
@@ -33,9 +36,11 @@ function hasSelectedNode(ctx: CommandContext): boolean {
 /** ⌘C and ⌘X capture the same payload; only the cut goes on to delete it. */
 function captureSelection(ctx: CommandContext) {
   const state = ctx.store.getState();
-  const nodes = selectedNodes(state);
+  // A container is one thing on the board: copying a group or a frame copies
+  // what is inside it, or the paste would be an empty box.
+  const nodeIds = subtreeIds(state.nodes, selectedNodes(state).map((n) => n.id));
+  const nodes = state.nodes.filter((n) => nodeIds.has(n.id));
   const edges = selectedEdges(state);
-  const nodeIds = new Set(nodes.map((n) => n.id));
   // With only shapes selected, the connectors between them come along too.
   const connected = edges.length > 0
     ? edges
@@ -346,6 +351,24 @@ export const commandDeclarations: Command[] = [
     group: 'arrange',
     shortcut: { key: '[', meta: true },
     run: (ctx) => ctx.store.getState().sendBackward(),
+  },
+  {
+    id: 'arrange.group',
+    title: 'Group',
+    group: 'arrange',
+    shortcut: { key: 'g', meta: true },
+    contextMenu: 'node',
+    when: (ctx) => canGroupSelection(ctx.store.getState().nodes),
+    run: (ctx) => ctx.store.getState().groupSelected(),
+  },
+  {
+    id: 'arrange.ungroup',
+    title: 'Ungroup',
+    group: 'arrange',
+    shortcut: { key: 'g', meta: true, shift: true },
+    contextMenu: 'node',
+    when: (ctx) => ctx.store.getState().nodes.some((n) => n.selected && isGroupNode(n)),
+    run: (ctx) => ctx.store.getState().ungroupSelected(),
   },
   {
     id: 'arrange.toggleLock',

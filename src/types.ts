@@ -19,6 +19,17 @@ export type ShapeKind =
   | 'star'
   | 'callout'
   | 'arrow';
+/**
+ * What a node *is*, as React Flow's `type` discriminator spells it.
+ *
+ * `shape` is everything the user draws. The other two are containers other
+ * nodes hang off through `parentId`: a `group` is an invisible box that makes a
+ * handful of shapes move as one, and a `frame` is a titled section shapes join
+ * by being dropped into it. Both carry a `ShapeData` like any other node — the
+ * store's array is homogeneous — so `type`, never the data, is what tells them
+ * apart (`isGroupNode` / `isFrameNode` in `src/lib/nodeKinds.ts`).
+ */
+export type DiagramNodeType = 'shape' | 'group' | 'frame';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
@@ -44,7 +55,10 @@ export type Tool =
   | 'cloud'
   | 'star'
   | 'callout'
-  | 'arrow';
+  | 'arrow'
+  // Not a `ShapeKind`: a frame is a container, not a silhouette, so it has no
+  // entry in the shape tables and is placed by `addFrame` rather than `addShape`.
+  | 'frame';
 
 export interface SwatchColor {
   id: string;

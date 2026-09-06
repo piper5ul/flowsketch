@@ -122,6 +122,8 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `[` | Send selection to back |
 | `⌘]` | Bring selection forward |
 | `⌘[` | Send selection backward |
+| `⌘G` | Group the selection (needs 2 shapes) |
+| `⌘⇧G` | Ungroup the selected group(s) |
 | `⌘⇧L` | Lock / unlock selection |
 | `⌥⇧` + arrows | Align the selection left / right / top / bottom (needs 2 shapes) |
 | `⌥⇧H` / `⌥⇧V` | Align the selection on its horizontal / vertical centre line |

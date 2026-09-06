@@ -1703,3 +1703,284 @@ describe('updateSelectedNodesDataTransient', () => {
     expect(store().nodes.find((n) => n.id === image)!.data.opacity).toBeUndefined();
   });
 });
+
+describe('groupSelected', () => {
+  /** Two rectangles side by side, both selected. */
+  function twoSelected() {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 400, y: 300 });
+    select(a, b);
+    return { a, b };
+  }
+
+  const groupOf = () => store().nodes.find((n) => n.type === 'group')!;
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('sizes the group to its contents plus a 16 px margin', () => {
+    twoSelected();
+    store().groupSelected();
+
+    // Rectangles are 180x100, so the contents span (100,100)-(580,400).
+    expect(groupOf()).toMatchObject({
+      type: 'group',
+      position: { x: 84, y: 84 },
+      width: 512,
+      height: 332,
+      selected: true,
+    });
+  });
+
+  it('re-parents the members with positions relative to the group', () => {
+    const { a, b } = twoSelected();
+    store().groupSelected();
+    const group = groupOf();
+
+    expect(nodeOf(a)).toMatchObject({ parentId: group.id, position: { x: 16, y: 16 } });
+    expect(nodeOf(b)).toMatchObject({ parentId: group.id, position: { x: 316, y: 216 } });
+  });
+
+  it('inserts the group before its children and leaves it the only selection', () => {
+    const { a, b } = twoSelected();
+    store().groupSelected();
+
+    const ids = store().nodes.map((n) => n.id);
+    const group = groupOf();
+    expect(ids.indexOf(group.id)).toBeLessThan(ids.indexOf(a));
+    expect(ids.indexOf(group.id)).toBeLessThan(ids.indexOf(b));
+    expect(store().nodes.filter((n) => n.selected).map((n) => n.id)).toEqual([group.id]);
+  });
+
+  it('refuses a selection of fewer than two nodes', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().groupSelected();
+    expect(store().nodes.some((n) => n.type === 'group')).toBe(false);
+    // And it cost nothing: undo goes back past the shape, not past a no-op.
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('leaves a floating arrow\'s invisible endpoints out of the count', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    // What `onPaneClick` draws for a floating arrow: 1x1, transparent both ways.
+    useDiagramStore.setState((s) => ({
+      nodes: [
+        ...s.nodes,
+        {
+          id: 'anchor', type: 'shape' as const, position: { x: 300, y: 0 }, width: 1, height: 1,
+          selected: true,
+          data: { label: '', shape: 'rectangle' as const, fill: 'transparent', stroke: 'transparent' },
+        },
+      ],
+    }));
+    select(a, 'anchor');
+    store().groupSelected();
+    expect(store().nodes.some((n) => n.type === 'group')).toBe(false);
+  });
+
+  it('groups a group again, nesting it', () => {
+    twoSelected();
+    store().groupSelected();
+    const inner = groupOf().id;
+
+    const c = store().addShape('rectangle', { x: 900, y: 900 });
+    select(inner, c);
+    store().groupSelected();
+
+    const outer = store().nodes.find((n) => n.type === 'group' && n.id !== inner)!;
+    expect(nodeOf(inner).parentId).toBe(outer.id);
+    expect(nodeOf(c).parentId).toBe(outer.id);
+    // Grandchildren still belong to the inner group, and follow both parents.
+    const ids = store().nodes.map((n) => n.id);
+    expect(ids.indexOf(outer.id)).toBeLessThan(ids.indexOf(inner));
+  });
+
+  it('keeps the group inside the container its members already shared', () => {
+    const frame = store().addFrame({ x: 0, y: 0 });
+    const a = store().addShape('rectangle', { x: 50, y: 50 });
+    const b = store().addShape('rectangle', { x: 100, y: 120 });
+    select(a, b);
+    store().reparentByPosition([a, b]);
+    select(a, b);
+    store().groupSelected();
+
+    expect(groupOf().parentId).toBe(frame);
+  });
+
+  it('is one history entry, and undo puts the members back where they were', () => {
+    const { a, b } = twoSelected();
+    store().groupSelected();
+    store().undo();
+
+    expect(store().nodes.some((n) => n.type === 'group')).toBe(false);
+    expect(nodeOf(a).position).toEqual({ x: 100, y: 100 });
+    expect(nodeOf(a).parentId).toBeUndefined();
+    expect(nodeOf(b).position).toEqual({ x: 400, y: 300 });
+
+    store().redo();
+    expect(nodeOf(a).parentId).toBe(groupOf().id);
+  });
+});
+
+describe('ungroupSelected', () => {
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  function grouped() {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 400, y: 300 });
+    select(a, b);
+    store().groupSelected();
+    return { a, b, group: store().nodes.find((n) => n.type === 'group')!.id };
+  }
+
+  it('restores absolute positions and removes the group', () => {
+    const { a, b, group } = grouped();
+    store().ungroupSelected();
+
+    expect(store().nodes.find((n) => n.id === group)).toBeUndefined();
+    expect(nodeOf(a)).toMatchObject({ position: { x: 100, y: 100 }, selected: true });
+    expect(nodeOf(a).parentId).toBeUndefined();
+    expect(nodeOf(b).position).toEqual({ x: 400, y: 300 });
+  });
+
+  it('hands the children of a nested group back to the outer one', () => {
+    const { a, group: inner } = grouped();
+    const c = store().addShape('rectangle', { x: 900, y: 900 });
+    select(inner, c);
+    store().groupSelected();
+    const outer = store().nodes.find((n) => n.type === 'group' && n.id !== inner)!;
+
+    select(inner);
+    store().ungroupSelected();
+
+    expect(nodeOf(a).parentId).toBe(outer.id);
+    // Still where it was on the board: its offset within the inner group plus
+    // the inner group's offset within the outer one.
+    const ids = store().nodes.map((n) => n.id);
+    expect(ids.indexOf(outer.id)).toBeLessThan(ids.indexOf(a));
+  });
+
+  it('does nothing, and costs no history entry, with no group selected', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    const before = store().canUndo;
+    store().ungroupSelected();
+    expect(store().canUndo).toBe(before);
+  });
+
+  it('is one history entry that undo and redo both reverse whole', () => {
+    const { a, group } = grouped();
+    store().ungroupSelected();
+    store().undo();
+
+    expect(nodeOf(a).parentId).toBe(group);
+    expect(nodeOf(a).position).toEqual({ x: 16, y: 16 });
+
+    store().redo();
+    expect(nodeOf(a).parentId).toBeUndefined();
+    expect(nodeOf(a).position).toEqual({ x: 100, y: 100 });
+  });
+});
+
+describe('containers and the rest of the store', () => {
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id);
+
+  function grouped() {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 400, y: 300 });
+    select(a, b);
+    store().groupSelected();
+    return { a, b, group: store().nodes.find((n) => n.type === 'group')!.id };
+  }
+
+  it('deleting a group deletes what is inside it', () => {
+    const { a, b, group } = grouped();
+    const outside = store().addShape('rectangle', { x: 2000, y: 0 });
+    select(group);
+    store().deleteSelection();
+
+    expect(store().nodes.map((n) => n.id)).toEqual([outside]);
+    expect(nodeOf(a)).toBeUndefined();
+    expect(nodeOf(b)).toBeUndefined();
+  });
+
+  it('deleting a group takes the connectors between its members with it', () => {
+    const { a, b, group } = grouped();
+    store().onConnect({ source: a, target: b, sourceHandle: null, targetHandle: null });
+    expect(store().edges).toHaveLength(1);
+
+    select(group);
+    store().deleteSelection();
+    expect(store().edges).toHaveLength(0);
+  });
+
+  it('duplicating a group copies its children and re-points them at the copy', () => {
+    const { group } = grouped();
+    select(group);
+    store().duplicateSelection();
+
+    const groups = store().nodes.filter((n) => n.type === 'group');
+    expect(groups).toHaveLength(2);
+    const copy = groups.find((g) => g.id !== group)!;
+    const copiedChildren = store().nodes.filter((n) => n.parentId === copy.id);
+    expect(copiedChildren).toHaveLength(2);
+    // The children moved with their parent, so their own offsets are unchanged.
+    expect(copiedChildren.map((n) => n.position)).toEqual([{ x: 16, y: 16 }, { x: 316, y: 216 }]);
+    // And the copy is offset from the original, once.
+    expect(copy.position).toEqual({ x: 114, y: 114 });
+  });
+
+  it('duplicating one child of a group leaves the copy in the same group', () => {
+    const { a, group } = grouped();
+    select(a);
+    store().duplicateSelection();
+
+    const copies = store().nodes.filter((n) => n.parentId === group);
+    expect(copies).toHaveLength(3);
+    expect(copies.some((n) => n.position.x === 46 && n.position.y === 46)).toBe(true);
+  });
+
+  it('serializes and reloads the parenting, parents still ahead of children', () => {
+    const { a, group } = grouped();
+    const data = serializeDiagram(store().nodes, store().edges);
+
+    const stored = data.nodes.find((n) => n.id === a)!;
+    expect(stored.parentId).toBe(group);
+    expect(data.nodes.findIndex((n) => n.id === group)).toBeLessThan(data.nodes.findIndex((n) => n.id === a));
+
+    store().loadDiagram('test', 'Test', false, data);
+    expect(nodeOf(a)!.parentId).toBe(group);
+  });
+
+  it('drops a stored parentId that points at a node which is no longer there', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [
+        { id: 'orphan', type: 'shape', position: { x: 5, y: 5 }, parentId: 'gone', data: { label: '', shape: 'rectangle', fill: '#fff', stroke: '#000' } },
+      ],
+      edges: [],
+    });
+    expect(nodeOf('orphan')!.parentId).toBeUndefined();
+  });
+
+  it('bringToFront on a container keeps it ahead of its own children', () => {
+    const { a, b, group } = grouped();
+    store().addShape('rectangle', { x: 2000, y: 0 });
+    select(group);
+    store().bringToFront();
+
+    const ids = store().nodes.map((n) => n.id);
+    expect(ids.indexOf(group)).toBeLessThan(ids.indexOf(a));
+    expect(ids.indexOf(group)).toBeLessThan(ids.indexOf(b));
+    // And it really did move: the group's subtree is the tail of the array.
+    expect(ids.slice(-3)).toEqual([group, a, b]);
+  });
+
+  it('sendToBack on a container takes its children with it', () => {
+    const { a, b, group } = grouped();
+    const outside = store().addShape('rectangle', { x: 2000, y: 0 });
+    select(group);
+    store().sendToBack();
+    expect(store().nodes.map((n) => n.id)).toEqual([group, a, b, outside]);
+  });
+});

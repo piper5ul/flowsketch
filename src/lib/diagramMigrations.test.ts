@@ -31,6 +31,34 @@ describe('migrateDiagramData', () => {
     expect(migrateDiagramData({ ...v0, version: 0 })).toEqual(migrateDiagramData(v0));
   });
 
+  it('leaves a container node its own type rather than calling it a shape', () => {
+    // The v0 step fills in a missing `type`; it must not overwrite one that is
+    // there, or every group and frame in an unversioned row would come back as
+    // a rectangle-shaped node with no renderer.
+    const migrated = migrateDiagramData({
+      nodes: [
+        { id: 'g', type: 'group', position: { x: 0, y: 0 } },
+        { id: 'f', type: 'frame', position: { x: 0, y: 0 }, data: { label: 'Frame' } },
+      ],
+      edges: [],
+    });
+    expect(migrated.nodes.map((n) => n.type)).toEqual(['group', 'frame']);
+  });
+
+  it('carries parentId and extent through every step', () => {
+    for (const version of [undefined, 1, 2, CURRENT_DIAGRAM_VERSION]) {
+      const migrated = migrateDiagramData({
+        ...(version === undefined ? {} : { version }),
+        nodes: [
+          { id: 'g', type: 'group', position: { x: 0, y: 0 } },
+          { id: 'c', type: 'shape', position: { x: 5, y: 5 }, parentId: 'g', extent: 'parent', data: {} },
+        ],
+        edges: [],
+      });
+      expect(migrated.nodes[1]).toMatchObject({ parentId: 'g', extent: 'parent' });
+    }
+  });
+
   it('keeps unknown keys so a downgrade does not lose data', () => {
     const migrated = migrateDiagramData({ ...v0, viewport: { x: 1, y: 2, zoom: 3 } }) as unknown as Record<string, unknown>;
     expect(migrated.viewport).toEqual({ x: 1, y: 2, zoom: 3 });
