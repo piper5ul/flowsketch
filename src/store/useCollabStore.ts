@@ -40,6 +40,25 @@ interface CollabState {
    */
   selectionOwners: ReadonlyMap<string, Peer>;
   status: PresenceStatus;
+  /**
+   * True once the open diagram *is* the shared document — the moment the
+   * autosave loop, the conflict guard and the retry backoff stop being what
+   * keeps it, and the connection becomes what the user is shown instead.
+   *
+   * False for a diagram whose socket never opened, which still saves itself
+   * with a debounced `PUT` exactly as it always did.
+   */
+  bound: boolean;
+  /**
+   * True when everything written in this browser has reached the server.
+   *
+   * Two things have to be true for that: the provider has nothing left to send,
+   * and the binding is not still holding the last frame of a gesture. It is not
+   * a save status — a CRDT has no such thing, and the indicator says "Live"
+   * either way — but it is what "your edit is out of this window" means, and
+   * the end-to-end tests wait on it where they used to wait on "Saved".
+   */
+  synced: boolean;
   /** The diagram this connection is for, or `null` when there is none. */
   diagramId: string | null;
   /**
@@ -68,6 +87,9 @@ let connection: PresenceConnection | null = null;
 let binding: DocBinding | null = null;
 /** Unsubscribes the selection mirror below. */
 let unsubscribeSelection: (() => void) | null = null;
+/** The two halves of "is anything still in this browser?" — see `synced`. */
+let providerPending = true;
+let gesturePending = false;
 
 /**
  * The transaction origin every edit this browser makes carries.
@@ -97,18 +119,36 @@ function teardown() {
   setDocumentHistory(null);
   connection?.destroy();
   connection = null;
+  providerPending = true;
+  gesturePending = false;
 }
 
 export const useCollabStore = create<CollabState>((set, get) => ({
   peers: [],
   selectionOwners: new Map(),
   status: 'disconnected',
+  bound: false,
+  synced: false,
   diagramId: null,
 
   connect: (diagramId, user, origin, options) => {
     if (get().diagramId === diagramId && connection) return;
     teardown();
-    set({ diagramId, peers: [], selectionOwners: new Map(), status: 'connecting' });
+    set({
+      diagramId,
+      peers: [],
+      selectionOwners: new Map(),
+      status: 'connecting',
+      bound: false,
+      synced: false,
+    });
+
+    // Guarded on the diagram id like every other callback below: one of these
+    // can land from a connection being torn down after the next has opened.
+    const publishSynced = () => {
+      if (get().diagramId !== diagramId) return;
+      set({ synced: !providerPending && !gesturePending });
+    };
 
     // The board as the page loaded it, kept until the document arrives. The
     // canvas is interactive the whole time the socket is opening, and the
@@ -131,7 +171,12 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         binding = bindDocToStore(connection.document, useDiagramStore, LOCAL_ORIGIN, {
           readOnly: options?.readOnly ?? false,
           baseline,
+          onPendingWrite: (pending) => {
+            gesturePending = pending;
+            publishSynced();
+          },
         });
+        set({ bound: true });
         // From here the document is the save, the JSON `PUT` stops carrying
         // diagram data at all, and ⌘Z is the document's per-user undo rather
         // than the snapshot stack. A viewer gets neither: they write nothing,
@@ -149,6 +194,10 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         set({ peers, selectionOwners: selectionOwners(peers) });
       },
       onStatus: (status) => { if (get().diagramId === diagramId) set({ status }); },
+      onPending: (pending) => {
+        providerPending = pending;
+        publishSynced();
+      },
     });
 
     // Selection is mirrored rather than pushed by the actions that change it:
@@ -168,7 +217,14 @@ export const useCollabStore = create<CollabState>((set, get) => ({
 
   disconnect: () => {
     teardown();
-    set({ diagramId: null, peers: [], selectionOwners: new Map(), status: 'disconnected' });
+    set({
+      diagramId: null,
+      peers: [],
+      selectionOwners: new Map(),
+      status: 'disconnected',
+      bound: false,
+      synced: false,
+    });
   },
 
   reportCursor: (cursor) => connection?.setCursor(cursor),

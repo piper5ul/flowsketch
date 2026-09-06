@@ -89,6 +89,17 @@ export interface BindDocOptions {
    * the document; an element that matches it is the document's business.
    */
   baseline?: DiagramData;
+  /**
+   * Called when the answer to "is anything still only in this browser?"
+   * changes: `true` while a gesture is being held for the trailing flush,
+   * `false` once it has been written.
+   *
+   * "Everything I did is on the server" is not the provider's answer alone: for
+   * the 150 ms a gesture is held here it has not been offered to the provider
+   * at all, and an indicator that said otherwise would be claiming a drag was
+   * safe before it had left this module.
+   */
+  onPendingWrite?: (pending: boolean) => void;
 }
 
 export interface DocBinding {
@@ -306,6 +317,14 @@ export function bindDocToStore(
 
   const contentOf = (data: DiagramData) => JSON.stringify([data.nodes, data.edges]);
 
+  /** Whether a gesture is being held here, reported only when it changes. */
+  let pendingWrite = false;
+  const setPendingWrite = (next: boolean) => {
+    if (pendingWrite === next) return;
+    pendingWrite = next;
+    options.onPendingWrite?.(next);
+  };
+
   const pull = () => {
     const nodes = nodesOf(doc);
     const edges = edgesOf(doc);
@@ -331,6 +350,8 @@ export function bindDocToStore(
     const data = diagramOf(state);
     pushDiagramToDoc(doc, data, origin);
     rendered = contentOf(data);
+    // Offered to the provider: from here whether it has arrived is its answer.
+    setPendingWrite(false);
   };
 
   const cancelTransient = () => {
@@ -540,7 +561,9 @@ export function bindDocToStore(
         gestureOpen = true;
       }
       // Mid-gesture. Hold it: the commit that ends the gesture will push, and
-      // the timer catches the gestures that have no commit of their own.
+      // the timer catches the gestures that have no commit of their own. It is
+      // in this browser and nowhere else until one of those happens.
+      setPendingWrite(true);
       transientTimer = setTimeout(() => {
         transientTimer = null;
         if (!destroyed) push(store.getState());

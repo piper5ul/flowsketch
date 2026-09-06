@@ -179,6 +179,26 @@ describe('store -> doc', () => {
     expect(docToDiagramData(doc).nodes[0].data).toMatchObject({ opacity: 0.4 });
   });
 
+  it('reports a gesture as still in this browser until the trailing flush writes it', () => {
+    vi.useFakeTimers();
+    const doc = new Y.Doc();
+    const pending: boolean[] = [];
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, {
+      onPendingWrite: (value) => pending.push(value),
+    });
+
+    // A discrete edit goes at once: nothing was ever held back.
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    expect(pending).toEqual([]);
+
+    store().beginInteraction();
+    store().moveNodesTransient({ [id]: { x: 40, y: 0 } });
+    expect(pending).toEqual([true]);
+
+    vi.advanceTimersByTime(TRANSIENT_COMMIT_MS);
+    expect(pending).toEqual([true, false]);
+  });
+
   it('writes a gesture still in hand when the diagram is closed', () => {
     vi.useFakeTimers();
     const doc = new Y.Doc();
