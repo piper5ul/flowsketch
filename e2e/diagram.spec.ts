@@ -829,6 +829,8 @@ test('the format bar underlines a label being edited', async ({ page }) => {
 });
 
 test('a second tab editing the same diagram is caught before its work is overwritten', async ({ page, context }) => {
+  // Two pages, three debounced saves and a refused fourth: give it more than the default budget.
+  test.setTimeout(90_000);
   await signUp(page);
   const pane = await newDiagram(page);
 
