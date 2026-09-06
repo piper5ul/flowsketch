@@ -11,11 +11,14 @@ import {
   Copy,
   Pencil,
   Search,
+  Upload,
 } from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
 import { DIAGRAM_SORTS, filterDiagrams, loadDiagrams, sortDiagrams, type DiagramSort } from '../lib/diagramList';
-import type { DiagramMeta } from '../../shared/types';
+import { parseDiagramExport } from '../lib/diagramFile';
+import { migrateDiagramData } from '../lib/diagramMigrations';
+import type { DiagramData, DiagramMeta } from '../../shared/types';
 import { Tooltip, TooltipProvider } from '../components/Tooltip';
 import { Toasts } from '../components/Toasts';
 import { toastError } from '../store/useToastStore';
@@ -40,6 +43,7 @@ export function DashboardPage() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<DiagramSort>('updated');
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const visible = useMemo(
     () => sortDiagrams(filterDiagrams(diagrams, query), sort),
@@ -71,6 +75,28 @@ export function DashboardPage() {
   const createDiagram = useCallback(async () => {
     const diagram = await api.createDiagram();
     navigate(`/d/${diagram.id}`);
+  }, [navigate]);
+
+  const importDiagram = useCallback(async (file: File) => {
+    let title: string;
+    let data: DiagramData;
+    try {
+      const parsed = parseDiagramExport(await file.text());
+      title = parsed.title;
+      // The same door every stored diagram comes through: an older file is
+      // upgraded, one from a newer build is refused with its own message.
+      data = migrateDiagramData(parsed.data);
+    } catch (err) {
+      toastError(err instanceof Error ? err.message : 'Could not read that file.');
+      return;
+    }
+
+    try {
+      const created = await api.createDiagram(title, data);
+      navigate(`/d/${created.id}`);
+    } catch {
+      toastError('Could not import the diagram. Please try again.');
+    }
   }, [navigate]);
 
   const toggleStar = useCallback(async (id: string, e: React.MouseEvent) => {
@@ -150,13 +176,34 @@ export function DashboardPage() {
         <main className="mx-auto max-w-6xl px-6 py-8">
           <div className="mb-6 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-ink-900">My Diagrams</h2>
-            <button
-              onClick={createDiagram}
-              className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
-            >
-              <Plus size={16} />
-              New Diagram
-            </button>
+            <div className="flex items-center gap-2">
+              <input
+                ref={fileInput}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  // Cleared so picking the same file twice fires `change` again.
+                  e.target.value = '';
+                  if (file) void importDiagram(file);
+                }}
+              />
+              <button
+                onClick={() => fileInput.current?.click()}
+                className="flex items-center gap-2 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-ink-700 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-black/[0.04] transition hover:text-ink-900"
+              >
+                <Upload size={16} />
+                Import
+              </button>
+              <button
+                onClick={createDiagram}
+                className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
+              >
+                <Plus size={16} />
+                New Diagram
+              </button>
+            </div>
           </div>
 
           {listState === 'ready' && diagrams.length > 0 && (

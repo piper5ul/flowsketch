@@ -1,4 +1,4 @@
-import type { DiagramMeta } from '../../shared/types';
+import type { DiagramData, DiagramMeta } from '../../shared/types';
 
 const BASE = import.meta.env.VITE_API_URL || '';
 
@@ -25,10 +25,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   listDiagrams: () => request<DiagramMeta[]>('/api/diagrams'),
 
-  createDiagram: (title?: string) =>
+  /** `data` seeds an imported diagram; omitted, the server creates an empty one. */
+  createDiagram: (title?: string, data?: DiagramData) =>
     request<{ id: string }>('/api/diagrams', {
       method: 'POST',
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, data }),
     }),
 
   // `data` is deliberately `unknown`: it is a free-form JSON column that may

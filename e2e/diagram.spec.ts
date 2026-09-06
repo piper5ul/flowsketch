@@ -327,6 +327,48 @@ test('a diagram can be renamed, duplicated and found again by searching', async 
   await expect(page.getByText('Roadmap', { exact: true })).toHaveCount(0);
 });
 
+test('a diagram exported as JSON can be imported back from the dashboard', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 500, y: 350 } });
+  const node = page.locator('.react-flow__node');
+  await expect(node).toHaveCount(1);
+  await node.dblclick();
+  await page.keyboard.type('Exported shape');
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    (async () => {
+      await page.getByRole('button', { name: 'Export' }).click();
+      await page.getByRole('button', { name: 'Export as JSON' }).click();
+    })(),
+  ]);
+  expect(download.suggestedFilename()).toBe('Untitled.json');
+  const file = await download.path();
+
+  await page.getByRole('button', { name: 'Back to dashboard' }).click();
+  await expect(page.getByRole('heading', { name: 'My Diagrams' })).toBeVisible();
+
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Import' }).click(),
+  ]);
+  await chooser.setFiles(file);
+
+  // The import opens the new diagram, holding the shape the file described.
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  await expect(page.locator('.react-flow__node', { hasText: 'Exported shape' })).toBeVisible();
+
+  // And it is a second diagram, not the one that was exported.
+  await page.getByRole('button', { name: 'Back to dashboard' }).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  await expect(page.getByText('Untitled', { exact: true })).toHaveCount(2);
+});
+
 test('a pasted image is uploaded and referenced by URL, not embedded as base64', async ({ page }) => {
   await signUp(page);
   await newDiagram(page);

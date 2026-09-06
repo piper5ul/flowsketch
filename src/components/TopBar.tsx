@@ -1,10 +1,11 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Star, Check, Loader2, Download, Image, FileText } from 'lucide-react';
+import { ArrowLeft, Star, Check, Loader2, Download, Image, FileText, FileJson } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
-import { useDiagramStore, type SaveStatus } from '../store/useDiagramStore';
+import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
 import { renderDiagramPng } from '../lib/exportImage';
+import { buildDiagramExport, diagramFileName } from '../lib/diagramFile';
 import { api } from '../lib/api';
 
 export function TopBar() {
@@ -59,6 +60,14 @@ export function TopBar() {
   );
 }
 
+/** Hands the browser a URL to save under `name`. */
+function download(url: string, name: string) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+}
+
 function ExportMenu() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -78,10 +87,19 @@ function ExportMenu() {
     // Null for an empty diagram — nothing worth downloading.
     const dataUrl = await renderDiagramPng();
     if (!dataUrl) return;
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = `${title || 'diagram'}.png`;
-    a.click();
+    download(dataUrl, diagramFileName(title, 'png'));
+  }, [title]);
+
+  const exportJson = useCallback(() => {
+    setOpen(false);
+    const { nodes, edges } = useDiagramStore.getState();
+    const file = buildDiagramExport(title, serializeDiagram(nodes, edges));
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }),
+    );
+    download(url, diagramFileName(title, 'json'));
+    // Not revoked in the same tick: the click only queues the download.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   }, [title]);
 
   const exportSvg = useCallback(async () => {
@@ -114,6 +132,12 @@ function ExportMenu() {
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10"
           >
             <Image size={15} /> Export as PNG
+          </button>
+          <button
+            onClick={exportJson}
+            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10"
+          >
+            <FileJson size={15} /> Export as JSON
           </button>
           <button
             onClick={exportSvg}
