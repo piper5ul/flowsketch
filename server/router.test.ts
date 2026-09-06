@@ -106,6 +106,13 @@ describe('POST /api/diagrams', () => {
     expect(res.body.title).toBe('Plan');
     expect(res.body.data.nodes).toHaveLength(1);
   });
+
+  it('rejects a title longer than 200 characters without touching the database', async () => {
+    const res = await request(app).post('/api/diagrams').send({ title: 'x'.repeat(201) }).expect(400);
+    expect(res.body).toMatchObject({ error: 'Invalid body' });
+    expect(res.body.issues[0]).toMatchObject({ path: 'title' });
+    expect(prismaMock.diagram.create).not.toHaveBeenCalled();
+  });
 });
 
 describe('GET /api/diagrams/:id', () => {
@@ -128,6 +135,19 @@ describe('PUT /api/diagrams/:id', () => {
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed' });
     await request(app).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { title: 'Renamed' } });
+  });
+
+  it('rejects a non-boolean starred before looking the diagram up', async () => {
+    const res = await request(app).put('/api/diagrams/d1').send({ starred: 'yes' }).expect(400);
+    expect(res.body).toMatchObject({ error: 'Invalid body' });
+    expect(res.body.issues[0]).toMatchObject({ path: 'starred' });
+    expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body with nothing to update', async () => {
+    await request(app).put('/api/diagrams/d1').send({}).expect(400);
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
   it('refuses to update a diagram the caller does not own', async () => {
