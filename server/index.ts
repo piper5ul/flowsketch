@@ -7,9 +7,15 @@ import { auth } from './auth.js';
 import { apiRouter } from './router.js';
 import { imagesRouter } from './images.js';
 import { healthRouter } from './health.js';
+import { createApiLimiter } from './rateLimit.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Production sits behind a Cloudflare tunnel, so the socket address is always
+// the tunnel's. Trust exactly one proxy hop, which makes `req.ip` the
+// left-most X-Forwarded-For entry — the address the rate limiters count by.
+app.set('trust proxy', 1);
 
 app.use(cors({
   origin: [
@@ -18,6 +24,8 @@ app.use(cors({
   ],
   credentials: true,
 }));
+
+app.use('/api', createApiLimiter());
 
 // `/api/health` (liveness, DB-free) and `/api/health?deep=1` (readiness).
 app.use('/api', healthRouter);
