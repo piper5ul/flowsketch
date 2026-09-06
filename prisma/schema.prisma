@@ -23,6 +23,9 @@ model User {
   accounts Account[]
   diagrams Diagram[]
   images   Image[]
+  /// This user's own folders. Personal filing, not shared: a folder never
+  /// travels with a diagram to the people it is shared with.
+  folders  Folder[]
   /// Diagrams owned by *someone else* that this user has been invited to.
   memberships DiagramMember[]
   /// Version snapshots this user's edits produced. Kept (with a null author)
@@ -79,6 +82,32 @@ model Verification {
 // Application tables
 // ---------------------------------------------------------------------------
 
+/// One of the owner's folders — a single flat level of personal filing.
+///
+/// A folder belongs to a *person*, not to a diagram's access list: `userId` is
+/// its owner and the only account that can see it, and `Diagram.folderId` is
+/// therefore only ever meaningful to that diagram's owner. Somebody invited to
+/// a diagram files it nowhere; their dashboard shows it under "Shared with me"
+/// however the owner has filed it. That is why there is no `(diagramId, userId)`
+/// join table here: per-viewer filing of somebody else's board is a different
+/// feature, and this one is deliberately the smaller half.
+///
+/// Names are not unique. Two folders called "Clients" is a mess the user made
+/// and can undo by renaming one; a database that refuses the second one is a
+/// dashboard that has to explain itself mid-typing.
+model Folder {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  diagrams Diagram[]
+
+  /// The listing is always "my folders".
+  @@index([userId])
+}
+
 model Diagram {
   id        String   @id @default(cuid())
   userId    String
@@ -86,6 +115,11 @@ model Diagram {
   data      Json
   thumbnail String?
   starred   Boolean  @default(false)
+  /// The owner's folder this is filed in, or `null` for the root of their
+  /// dashboard. `SetNull` on delete, so removing a folder unfiles its diagrams
+  /// rather than taking them with it — a folder is a label, and deleting a
+  /// label must never delete the work.
+  folderId  String?
   /// Public read-only link token. `null` means the diagram is not shared;
   /// a value makes it readable at `/s/<token>` with no session at all, so it
   /// is unguessable (24 bytes of `crypto.randomBytes`) rather than derived
@@ -95,12 +129,16 @@ model Diagram {
   updatedAt DateTime @updatedAt
 
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder   Folder?          @relation(fields: [folderId], references: [id], onDelete: SetNull)
   members  DiagramMember[]
   versions DiagramVersion[]
   threads  CommentThread[]
   images   DiagramImage[]
 
   @@index([userId, updatedAt(sort: Desc)])
+  /// Counting each folder's diagrams, and (once there are enough of them)
+  /// listing one folder's.
+  @@index([folderId])
 }
 
 /// Which uploaded images a diagram's *current* JSON draws — the index behind

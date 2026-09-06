@@ -11,6 +11,7 @@ import { z } from 'zod';
 import type { NextFunction, Request, Response } from 'express';
 import {
   MAX_COMMENT_CHARS,
+  MAX_FOLDER_NAME_CHARS,
   MAX_THUMBNAIL_CHARS,
   THUMBNAIL_DATA_URL_PREFIX,
   type CommentThreadFilter,
@@ -86,7 +87,17 @@ export const createDiagramBody = z.strictObject({
 });
 
 /** The fields a `PUT` can actually write. `ifUnmodifiedSince` is a guard, not one of them. */
-const UPDATABLE_FIELDS = ['title', 'data', 'starred', 'thumbnail'] as const;
+const UPDATABLE_FIELDS = ['title', 'data', 'starred', 'thumbnail', 'folderId'] as const;
+
+/**
+ * A folder id, or `null` for "no folder". Nullable rather than merely optional
+ * because `null` is a *value* here — it is how the client says "move this back
+ * to the root" — and omitting the key means something else entirely: leave the
+ * filing alone. The id itself is only length-checked; whether it names one of
+ * the caller's own folders is an authorization question, and the route answers
+ * it against the database rather than guessing from the shape.
+ */
+const folderId = z.string().trim().min(1).max(MAX_ID_CHARS).nullable();
 
 /** `PUT /api/diagrams/:id`. A patch: whatever is present is what gets written. */
 export const updateDiagramBody = z
@@ -95,6 +106,7 @@ export const updateDiagramBody = z
     data: diagramData.optional(),
     starred: z.boolean().optional(),
     thumbnail: thumbnail.optional(),
+    folderId: folderId.optional(),
     /**
      * Optimistic concurrency guard: the `updatedAt` the client last saw. The
      * write is refused with a 409 when the row has moved on since — that is
@@ -103,8 +115,25 @@ export const updateDiagramBody = z
     ifUnmodifiedSince: z.iso.datetime().optional(),
   })
   .refine((body) => UPDATABLE_FIELDS.some((field) => body[field] !== undefined), {
-    error: 'Expected at least one of title, data, starred or thumbnail',
+    error: 'Expected at least one of title, data, starred, thumbnail or folderId',
   });
+
+// ---------------------------------------------------------------------------
+// Folders
+// ---------------------------------------------------------------------------
+
+/**
+ * `POST /api/folders` and `PATCH /api/folders/:id`.
+ *
+ * Trimmed and non-empty, for the same reason a comment is: a folder named
+ * with spaces is a row in the sidebar nobody can point at. The same schema
+ * serves both routes because a rename is a create of the only field there is.
+ */
+export const folderNameBody = z.strictObject({
+  name: z.string().trim().min(1).max(MAX_FOLDER_NAME_CHARS),
+});
+
+export type FolderNameBody = z.infer<typeof folderNameBody>;
 
 /** Ceiling on an invited address. Comfortably past RFC 5321's 254. */
 export const MAX_EMAIL_CHARS = 254;

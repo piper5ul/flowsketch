@@ -5,6 +5,7 @@ import { publicDiagram, requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { syncDiagramImages } from './diagramImages.js';
+import { foldersRouter, ownsFolder } from './folders.js';
 import { sharingRouter } from './sharing.js';
 import { commentsRouter } from './comments.js';
 import { recordVersionIfDue, versionsRouter } from './versions.js';
@@ -57,6 +58,7 @@ interface ListedDiagram {
   createdAt: Date;
   updatedAt: Date;
   thumbnail: string | null;
+  folderId: string | null;
   userId: string;
   user: { name: string } | null;
   members: { role: string }[];
@@ -78,6 +80,11 @@ function toMeta(row: ListedDiagram, userId: string): DiagramMeta {
     thumbnail: row.thumbnail,
     role,
     ...(role !== 'owner' && { ownerName: row.user?.name ?? '' }),
+    // Folders are personal filing, and the folder on this row belongs to the
+    // *owner*. Telling a member which of somebody else's drawers it sits in
+    // would leak a name they can neither see in the sidebar nor change, so a
+    // shared diagram is unfiled as far as its recipient is concerned.
+    folderId: role === 'owner' ? row.folderId : null,
   };
 }
 
@@ -93,6 +100,7 @@ apiRouter.get('/diagrams', async (req, res) => {
       createdAt: true,
       updatedAt: true,
       thumbnail: true,
+      folderId: true,
       // Not returned as such — `userId` and the caller's own member row are
       // what `role` is derived from, and `user.name` names someone else's.
       userId: true,
@@ -149,7 +157,7 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
   '/diagrams/:id',
   validateBody(updateDiagramBody),
   async (req, res) => {
-    const { title, data, starred, thumbnail, ifUnmodifiedSince } = req.body;
+    const { title, data, starred, thumbnail, folderId, ifUnmodifiedSince } = req.body;
     // The previous JSON and title are only needed when `data` changes — to spot
     // images the edit drops, and to snapshot the state it replaces — so a
     // metadata-only PUT (rename, star, thumbnail) does not read them back.
@@ -169,6 +177,22 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
     // editor's PUT may not carry it even though their edits are welcome.
     if (starred !== undefined && access.role !== 'owner') {
       res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+
+    // Filing is the owner's, for the same reason the star is: `folderId` is one
+    // column on the row, and the folder it points at is one the owner alone can
+    // see. An editor moving it would rearrange somebody else's dashboard.
+    if (folderId !== undefined && access.role !== 'owner') {
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+
+    // …and it must be one of *their* folders. A `404` rather than a `403`,
+    // matching how a folder route answers for an id its caller does not own:
+    // "there is no such folder" is all anyone is told about someone else's.
+    if (typeof folderId === 'string' && !(await ownsFolder(authedUser(req).id, folderId))) {
+      res.status(404).json({ error: 'Folder not found' });
       return;
     }
 
@@ -195,6 +219,7 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
         ...(data !== undefined && { data }),
         ...(starred !== undefined && { starred }),
         ...(thumbnail !== undefined && { thumbnail }),
+        ...(folderId !== undefined && { folderId }),
       },
     });
 
@@ -264,6 +289,7 @@ apiRouter.post('/diagrams/:id/duplicate', async (req, res) => {
     title: true,
     data: true,
     thumbnail: true,
+    folderId: true,
   });
   if (!access) return;
   const source = access.diagram;
@@ -277,6 +303,9 @@ apiRouter.post('/diagrams/:id/duplicate', async (req, res) => {
       thumbnail: source.thumbnail,
       // A copy is not what the user starred.
       starred: false,
+      // …but it does land in the same drawer. The route is owner-only, so the
+      // folder is already the caller's own and needs no second check.
+      folderId: source.folderId,
     },
   });
   // The copy draws the same images the original did, so it gets the same index
@@ -302,6 +331,11 @@ apiRouter.patch('/diagrams/:id/star', async (req, res) => {
   });
   res.json({ starred: updated.starred });
 });
+
+// Personal folders. Behind the same `requireAuth`, and with no unauthenticated
+// half at all: a folder is one person's filing, so there is nothing about it a
+// share token could reasonably grant.
+apiRouter.use(foldersRouter);
 
 // Share links and members. Mounted here so they sit behind the same
 // `requireAuth`; the token route that needs no session is in `sharing.ts` too,

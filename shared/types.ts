@@ -177,6 +177,24 @@ export type CommentThreadFilter = 'all' | 'open' | 'resolved';
 /** Ceiling on a comment body, in characters. Shared so the client can count too. */
 export const MAX_COMMENT_CHARS = 4000;
 
+/**
+ * One of the caller's own folders, as `GET /api/folders` lists them.
+ *
+ * `diagramCount` is what the sidebar shows next to the name, and it counts
+ * *the owner's* diagrams: a folder is personal filing, so nothing anyone else
+ * owns is ever in one.
+ */
+export interface FolderInfo {
+  id: string;
+  name: string;
+  /** ISO 8601. The listing is oldest first, which is this ascending. */
+  createdAt: string;
+  diagramCount: number;
+}
+
+/** Ceiling on a folder name. A label on a drawer, not a sentence. */
+export const MAX_FOLDER_NAME_CHARS = 80;
+
 export interface DiagramMeta {
   id: string;
   title: string;
@@ -188,6 +206,14 @@ export interface DiagramMeta {
   role: DiagramRole;
   /** Who owns it, when that is somebody else. Absent on an owned diagram. */
   ownerName?: string;
+  /**
+   * The folder it is filed in, or `null` for the root of the dashboard.
+   *
+   * Only ever set on a diagram the caller *owns*: folders are personal, so a
+   * diagram somebody shared with this user reads `null` here however its owner
+   * has filed it.
+   */
+  folderId: string | null;
 }
 
 /** The path a share token is served at. The client route mirrors it. */

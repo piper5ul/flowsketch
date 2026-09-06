@@ -37,6 +37,8 @@ export interface DiagramRow {
   data: unknown;
   thumbnail: string | null;
   starred: boolean;
+  /** The *owner's* folder, or `null`. Never handed to anybody else — see `toMeta`. */
+  folderId: string | null;
   shareToken: string | null;
   createdAt: Date;
   updatedAt: Date;
