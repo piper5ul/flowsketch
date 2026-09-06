@@ -25,6 +25,9 @@ model User {
   images   Image[]
   /// Diagrams owned by *someone else* that this user has been invited to.
   memberships DiagramMember[]
+  /// Version snapshots this user's edits produced. Kept (with a null author)
+  /// when the account goes away, because they belong to someone else's diagram.
+  versions DiagramVersion[]
 }
 
 model Session {
@@ -86,10 +89,43 @@ model Diagram {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  members DiagramMember[]
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members  DiagramMember[]
+  versions DiagramVersion[]
 
   @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// A point-in-time copy of a diagram's `data` and `title`.
+///
+/// Rows are written by `server/versions.ts`: automatically by a `PUT` that
+/// changes `data` (at most one per `VERSION_INTERVAL_MS`, holding the state
+/// *before* that edit burst), and on demand by the manual-snapshot and restore
+/// routes. Only the newest `MAX_VERSIONS` per diagram are kept.
+///
+/// `data` is a full copy rather than a diff: a diagram is a bounded JSON
+/// document (5 MB at the API's body limit), and a snapshot that can be restored
+/// without replaying a chain is worth far more than the bytes it saves.
+model DiagramVersion {
+  id        String   @id @default(cuid())
+  diagramId String
+  data      Json
+  /// The title as it stood in this version, so a restore puts back the name
+  /// the diagram had as well as its contents.
+  title     String
+  createdAt DateTime @default(now())
+  /// Who caused the snapshot. Nullable: the author's account may be deleted
+  /// while the (someone else's) diagram this version belongs to lives on.
+  createdById String?
+  /// Set on a manual snapshot ("Before restore", or whatever the user typed);
+  /// `null` on an automatic one.
+  label     String?
+
+  diagram   Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([diagramId, createdAt(sort: Desc)])
+  @@index([createdById])
 }
 
 /// A user who has been invited to a diagram they do not own.

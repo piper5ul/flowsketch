@@ -119,6 +119,25 @@ export const addMemberBody = z.strictObject({
 
 export type AddMemberBody = z.infer<typeof addMemberBody>;
 
+/** Ceiling on a manual snapshot's label. A caption, not a changelog. */
+export const MAX_VERSION_LABEL_CHARS = 100;
+
+/**
+ * `POST /api/diagrams/:id/versions`.
+ *
+ * The body is optional in full: "snapshot this, unlabelled" is a `POST` with
+ * nothing in it, and Express 5 leaves `req.body` undefined when no JSON was
+ * sent — hence `nullish()` and the transform that normalises both to `{}`.
+ */
+export const createVersionBody = z
+  .strictObject({
+    label: z.string().trim().min(1).max(MAX_VERSION_LABEL_CHARS).optional(),
+  })
+  .nullish()
+  .transform((body) => body ?? {});
+
+export type CreateVersionBody = z.infer<typeof createVersionBody>;
+
 /** Appended by `POST /api/diagrams/:id/duplicate`. */
 export const COPY_SUFFIX = ' (copy)';
 
