@@ -5,6 +5,7 @@ import { requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { sharingRouter } from './sharing.js';
+import { recordVersionIfDue, versionsRouter } from './versions.js';
 import { authedUser } from './types.js';
 import type { DiagramMeta, DiagramRole } from '../shared/types.js';
 import {
@@ -128,13 +129,14 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
   validateBody(updateDiagramBody),
   async (req, res) => {
     const { title, data, starred, thumbnail, ifUnmodifiedSince } = req.body;
-    // The previous JSON is only needed to spot images the edit drops, so a
-    // metadata-only PUT (rename, star, thumbnail) does not read it back.
+    // The previous JSON and title are only needed when `data` changes — to spot
+    // images the edit drops, and to snapshot the state it replaces — so a
+    // metadata-only PUT (rename, star, thumbnail) does not read them back.
     const access = await requireDiagramRole(req, res, 'editor', {
       id: true,
       userId: true,
       updatedAt: true,
-      ...(data !== undefined && { data: true as const }),
+      ...(data !== undefined && { data: true as const, title: true as const }),
     });
     if (!access) return;
     const existing = access.diagram;
@@ -174,6 +176,26 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
         ...(thumbnail !== undefined && { thumbnail }),
       },
     });
+
+    // Version history, for edits that actually change the board — a rename,
+    // a star or a thumbnail is not a revision of anything. What is recorded is
+    // the state *before* this PUT, and only when the last snapshot has aged out
+    // of `VERSION_INTERVAL_MS`, so an afternoon of autosaves leaves one row per
+    // burst rather than one per keystroke. Best-effort, like the cleanup below:
+    // a diagram whose history is missing an entry is a far smaller problem than
+    // a save that failed.
+    if (data !== undefined) {
+      try {
+        await recordVersionIfDue({
+          diagramId: req.params.id,
+          data: existing.data,
+          title: existing.title,
+          createdById: authedUser(req).id,
+        });
+      } catch (err) {
+        console.error(`Version snapshot failed for diagram ${req.params.id}:`, err);
+      }
+    }
 
     // Only after the row is written, or the pre-edit JSON would still count as
     // a live reference to the images the edit just removed. A cleanup failure
@@ -252,3 +274,8 @@ apiRouter.patch('/diagrams/:id/star', async (req, res) => {
 // `requireAuth`; the token route that needs no session is in `sharing.ts` too,
 // but is mounted separately by `index.ts`.
 apiRouter.use(sharingRouter);
+
+// Version history, likewise behind `requireAuth`. There is no unauthenticated
+// half: a share token grants a look at the diagram as it is now, not at every
+// state it has ever been in.
+apiRouter.use(versionsRouter);

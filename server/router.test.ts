@@ -30,6 +30,12 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       upsert: vi.fn(),
       deleteMany: vi.fn(),
     },
+    diagramVersion: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(),
+      create: vi.fn(),
+      deleteMany: vi.fn(),
+    },
     user: {
       findUnique: vi.fn(),
     },
@@ -93,6 +99,10 @@ afterAll(() => {
 beforeEach(() => {
   vi.resetAllMocks();
   authState.user = testUser;
+  // A `PUT` that changes `data` also snapshots the previous state. That belongs
+  // to `versions.test.ts`; here it only has to stay out of the way, so the
+  // newest snapshot is always "just now" and the interval suppresses it.
+  prismaMock.diagramVersion.findFirst.mockResolvedValue({ createdAt: new Date() });
 });
 
 describe('auth gate', () => {

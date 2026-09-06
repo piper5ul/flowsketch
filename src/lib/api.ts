@@ -4,6 +4,8 @@ import type {
   DiagramMemberRole,
   DiagramMeta,
   DiagramRole,
+  DiagramVersion,
+  DiagramVersionMeta,
   SharedDiagram,
 } from '../../shared/types';
 
@@ -183,4 +185,39 @@ export const api = {
   /** Removes a member. Allowed to the owner, and to that member themselves. */
   removeMember: (id: string, userId: string) =>
     request(`/api/diagrams/${id}/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+
+  /**
+   * The diagram's history, newest first and without any bodies. Readable by
+   * anyone who can read the diagram, viewers included.
+   */
+  listVersions: (id: string) =>
+    request<DiagramVersionMeta[]>(`/api/diagrams/${id}/versions`),
+
+  /** One version *with* its `data`, for previewing before restoring it. */
+  getVersion: (id: string, versionId: string) =>
+    request<DiagramVersion>(`/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}`),
+
+  /**
+   * Snapshots the diagram as the server currently holds it — so flush any
+   * pending autosave first, or the snapshot is of the last save rather than of
+   * what is on screen. Editor+.
+   */
+  createVersion: (id: string, label?: string) =>
+    request<DiagramVersionMeta>(`/api/diagrams/${id}/versions`, {
+      method: 'POST',
+      body: JSON.stringify({ label }),
+    }),
+
+  /**
+   * Puts a version back, after snapshotting what it replaces. Editor+.
+   *
+   * The returned `updatedAt` is the row's new timestamp: hand it to the
+   * autosaver (`noteSaved`) or its next save will 409 against the write this
+   * restore just made.
+   */
+  restoreVersion: (id: string, versionId: string) =>
+    request<{ id: string; title: string; data: unknown; updatedAt: string }>(
+      `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
+      { method: 'POST' },
+    ),
 };

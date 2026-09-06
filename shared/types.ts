@@ -86,6 +86,34 @@ export interface SharedDiagram {
   updatedAt: string;
 }
 
+/**
+ * One entry of `GET /api/diagrams/:id/versions`: a snapshot's identity, not its
+ * contents. The listing is deliberately without `data` — a history panel shows
+ * fifty of these, and fifty diagram bodies is megabytes nobody is going to look
+ * at. `GET …/versions/:versionId` fetches the one the user picks.
+ */
+export interface DiagramVersionMeta {
+  id: string;
+  /** When the snapshot was taken, ISO 8601. */
+  createdAt: string;
+  /** The diagram's title *in this version*, which a restore puts back. */
+  title: string;
+  /** `null` on an automatic snapshot; set on a manual one and on 'Before restore'. */
+  label: string | null;
+  /** Absent when the snapshot has no author left (a deleted account). */
+  createdBy?: { name: string };
+}
+
+/** A single version with its body, as `GET …/versions/:versionId` returns it. */
+export interface DiagramVersion extends DiagramVersionMeta {
+  /**
+   * `unknown` for the same reason `getDiagram` returns it so: a snapshot may
+   * hold any diagram format this app has ever written, and only
+   * `migrateDiagramData` may say what it is.
+   */
+  data: unknown;
+}
+
 export interface DiagramMeta {
   id: string;
   title: string;

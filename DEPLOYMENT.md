@@ -69,8 +69,20 @@ npm run db:migrate:deploy      # or: npx prisma migrate deploy
 |---|---|
 | `20260906065812_init` | The whole schema as it stood before migrations existed |
 | `20260906094058_sharing` | Adds `Diagram.shareToken` (nullable, unique) and the `DiagramMember` table, with cascading foreign keys to `Diagram` and `User` |
+| `20260906114233_version_history` | Adds the `DiagramVersion` table (snapshots of a diagram's `data` and `title`), indexed by `(diagramId, createdAt DESC)`; `ON DELETE CASCADE` from `Diagram`, `ON DELETE SET NULL` from `User` |
 
-`20260906094058_sharing` is additive — a new nullable column and a new table — so it applies to a populated database without a backfill and without downtime. Existing diagrams come out unshared (`shareToken IS NULL`) and with no members, which is exactly what they were.
+Both migrations after `init` are additive — a new nullable column and new tables — so they apply to a populated database without a backfill and without downtime. Existing diagrams come out unshared (`shareToken IS NULL`), with no members, and with an empty history; their first data-changing save records the state they were already in.
+
+### Version history and storage
+
+`DiagramVersion` stores a **full copy** of a diagram's JSON per snapshot, in the same database as the diagrams themselves — there is no separate store and nothing extra to back up, but a backup of Postgres is now also the backup of every version, and the database grows with editing activity rather than only with the number of diagrams. Two settings bound it, both read from the environment at request time:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `VERSION_INTERVAL_MS` | `600000` (10 min) | Minimum age of the newest snapshot before a save records another. Lower it for finer history at the cost of more rows. |
+| `MAX_VERSIONS` | `50` | Versions kept per diagram. The surplus is deleted as new ones arrive. |
+
+So the ceiling is roughly `MAX_VERSIONS × the size of a diagram` per diagram — at the API's 5 MB body limit, a worst case of 250 MB for a single pathological board, and in practice a few MB. Anything unparseable or non-positive in either variable falls back to the default rather than being obeyed, so a typo cannot turn into "snapshot every save" or "keep nothing".
 
 ### Baselining a database created with `db push` (one-time, required)
 
@@ -133,7 +145,7 @@ Point uptime monitoring at the deep probe: the shallow one stays green while the
 
 **Rate limits.** `/api` allows 600 requests per 15 minutes per IP, `POST /api/images` a further 60 per 15 minutes, and `/api/shared/*` — the share-link routes, the only ones that need no session — 300 per 15 minutes; over budget is `429 {"error":"Too many requests"}`. Counting is per process and in memory, so it resets on restart. For that counting to be per client rather than per proxy, `server/index.ts` sets `app.set('trust proxy', 1)`: the app only ever sees the tunnel's (or Nginx's) address on the socket, so it trusts exactly one hop of `X-Forwarded-For`. Raise that number only if you add another proxy in front — trusting more hops than you actually run lets a client forge its own IP and dodge the limits.
 
-Backups: the state is the PostgreSQL database (diagrams are JSON in the `Diagram` table) — `pg_dump` it — **and `UPLOAD_DIR`**, where uploaded image bytes live. Back up both, or a restored database points at images that are no longer there.
+Backups: the state is the PostgreSQL database (diagrams are JSON in the `Diagram` table, and their version history in `DiagramVersion` — same database, so one `pg_dump` covers both) — `pg_dump` it — **and `UPLOAD_DIR`**, where uploaded image bytes live. Back up both, or a restored database points at images that are no longer there. Note that `DiagramVersion` is the bulk of what the dump grows by from here: see *Version history and storage* above for the knobs that bound it.
 
 **Share links are bearer credentials.** `Diagram.shareToken` is 144 bits of `crypto.randomBytes`, and anyone holding one can read that diagram — and the images it draws — at `/api/shared/<token>` with no account. Revoking is `DELETE /api/diagrams/:id/share`, which nulls the column; a later re-share mints a *different* token, so the old URL stays dead. Nothing else is reachable with a token: an image id the diagram does not reference is a 404, and the response carries no owner, no members and never the token itself. Treat a database dump as containing live credentials.
 
