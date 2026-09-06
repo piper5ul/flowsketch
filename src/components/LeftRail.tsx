@@ -4,23 +4,17 @@ import clsx from 'clsx';
 import {
   MousePointer2,
   Hand,
-  Square,
-  Circle,
-  Diamond,
-  StickyNote,
-  Type,
   ArrowRight,
   CornerDownRight,
   ChevronRight,
-  Triangle,
-  Hexagon,
-  Database,
-  Image as ImageIcon,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { useImageInsert } from '../lib/useImageInsert';
-import type { Tool } from '../types';
+import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
+import type { ShapeKind, Tool } from '../types';
+
+const ImageIcon = SHAPE_ICONS.image;
 
 function RailButton({
   active,
@@ -50,22 +44,31 @@ function RailButton({
   );
 }
 
-const PillIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="5" width="14" height="8" rx="4" />
-  </svg>
-);
+/** Every tool that draws a shape is named after the kind it draws. */
+type ShapeTool = Tool & ShapeKind;
 
-const SHAPE_TOOLS: { tool: Tool; label: string; shortcut: string; icon: React.ReactNode }[] = [
-  { tool: 'rectangle', label: 'Rectangle', shortcut: 'R', icon: <Square size={18} /> },
-  { tool: 'ellipse', label: 'Ellipse', shortcut: 'O', icon: <Circle size={18} /> },
-  { tool: 'diamond', label: 'Diamond', shortcut: 'D', icon: <Diamond size={18} /> },
-  { tool: 'pill', label: 'Pill', shortcut: 'U', icon: <PillIcon /> },
-  { tool: 'triangle', label: 'Triangle', shortcut: 'G', icon: <Triangle size={18} /> },
-  { tool: 'hexagon', label: 'Hexagon', shortcut: 'X', icon: <Hexagon size={18} /> },
-  { tool: 'cylinder', label: 'Cylinder', shortcut: 'Y', icon: <Database size={18} /> },
-  { tool: 'sticky', label: 'Sticky note', shortcut: 'S', icon: <StickyNote size={18} /> },
+/** Rendered as a button of its own; the label and icon come from the shared maps. */
+const SHAPE_TOOLS: { tool: ShapeTool; shortcut: string }[] = [
+  { tool: 'rectangle', shortcut: 'R' },
+  { tool: 'ellipse', shortcut: 'O' },
+  { tool: 'diamond', shortcut: 'D' },
+  { tool: 'pill', shortcut: 'U' },
+  { tool: 'triangle', shortcut: 'G' },
+  { tool: 'hexagon', shortcut: 'X' },
+  { tool: 'cylinder', shortcut: 'Y' },
+  { tool: 'sticky', shortcut: 'S' },
 ];
+
+function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: string }) {
+  const active = useDiagramStore((s) => s.tool === tool);
+  const setTool = useDiagramStore((s) => s.setTool);
+  const Icon = SHAPE_ICONS[tool];
+  return (
+    <RailButton active={active} label={SHAPE_LABELS[tool]} shortcut={shortcut} onClick={() => setTool(tool)}>
+      <Icon size={18} />
+    </RailButton>
+  );
+}
 
 export function LeftRail() {
   const tool = useDiagramStore((s) => s.tool);
@@ -100,20 +103,10 @@ export function LeftRail() {
         <div className="my-1 h-px bg-white/10" />
 
         {SHAPE_TOOLS.map((s) => (
-          <RailButton
-            key={s.tool}
-            active={tool === s.tool}
-            label={s.label}
-            shortcut={s.shortcut}
-            onClick={() => setTool(s.tool)}
-          >
-            {s.icon}
-          </RailButton>
+          <ShapeToolButton key={s.tool} tool={s.tool} shortcut={s.shortcut} />
         ))}
 
-        <RailButton active={tool === 'text'} label="Text" shortcut="T" onClick={() => setTool('text')}>
-          <Type size={18} />
-        </RailButton>
+        <ShapeToolButton tool="text" shortcut="T" />
 
         {/* An image is inserted, not drawn, so this is a one-shot action
             rather than a tool the canvas stays in. */}

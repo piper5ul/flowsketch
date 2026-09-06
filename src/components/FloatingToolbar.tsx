@@ -10,6 +10,7 @@ import {
   ChevronUp,
   ChevronDown,
   Link2,
+  Shapes,
   RotateCcw,
   Spline,
   Tag,
@@ -30,7 +31,9 @@ import {
   DEFAULT_START_ARROW,
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
-import type { ArrowStyle, ConnectorKind, StrokeStyle, StrokeWidth } from '../types';
+import { canSwapShapeKind } from '../lib/nodeKinds';
+import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
+import type { ArrowStyle, ConnectorKind, ShapeKind, StrokeStyle, StrokeWidth } from '../types';
 
 /** The toolbar's icon button. */
 const BUTTON_CLASS =
@@ -181,6 +184,60 @@ function ArrowStylePicker({
   );
 }
 
+/**
+ * Redraws the selection as a different kind of shape. The trigger wears the
+ * kind it would change *away* from, so the button reads as the current shape
+ * rather than as an anonymous menu; a selection holding more than one kind has
+ * no such answer and falls back to the generic icon.
+ */
+function ShapePicker({ current, onPick }: { current: ShapeKind | null; onPick: (kind: ShapeKind) => void }) {
+  const [open, setOpen] = useState(false);
+  const TriggerIcon = current ? SHAPE_ICONS[current] : Shapes;
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Tooltip label="Shape" side="top">
+        <Popover.Trigger asChild>
+          <button className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white data-[state=open]:bg-white/10 data-[state=open]:text-white">
+            <TriggerIcon size={16} />
+          </button>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="top"
+          sideOffset={12}
+          aria-label="Shape picker"
+          className="panel-in z-50 rounded-2xl bg-ink-950 p-1.5 shadow-[0_20px_45px_-12px_rgba(10,10,25,0.55)]"
+        >
+          <div className="grid grid-cols-4 gap-0.5">
+            {SWAPPABLE_SHAPE_KINDS.map((kind) => {
+              const Icon = SHAPE_ICONS[kind];
+              return (
+                <Tooltip key={kind} label={SHAPE_LABELS[kind]} side="top">
+                  <button
+                    onClick={() => {
+                      onPick(kind);
+                      setOpen(false);
+                    }}
+                    className={clsx(
+                      'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
+                      current === kind && 'bg-accent-500 text-white hover:bg-accent-500',
+                    )}
+                  >
+                    <Icon size={16} />
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 export function FloatingToolbar() {
   const nodes = useDiagramStore((s) => s.nodes);
   const edges = useDiagramStore((s) => s.edges);
@@ -188,6 +245,7 @@ export function FloatingToolbar() {
   const updateSelectedEdgesStyle = useDiagramStore((s) => s.updateSelectedEdgesStyle);
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const updateSelectedNodesData = useDiagramStore((s) => s.updateSelectedNodesData);
+  const setSelectedShapeKind = useDiagramStore((s) => s.setSelectedShapeKind);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
   const bringToFront = useDiagramStore((s) => s.bringToFront);
@@ -207,6 +265,13 @@ export function FloatingToolbar() {
   // images gets neither the text controls nor the colour palette; one that also
   // holds a real shape gets both, and they apply to that shape.
   const styleableNodes = useMemo(() => selectedNodes.filter((n) => n.data.shape !== 'image'), [selectedNodes]);
+  // The shapes `setSelectedShapeKind` would actually redraw, so the button is
+  // offered exactly when pressing it would do something.
+  const swappableNodes = useMemo(() => selectedNodes.filter((n) => canSwapShapeKind(n.data)), [selectedNodes]);
+  const currentShapeKind = useMemo(() => {
+    const first = swappableNodes[0]?.data.shape ?? null;
+    return swappableNodes.every((n) => n.data.shape === first) ? first : null;
+  }, [swappableNodes]);
 
   // An elbow connector can route (and its drag handles can sit) well above/below
   // its endpoints, so measure the actual rendered path rather than assuming it
@@ -288,6 +353,13 @@ export function FloatingToolbar() {
               }
             }}
           />
+        )}
+
+        {swappableNodes.length > 0 && (
+          <>
+            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <ShapePicker current={currentShapeKind} onPick={setSelectedShapeKind} />
+          </>
         )}
 
         {isEdgeMode && (

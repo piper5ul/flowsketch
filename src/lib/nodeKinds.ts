@@ -17,3 +17,16 @@ export function isAnchorNode(data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>)
   if (data.shape === 'text' || data.shape === 'image') return false;
   return data.fill === 'transparent' && data.stroke === 'transparent';
 }
+
+/**
+ * True for the shapes whose kind the toolbar can swap.
+ *
+ * An image *is* its bytes and a text shape draws no outline at all while sizing
+ * itself to what is typed — turning either into a diamond would throw away the
+ * thing that makes it what it is. A locked shape sits the edit out, as it sits
+ * out every other one. The floating toolbar and the store share this predicate
+ * so the button is offered exactly when pressing it would do something.
+ */
+export function canSwapShapeKind(data: Pick<ShapeData, 'shape' | 'locked'>): boolean {
+  return data.shape !== 'image' && data.shape !== 'text' && !data.locked;
+}
