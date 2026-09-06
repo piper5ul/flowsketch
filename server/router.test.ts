@@ -200,6 +200,67 @@ describe('PUT /api/diagrams/:id', () => {
   });
 });
 
+describe('PUT /api/diagrams/:id — the ifUnmodifiedSince guard', () => {
+  /** What the row says it was last written at, and what a client would echo back. */
+  const loadedAt = new Date('2026-09-05T10:00:00.000Z');
+  const movedOnAt = new Date('2026-09-05T10:05:00.000Z');
+
+  it('writes when the guard matches the row, and answers with the new updatedAt', async () => {
+    const savedAt = new Date('2026-09-05T10:07:00.000Z');
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', updatedAt: loadedAt });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed', updatedAt: savedAt });
+
+    const res = await request(app)
+      .put('/api/diagrams/d1')
+      .send({ title: 'Renamed', ifUnmodifiedSince: loadedAt.toISOString() })
+      .expect(200);
+
+    expect(res.body.updatedAt).toBe(savedAt.toISOString());
+    // The guard is a precondition, never a column: it must not reach Prisma.
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({
+      where: { id: 'd1' },
+      data: { title: 'Renamed' },
+    });
+  });
+
+  it('refuses the write with a 409 when the row has moved on', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', updatedAt: movedOnAt });
+
+    const res = await request(app)
+      .put('/api/diagrams/d1')
+      .send({ title: 'Stale', ifUnmodifiedSince: loadedAt.toISOString() })
+      .expect(409);
+
+    expect(res.body).toEqual({ error: 'Conflict', updatedAt: movedOnAt.toISOString() });
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('writes regardless of the row when no guard is sent — an overwrite is deliberate', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', updatedAt: movedOnAt });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Mine wins' });
+
+    await request(app).put('/api/diagrams/d1').send({ title: 'Mine wins' }).expect(200);
+    expect(prismaMock.diagram.update).toHaveBeenCalled();
+  });
+
+  it('rejects a guard that is not an ISO timestamp', async () => {
+    const res = await request(app)
+      .put('/api/diagrams/d1')
+      .send({ title: 'Renamed', ifUnmodifiedSince: 'yesterday' })
+      .expect(400);
+    expect(res.body.issues[0]).toMatchObject({ path: 'ifUnmodifiedSince' });
+    expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('does not treat the guard on its own as something to update', async () => {
+    await request(app)
+      .put('/api/diagrams/d1')
+      .send({ ifUnmodifiedSince: loadedAt.toISOString() })
+      .expect(400);
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+});
+
 describe('DELETE /api/diagrams/:id', () => {
   it('deletes an owned diagram and returns 204', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1' });

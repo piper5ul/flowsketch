@@ -80,6 +80,9 @@ export const createDiagramBody = z.strictObject({
   data: diagramData.optional(),
 });
 
+/** The fields a `PUT` can actually write. `ifUnmodifiedSince` is a guard, not one of them. */
+const UPDATABLE_FIELDS = ['title', 'data', 'starred', 'thumbnail'] as const;
+
 /** `PUT /api/diagrams/:id`. A patch: whatever is present is what gets written. */
 export const updateDiagramBody = z
   .strictObject({
@@ -87,8 +90,14 @@ export const updateDiagramBody = z
     data: diagramData.optional(),
     starred: z.boolean().optional(),
     thumbnail: thumbnail.optional(),
+    /**
+     * Optimistic concurrency guard: the `updatedAt` the client last saw. The
+     * write is refused with a 409 when the row has moved on since — that is
+     * what stops a second tab from silently overwriting the first.
+     */
+    ifUnmodifiedSince: z.iso.datetime().optional(),
   })
-  .refine((body) => Object.keys(body).length > 0, {
+  .refine((body) => UPDATABLE_FIELDS.some((field) => body[field] !== undefined), {
     error: 'Expected at least one of title, data, starred or thumbnail',
   });
 

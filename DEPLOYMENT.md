@@ -126,7 +126,9 @@ Point uptime monitoring at the deep probe: the shallow one stays green while the
 
 **Rate limits.** `/api` allows 600 requests per 15 minutes per IP, and `POST /api/images` a further 60 per 15 minutes; over budget is `429 {"error":"Too many requests"}`. Counting is per process and in memory, so it resets on restart. For that counting to be per client rather than per proxy, `server/index.ts` sets `app.set('trust proxy', 1)`: the app only ever sees the tunnel's (or Nginx's) address on the socket, so it trusts exactly one hop of `X-Forwarded-For`. Raise that number only if you add another proxy in front — trusting more hops than you actually run lets a client forge its own IP and dodge the limits.
 
-Backups: the only state is the PostgreSQL database (diagrams are JSON in the `Diagram` table) — `pg_dump` it. Pasted images currently live inside that JSON; once uploads move to disk (roadmap `img-upload`) the upload directory needs backing up too.
+Backups: the state is the PostgreSQL database (diagrams are JSON in the `Diagram` table) — `pg_dump` it — **and `UPLOAD_DIR`**, where uploaded image bytes live. Back up both, or a restored database points at images that are no longer there.
+
+**First open of a pre-upload diagram uploads its images.** Diagrams saved before `/api/images` existed carry their pictures inline as base64; opening one now uploads each of them in the background and rewrites the nodes to `/api/images/<id>` URLs, which the next autosave persists. Expect a burst of `POST /api/images` and some growth in `UPLOAD_DIR` the first time old diagrams are opened after a release — a diagram with more than 60 inlined images will hit the image rate limit and finish the rest on its next open.
 
 ---
 

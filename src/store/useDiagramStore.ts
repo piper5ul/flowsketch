@@ -28,7 +28,8 @@ import {
   type DistributeAxis,
   type MatchDimension,
 } from '../lib/arrange';
-import { api } from '../lib/api';
+import { ConflictError, UnauthorizedError, api } from '../lib/api';
+import type { ImageBackfillPatch } from '../lib/imageBackfill';
 import { toastError } from './useToastStore';
 
 // Re-exported here because this is where the rest of the app reaches for it.
@@ -175,8 +176,32 @@ function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
  * `retrying` is owned by the autosaver, not by `saveDiagram`: it is set once
  * the autosaver has scheduled another attempt after a failure (see
  * `src/lib/autosave.ts`), and it survives the failures that follow.
+ *
+ * `conflict` and `unauthorized` are both terminal until the user acts: neither
+ * is worth retrying, because another attempt would fail exactly the same way.
+ * `CanvasPage` stops autosaving while `saveStatus` is one of them.
  */
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'retrying';
+export type SaveStatus =
+  | 'idle'
+  | 'saving'
+  | 'saved'
+  | 'error'
+  | 'retrying'
+  | 'conflict'
+  | 'unauthorized';
+
+/**
+ * What `saveDiagram` did. It never rejects — its other callers `void` it —
+ * so the outcome is a value the autosave callback can act on: only `error` is
+ * worth another attempt.
+ */
+export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'skipped';
+
+/** Where the row actually is, once a save has been refused as stale. */
+export interface SaveConflict {
+  /** The `updatedAt` the server reports — i.e. what another tab wrote. */
+  updatedAt: string;
+}
 
 // Toolbar interaction flag — prevents contentEditable blur from
 // clearing editing state when the user clicks a formatting button.
@@ -198,6 +223,16 @@ interface DiagramState {
   title: string;
   starred: boolean;
   saveStatus: SaveStatus;
+  /**
+   * The `updatedAt` this client is building on — what it loaded, then what
+   * each successful save returned. Sent as the guard on the next save so a
+   * second tab's write is refused rather than silently overwritten. `null`
+   * when the server did not tell us (an older response, or no diagram yet),
+   * which simply means the guard is not sent.
+   */
+  loadedAt: string | null;
+  /** Set when a save was refused as stale; cleared by a reload or an overwrite. */
+  conflict: SaveConflict | null;
   editingNodeId: string | null;
   editingEdgeId: string | null;
   nodes: ShapeNode[];
@@ -214,8 +249,26 @@ interface DiagramState {
   canRedo: boolean;
 
   /** @throws when `data` was written by a newer version — see `migrateDiagramData`. */
-  loadDiagram: (id: string, title: string, starred: boolean, data: unknown) => void;
-  saveDiagram: (options?: { keepalive?: boolean }) => Promise<void>;
+  loadDiagram: (
+    id: string,
+    title: string,
+    starred: boolean,
+    data: unknown,
+    updatedAt?: string | null,
+  ) => void;
+  /**
+   * Writes the diagram. `overwrite` drops the `ifUnmodifiedSince` guard, which
+   * is what the conflict banner's "Overwrite" does: the user has been told
+   * another tab wrote, and has chosen this version anyway.
+   */
+  saveDiagram: (options?: { keepalive?: boolean; overwrite?: boolean }) => Promise<SaveOutcome>;
+  /**
+   * Records that *this* tab wrote the row at `updatedAt`, moving the conflict
+   * guard on. Every write has to report here, thumbnails included: they land
+   * through the same `PUT` and bump `updatedAt` like any edit, so a tab that
+   * ignored its own thumbnail would go on to mistake it for another tab's work.
+   */
+  noteSaved: (updatedAt: string) => void;
   setTitle: (title: string) => void;
   setStarred: (starred: boolean) => void;
   setEditingNodeId: (id: string | null) => void;
@@ -239,6 +292,13 @@ interface DiagramState {
     image: { src: string; width: number; height: number; position: { x: number; y: number } },
   ) => void;
   removeImagePlaceholder: (id: string) => void;
+  /**
+   * Repoints nodes at uploaded images, replacing the base64 an old diagram was
+   * carrying inline. Records **no** history entry: it is housekeeping, not an
+   * edit the user made, and an undo that put the megabytes back would be a
+   * trap. Autosave persists it like any other change to `nodes`.
+   */
+  applyImageBackfill: (patches: readonly ImageBackfillPatch[]) => void;
   addConnectedShape: (sourceId: string, direction: Direction) => string | null;
   updateNodeData: (id: string, data: Partial<ShapeData>) => void;
   updateSelectedNodesStyle: (patch: Partial<Pick<ShapeData, 'fill' | 'stroke'>>) => void;
@@ -447,6 +507,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   title: 'Untitled',
   starred: false,
   saveStatus: 'idle' as SaveStatus,
+  loadedAt: null,
+  conflict: null,
   editingNodeId: null,
   editingEdgeId: null,
   nodes: [],
@@ -460,7 +522,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   canUndo: false,
   canRedo: false,
 
-  loadDiagram: (id, title, starred, data) => {
+  loadDiagram: (id, title, starred, data, updatedAt) => {
     // Migrate before touching any state: a payload from a newer build throws,
     // and the store must be left as it was rather than half-loaded.
     const migrated = migrateDiagramData(data);
@@ -474,6 +536,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       title,
       starred,
       saveStatus: 'idle',
+      // This load *is* the resolution of a conflict, so the guard restarts
+      // from whatever the server just handed back.
+      loadedAt: updatedAt ?? null,
+      conflict: null,
       nodes: migrated.nodes as unknown as ShapeNode[],
       edges: migrated.edges as unknown as ConnectorEdge[],
       // Cleared, not kept: /d/A -> /d/B reuses this store, and B must not open
@@ -484,23 +550,40 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, viewport, saveStatus } = get();
-    if (!diagramId) return;
+    const { diagramId, title, nodes, edges, viewport, saveStatus, loadedAt } = get();
+    if (!diagramId) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
     try {
-      await api.saveDiagram(
+      const result = await api.saveDiagram(
         diagramId,
         {
           // The API rejects a blank title, so a diagram whose name the user
           // cleared would fail every autosave from then on.
           title: title.trim() || 'Untitled',
           data: serializeDiagram(nodes, edges, viewport),
+          // Only sent when this client knows what version it is building on,
+          // and never on an overwrite the user asked for.
+          ...(loadedAt !== null && !options?.overwrite ? { ifUnmodifiedSince: loadedAt } : {}),
         },
         options,
       );
-      set({ saveStatus: 'saved' });
-    } catch {
+      set({ saveStatus: 'saved', conflict: null });
+      // The row moved, so the guard moves with it. A response that says nothing
+      // (an older server) simply leaves the guard where it was.
+      if (result?.updatedAt) get().noteSaved(result.updatedAt);
+      return 'saved';
+    } catch (err) {
+      // Neither of these is worth retrying: the same body would be refused the
+      // same way until the user reloads, overwrites, or signs back in.
+      if (err instanceof ConflictError) {
+        set({ saveStatus: 'conflict', conflict: { updatedAt: err.updatedAt } });
+        return 'conflict';
+      }
+      if (err instanceof UnauthorizedError) {
+        set({ saveStatus: 'unauthorized' });
+        return 'unauthorized';
+      }
       // Once the autosaver is retrying, every further failure of that streak
       // keeps saying "retrying" rather than flashing "save failed" per attempt.
       set({ saveStatus: saveStatus === 'retrying' ? 'retrying' : 'error' });
@@ -508,7 +591,18 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // the first failure of a streak is announced; the SaveIndicator carries
       // the state after that.
       if (!wasFailing) toastError('Save failed — retrying');
+      return 'error';
     }
+  },
+
+  noteSaved: (updatedAt) => {
+    const { loadedAt } = get();
+    // Monotonic: two writes from this tab can be in flight at once (a diagram
+    // save and a thumbnail), and the later response is not always the later
+    // write. Both timestamps come from the same server in the same ISO format,
+    // so comparing them as strings is comparing them as instants.
+    if (loadedAt !== null && updatedAt <= loadedAt) return;
+    set({ loadedAt: updatedAt });
   },
 
   setTitle: (title) => set({ title }),
@@ -716,6 +810,19 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   removeImagePlaceholder: (id) => {
     set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) }));
+  },
+
+  applyImageBackfill: (patches) => {
+    if (patches.length === 0) return;
+    const byId = new Map(patches.map((patch) => [patch.id, patch]));
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        const patch = byId.get(n.id);
+        // Only the source and the shape change: the node keeps the box it was
+        // drawn at, so the picture does not move under the user.
+        return patch ? { ...n, data: { ...n.data, imageSrc: patch.imageSrc, shape: patch.shape } } : n;
+      }),
+    }));
   },
 
   // Click a directional handle on a hovered shape to instantly spawn a

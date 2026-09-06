@@ -1,14 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Canvas } from '../components/Canvas';
+import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
-import { api } from '../lib/api';
+import { api, setUnauthorizedHandler } from '../lib/api';
+import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
 import { renderDiagramPng } from '../lib/exportImage';
+import { backfillBase64Images, findBase64ImageNodes } from '../lib/imageBackfill';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
+import { toastError } from '../store/useToastStore';
 
 const AUTOSAVE_DELAY_MS = 2000;
 
@@ -18,6 +22,52 @@ export function CanvasPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadDiagram = useDiagramStore((s) => s.loadDiagram);
+  const saveStatus = useDiagramStore((s) => s.saveStatus);
+  const { data: session } = useSession();
+  /** The diagram whose image backfill has already been started on this page. */
+  const backfilled = useRef<string | null>(null);
+
+  // A 401 elsewhere in the app means "go and sign in"; here it means "the edits
+  // on screen have nowhere to go yet", and navigating would be what loses them.
+  // The dialog below is shown off `saveStatus` instead.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {});
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  /**
+   * Moves an old diagram's inline base64 images into `/api/images`, behind the
+   * canvas the user is already looking at. Never blocks the load: the diagram
+   * renders those nodes either way, and a failed upload just leaves one where
+   * it was for the next open to try again.
+   */
+  const runImageBackfill = useCallback(async (diagramId: string) => {
+    // Once per diagram per page. The effect that starts this is re-run by
+    // StrictMode's double mount, and two runs racing would upload every image
+    // twice — the second pass reads the same base64 the first has not replaced
+    // yet, and the loser's bytes are left on disk with nothing referencing them.
+    if (backfilled.current === diagramId) return;
+    backfilled.current = diagramId;
+
+    const { nodes } = useDiagramStore.getState();
+    const candidates = findBase64ImageNodes(nodes);
+    if (candidates.length === 0) return;
+
+    const patches = await backfillBase64Images(nodes);
+    // /d/A -> /d/B while the uploads were in flight: these patches are A's.
+    if (useDiagramStore.getState().diagramId !== diagramId) return;
+    useDiagramStore.getState().applyImageBackfill(patches);
+    // One message for the whole run, not one per image.
+    if (patches.length < candidates.length) {
+      toastError('Some images could not be moved to storage. They still work — we will try again next time.');
+    }
+  }, []);
+
+  const onReauthenticated = useCallback(() => {
+    // The save that hit the expired session is retried straight away; a
+    // success clears `unauthorized`, which is what rearms autosave.
+    void useDiagramStore.getState().saveDiagram();
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -33,7 +83,8 @@ export function CanvasPage() {
         if (cancelled) return;
         // Throws when the row was written by a newer build of the app; that is
         // worth telling the user about rather than bouncing them silently.
-        loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data);
+        // `updatedAt` is the version every save from here on is guarded by.
+        loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -54,12 +105,20 @@ export function CanvasPage() {
 
     const autosaver = createAutosaver({
       save: async () => {
-        await useDiagramStore.getState().saveDiagram();
+        const outcome = await useDiagramStore.getState().saveDiagram();
+        // Neither a conflict nor an expired session is transient: another
+        // attempt would be refused in exactly the same way, so the autosaver
+        // stands down and the banner (or the re-auth dialog) takes over. It is
+        // rearmed by the next edit once the status is no longer one of those.
+        if (outcome === 'conflict' || outcome === 'unauthorized') {
+          autosaver.cancel();
+          return;
+        }
         // `saveDiagram` reports a failure through `saveStatus` rather than by
         // rejecting — its other callers `void` it, where a rejection would be
-        // unhandled. The autosaver retries on a rejection, so the status is
+        // unhandled. The autosaver retries on a rejection, so the outcome is
         // translated back into one here.
-        if (useDiagramStore.getState().saveStatus === 'error') throw new Error('Save failed');
+        if (outcome === 'error') throw new Error('Save failed');
       },
       delayMs: AUTOSAVE_DELAY_MS,
       // `idle` / `pending` / `saving` are already reflected by `saveDiagram`;
@@ -82,7 +141,15 @@ export function CanvasPage() {
         isCurrent()
           ? renderDiagramPng({ pixelRatio: 1, maxSide: THUMBNAIL_MAX_SIDE, preserveSelection: true })
           : Promise.resolve(null),
-      save: (thumbnail) => (isCurrent() ? api.saveDiagram(id, { thumbnail }) : Promise.resolve()),
+      save: async (thumbnail) => {
+        if (!isCurrent()) return;
+        const saved = await api.saveDiagram(id, { thumbnail });
+        // A thumbnail is written through the same `PUT`, so it bumps the row's
+        // `updatedAt` like any edit. The conflict guard has to follow it, or
+        // the next real save would be refused as stale by this tab's own
+        // decoration.
+        if (isCurrent() && saved?.updatedAt) useDiagramStore.getState().noteSaved(saved.updatedAt);
+      },
     });
 
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
@@ -96,7 +163,11 @@ export function CanvasPage() {
       ) {
         return;
       }
-      autosaver.schedule();
+      // Autosave stays down until the conflict is resolved or the session is
+      // renewed; scheduling here would only queue a save the server refuses.
+      if (state.saveStatus !== 'conflict' && state.saveStatus !== 'unauthorized') {
+        autosaver.schedule();
+      }
       // Neither a retitle nor a pan changes the picture, so only shape edits
       // mark the thumbnail stale.
       if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
@@ -112,6 +183,10 @@ export function CanvasPage() {
     };
     window.addEventListener('pagehide', onPageHide);
 
+    // Started only once the subscription above exists, so the patches it
+    // applies schedule a save rather than sitting there until the next edit.
+    void runImageBackfill(id);
+
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       unsubscribe();
@@ -123,7 +198,7 @@ export function CanvasPage() {
       // to save" rather than an error.
       void thumbnails.flush();
     };
-  }, [loading, loadError, id]);
+  }, [loading, loadError, id, runImageBackfill]);
 
   // Autosave is never armed in this branch, so the unreadable diagram cannot be
   // overwritten by this build.
@@ -156,6 +231,15 @@ export function CanvasPage() {
       <ReactFlowProvider>
         <div className="h-screen w-screen overflow-hidden">
           <Canvas />
+          {saveStatus === 'unauthorized' && (
+            // `session` is the one that just expired: better-auth keeps the
+            // last response it read, so the address is usually still there to
+            // prefill. An empty string is a normal outcome, not a failure.
+            <ReauthDialog
+              defaultEmail={session?.user.email ?? ''}
+              onSuccess={onReauthenticated}
+            />
+          )}
         </div>
         <Toasts />
       </ReactFlowProvider>

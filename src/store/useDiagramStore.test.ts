@@ -3,11 +3,19 @@ import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramS
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS } from '../lib/nodeKinds';
 import { useToastStore } from './useToastStore';
-import { api } from '../lib/api';
+import { ConflictError, UnauthorizedError, api } from '../lib/api';
 
-vi.mock('../lib/api', () => ({
-  api: { saveDiagram: vi.fn(async () => undefined) },
+// Only `api` itself is a stub: the error classes have to be the real ones, or
+// the `instanceof` checks in `saveDiagram` would never match.
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api')>()),
+  // The literal is repeated rather than shared with `SAVED_AT`: a `vi.mock`
+  // factory runs before the module body, so a const here would still be in TDZ.
+  api: { saveDiagram: vi.fn(async () => ({ updatedAt: '2026-09-05T09:00:00.000Z' })) },
 }));
+
+/** What a successful `PUT` answers with: where the row is now. */
+const SAVED_AT = '2026-09-05T09:00:00.000Z';
 
 const saveDiagram = vi.mocked(api.saveDiagram);
 
@@ -1173,7 +1181,7 @@ describe('the saved viewport', () => {
 describe('saveDiagram', () => {
   beforeEach(() => {
     saveDiagram.mockClear();
-    saveDiagram.mockResolvedValue(undefined);
+    saveDiagram.mockResolvedValue({ updatedAt: SAVED_AT });
     useToastStore.getState().clear();
   });
 
@@ -1243,6 +1251,176 @@ describe('saveDiagram', () => {
     useDiagramStore.setState({ saveStatus: 'retrying' });
     await store().saveDiagram();
     expect(store().saveStatus).toBe('saved');
+  });
+});
+
+describe('saveDiagram — the two-tab conflict guard', () => {
+  const LOADED_AT = '2026-09-05T10:00:00.000Z';
+  const OTHER_TAB_AT = '2026-09-05T10:05:00.000Z';
+
+  beforeEach(() => {
+    saveDiagram.mockClear();
+    saveDiagram.mockResolvedValue({ updatedAt: SAVED_AT });
+    useToastStore.getState().clear();
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, LOADED_AT);
+  });
+
+  it('guards the save with the updatedAt it loaded', async () => {
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith(
+      'test',
+      expect.objectContaining({ ifUnmodifiedSince: LOADED_AT }),
+      undefined,
+    );
+  });
+
+  it('sends no guard for a diagram whose updatedAt the server never gave us', async () => {
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] });
+    await store().saveDiagram();
+    expect(saveDiagram.mock.calls[0][1]).not.toHaveProperty('ifUnmodifiedSince');
+  });
+
+  it('moves the guard on to what the save returned', async () => {
+    saveDiagram.mockResolvedValue({ updatedAt: OTHER_TAB_AT });
+    await store().saveDiagram();
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('lets this tab\'s other writes — a thumbnail — move the guard on too', () => {
+    // Otherwise the tab would mistake its own thumbnail for another tab's edit.
+    store().noteSaved(OTHER_TAB_AT);
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('never walks the guard backwards when two writes answer out of order', () => {
+    store().noteSaved(OTHER_TAB_AT);
+    store().noteSaved('2026-09-05T10:01:00.000Z');
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('records the conflict and the server updatedAt when the write is refused', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    const outcome = await store().saveDiagram();
+
+    expect(outcome).toBe('conflict');
+    expect(store().saveStatus).toBe('conflict');
+    expect(store().conflict).toEqual({ updatedAt: OTHER_TAB_AT });
+    // The guard is what the banner's "Overwrite" drops; it is not silently
+    // advanced to the other tab's version behind the user's back.
+    expect(store().loadedAt).toBe(LOADED_AT);
+  });
+
+  it('does not announce a conflict as a failed save — the banner says it instead', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    await store().saveDiagram();
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('drops the guard on an overwrite and clears the conflict once it lands', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    await store().saveDiagram();
+
+    const savedAt = '2026-09-05T10:09:00.000Z';
+    saveDiagram.mockResolvedValue({ updatedAt: savedAt });
+    const outcome = await store().saveDiagram({ overwrite: true });
+
+    expect(outcome).toBe('saved');
+    expect(saveDiagram.mock.calls[1][1]).not.toHaveProperty('ifUnmodifiedSince');
+    expect(store().conflict).toBeNull();
+    expect(store().saveStatus).toBe('saved');
+    expect(store().loadedAt).toBe(savedAt);
+  });
+
+  it('clears the conflict when the diagram is reloaded from the server', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    await store().saveDiagram();
+
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, OTHER_TAB_AT);
+    expect(store().conflict).toBeNull();
+    expect(store().saveStatus).toBe('idle');
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('reports an expired session rather than treating it as a retryable failure', async () => {
+    saveDiagram.mockRejectedValue(new UnauthorizedError());
+    const outcome = await store().saveDiagram();
+
+    expect(outcome).toBe('unauthorized');
+    expect(store().saveStatus).toBe('unauthorized');
+    // The re-auth dialog is the message; a toast would just be noise behind it.
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+});
+
+describe('applyImageBackfill', () => {
+  /** A rectangle in the pre-upload format: its pixels are in the diagram JSON. */
+  function inlineImageNode(id: string) {
+    useDiagramStore.setState((s) => ({
+      nodes: [
+        ...s.nodes,
+        {
+          id,
+          type: 'shape' as const,
+          position: { x: 0, y: 0 },
+          width: 320,
+          height: 180,
+          data: {
+            label: '',
+            shape: 'rectangle' as const,
+            fill: '#fff',
+            stroke: '#000',
+            imageSrc: 'data:image/png;base64,AAAA',
+          },
+        },
+      ],
+    }));
+  }
+
+  it('repoints the node at the uploaded URL and draws it as an image', () => {
+    inlineImageNode('n1');
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+
+    const node = store().nodes.find((n) => n.id === 'n1')!;
+    expect(node.data).toMatchObject({ imageSrc: '/api/images/one', shape: 'image' });
+    // The picture must not move or resize under the user.
+    expect({ width: node.width, height: node.height }).toEqual({ width: 320, height: 180 });
+    expect(node.position).toEqual({ x: 0, y: 0 });
+  });
+
+  it('leaves every other node alone', () => {
+    inlineImageNode('n1');
+    const other = store().addShape('rectangle', { x: 500, y: 0 });
+
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+
+    expect(store().nodes.find((n) => n.id === other)!.data.shape).toBe('rectangle');
+  });
+
+  it('records no history entry — it is housekeeping, not an edit to undo', () => {
+    inlineImageNode('n1');
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+
+    // Nothing to undo: a freshly loaded diagram whose images were quietly
+    // moved to storage must not hand the user an undo that puts them back.
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('does not eat the undo belonging to a real edit', () => {
+    inlineImageNode('n1');
+    const drawn = store().addShape('rectangle', { x: 500, y: 0 });
+
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+    store().undo();
+
+    expect(store().nodes.find((n) => n.id === drawn)).toBeUndefined();
+  });
+
+  it('does nothing at all when there is nothing to patch', () => {
+    inlineImageNode('n1');
+    const before = store().nodes;
+    store().applyImageBackfill([]);
+    // Same array, so nothing subscribed to the store is woken for no reason.
+    expect(store().nodes).toBe(before);
   });
 });
 

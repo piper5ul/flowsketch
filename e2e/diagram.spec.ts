@@ -765,3 +765,47 @@ test('the format bar underlines a label being edited', async ({ page }) => {
   await expect(node).toContainText('Hi');
   await expect(node.locator('[contenteditable]')).toHaveCSS('text-decoration-line', 'underline');
 });
+
+test('a second tab editing the same diagram is caught before its work is overwritten', async ({ page, context }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  const first = page.locator('.react-flow__node').first();
+  await first.dblclick();
+  await page.keyboard.type('First tab');
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  // The same diagram, in the same session, in a second tab.
+  const second = await context.newPage();
+  await second.goto(page.url());
+  const secondPane = second.locator('.react-flow__pane');
+  await expect(secondPane).toBeVisible();
+  await expect(second.locator('.react-flow__node').first()).toContainText('First tab');
+
+  await second.keyboard.press('r');
+  await secondPane.click({ position: { x: 800, y: 300 } });
+  const added = second.locator('.react-flow__node').nth(1);
+  await added.dblclick();
+  await second.keyboard.type('Second tab');
+  await second.keyboard.press('Escape');
+  await expect(second.getByText('Saved')).toBeVisible();
+
+  // The first tab is now building on a version the server has moved past, so
+  // its next autosave is refused rather than silently dropping "Second tab".
+  await first.dblclick();
+  await page.keyboard.type(' edited');
+  await page.keyboard.press('Escape');
+  const banner = page.getByRole('alert').filter({ hasText: 'changed in another tab' });
+  await expect(banner).toBeVisible();
+
+  // Reload takes the other tab's version, discarding this one's unsaved edit.
+  await banner.getByRole('button', { name: 'Reload' }).click();
+  await expect(banner).toBeHidden();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node').nth(1)).toContainText('Second tab');
+
+  await second.close();
+});
