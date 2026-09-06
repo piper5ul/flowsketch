@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Star, Trash2, LogOut, MoreHorizontal, FileText } from 'lucide-react';
+import { Plus, Star, Trash2, LogOut, MoreHorizontal, FileText, RotateCw } from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
+import { loadDiagrams } from '../lib/diagramList';
 import type { DiagramMeta } from '../../shared/types';
 import { Tooltip, TooltipProvider } from '../components/Tooltip';
 import { Toasts } from '../components/Toasts';
 import { toastError } from '../store/useToastStore';
 
+/** How many placeholder cards fill the grid while the list is loading. */
+const SKELETON_COUNT = 8;
+
+/** Shared by the real cards and their loading placeholders. */
+const CARD_GRID = 'grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4';
+
+type ListState = 'loading' | 'ready' | 'error';
+
 export function DashboardPage() {
   const { data: session } = useSession();
   const navigate = useNavigate();
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [listState, setListState] = useState<ListState>('loading');
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   // Set to a diagram id while its menu is showing the delete confirmation.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
@@ -24,12 +33,20 @@ export function DashboardPage() {
     setConfirmingDelete(null);
   }, []);
 
-  useEffect(() => {
-    api.listDiagrams().then((d) => {
-      setDiagrams(d);
-      setLoading(false);
-    });
+  const refresh = useCallback(async () => {
+    setListState('loading');
+    const result = await loadDiagrams();
+    if (!result.ok) {
+      setListState('error');
+      return;
+    }
+    setDiagrams(result.diagrams);
+    setListState('ready');
   }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const createDiagram = useCallback(async () => {
     const diagram = await api.createDiagram();
@@ -95,12 +112,14 @@ export function DashboardPage() {
             </button>
           </div>
 
-          {loading ? (
-            <div className="py-20 text-center text-sm text-ink-600">Loading...</div>
+          {listState === 'loading' ? (
+            <SkeletonGrid />
+          ) : listState === 'error' ? (
+            <ErrorState onRetry={refresh} />
           ) : diagrams.length === 0 ? (
             <EmptyState onCreate={createDiagram} />
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            <div className={CARD_GRID}>
               {diagrams.map((d) => (
                 <DiagramCard
                   key={d.id}
@@ -216,6 +235,42 @@ function DiagramCard({
         </div>
         <p className="mt-0.5 text-xs text-ink-600/60">{timeAgo}</p>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Card-shaped placeholders in the same grid the real cards land in, so the
+ * layout does not jump once the list arrives.
+ */
+function SkeletonGrid() {
+  return (
+    <div className={CARD_GRID} aria-hidden="true" data-testid="diagram-skeletons">
+      {Array.from({ length: SKELETON_COUNT }, (_, i) => (
+        <div key={i} className="animate-pulse rounded-xl bg-white ring-1 ring-black/[0.04]">
+          <div className="h-36 rounded-t-xl bg-black/[0.05]" />
+          <div className="space-y-2 px-3 py-3">
+            <div className="h-3 w-2/3 rounded bg-black/[0.06]" />
+            <div className="h-2.5 w-1/3 rounded bg-black/[0.04]" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center py-20">
+      <h3 className="mb-1 text-base font-semibold text-ink-900">Could not load your diagrams</h3>
+      <p className="mb-5 text-sm text-ink-600">The server did not answer. Your work is safe.</p>
+      <button
+        onClick={onRetry}
+        className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
+      >
+        <RotateCw size={16} />
+        Retry
+      </button>
     </div>
   );
 }
