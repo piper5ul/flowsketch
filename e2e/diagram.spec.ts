@@ -925,3 +925,55 @@ test('a public link opens the diagram read-only, and revoking it kills the URL',
 
   await visitor.close();
 });
+
+test('an invited editor finds the diagram, edits it, and loses that when demoted', async ({ page, browser }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  await drawLabelledShape(page, pane, 'Owner shape');
+  const diagramUrl = page.url();
+
+  // A second account, in its own context so the two sessions never mix.
+  const invitee = await browser.newContext();
+  const inviteePage = await invitee.newPage();
+  const inviteeEmail = await signUp(inviteePage);
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(inviteeEmail);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(inviteeEmail)).toBeVisible();
+
+  // It is not theirs, so it lands in its own section rather than among their own.
+  await inviteePage.goto('/');
+  await expect(inviteePage.getByRole('heading', { name: 'Shared with me' })).toBeVisible();
+  await expect(inviteePage.getByText('Can edit')).toBeVisible();
+  await inviteePage.getByText('Untitled').first().click();
+  await expect(inviteePage).toHaveURL(/\/d\/[^/]+$/);
+
+  // An editor edits: the second shape is saved under their own session.
+  const inviteePane = inviteePage.locator('.react-flow__pane');
+  await expect(inviteePane).toBeVisible();
+  await expect(inviteePage.locator('.react-flow__node')).toHaveCount(1);
+  await inviteePage.keyboard.press('r');
+  await inviteePane.click({ position: { x: 900, y: 260 } });
+  await expect(inviteePage.locator('.react-flow__node')).toHaveCount(2);
+  await expect(inviteePage.getByText('Saved')).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  // Demoted to viewer, their next load of the same diagram is read-only.
+  await page.getByRole('button', { name: 'Share' }).click();
+  await dialog.getByLabel(`Role for ${inviteeEmail}`).selectOption('viewer');
+  await expect(dialog.getByLabel(`Role for ${inviteeEmail}`)).toHaveValue('viewer');
+
+  await inviteePage.reload();
+  await expect(inviteePage.getByText('View only')).toBeVisible();
+  await expect(inviteePage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
+  // And the board is still there to read — this is a demotion, not a removal.
+  await expect(inviteePage.locator('.react-flow__node')).toHaveCount(2);
+
+  expect(page.url()).toBe(diagramUrl);
+  await invitee.close();
+});

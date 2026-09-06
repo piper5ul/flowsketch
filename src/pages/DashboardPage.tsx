@@ -15,7 +15,14 @@ import {
 } from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
-import { DIAGRAM_SORTS, filterDiagrams, loadDiagrams, sortDiagrams, type DiagramSort } from '../lib/diagramList';
+import {
+  DIAGRAM_SORTS,
+  filterDiagrams,
+  loadDiagrams,
+  sortDiagrams,
+  splitByOwnership,
+  type DiagramSort,
+} from '../lib/diagramList';
 import { parseDiagramExport } from '../lib/diagramFile';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import type { DiagramData, DiagramMeta } from '../../shared/types';
@@ -45,10 +52,15 @@ export function DashboardPage() {
   const [sort, setSort] = useState<DiagramSort>('updated');
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const visible = useMemo(
-    () => sortDiagrams(filterDiagrams(diagrams, query), sort),
-    [diagrams, query, sort],
-  );
+  // Two sections, each searched and sorted on its own: a starred diagram is
+  // pinned to the front of the list it is in, not lifted out of it, and a
+  // search that matches nothing of the user's own can still match one of the
+  // diagrams they have been invited to.
+  const { owned, shared } = useMemo(() => {
+    const arrange = (list: DiagramMeta[]) => sortDiagrams(filterDiagrams(list, query), sort);
+    const split = splitByOwnership(diagrams);
+    return { owned: arrange(split.owned), shared: arrange(split.shared) };
+  }, [diagrams, query, sort]);
 
   // Opening or closing a menu always drops any confirmation it was showing, so
   // a menu never reopens mid-confirm.
@@ -151,6 +163,27 @@ export function DashboardPage() {
     navigate('/login');
   }, [navigate]);
 
+  /** One card, wired to the dashboard's state. Both sections render the same one. */
+  const renderCard = (d: DiagramMeta) => (
+    <DiagramCard
+      key={d.id}
+      diagram={d}
+      menuOpen={menuOpen === d.id}
+      confirmingDelete={confirmingDelete === d.id}
+      renaming={renaming === d.id}
+      onOpen={() => navigate(`/d/${d.id}`)}
+      onToggleStar={(e) => toggleStar(d.id, e)}
+      onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
+      onRequestDelete={() => setConfirmingDelete(d.id)}
+      onCancelDelete={() => openMenu(null)}
+      onDelete={() => deleteDiagram(d.id)}
+      onDuplicate={() => duplicateDiagram(d.id)}
+      onRequestRename={() => { openMenu(null); setRenaming(d.id); }}
+      onCommitRename={(title) => renameDiagram(d.id, title)}
+      onCancelRename={() => setRenaming(null)}
+    />
+  );
+
   return (
     <TooltipProvider>
       <div className="min-h-screen bg-canvas">
@@ -244,30 +277,18 @@ export function DashboardPage() {
             <ErrorState onRetry={refresh} />
           ) : diagrams.length === 0 ? (
             <EmptyState onCreate={createDiagram} />
-          ) : visible.length === 0 ? (
+          ) : owned.length + shared.length === 0 ? (
             <p className="py-20 text-center text-sm text-ink-600">No diagrams match “{query.trim()}”.</p>
           ) : (
-            <div className={CARD_GRID}>
-              {visible.map((d) => (
-                <DiagramCard
-                  key={d.id}
-                  diagram={d}
-                  menuOpen={menuOpen === d.id}
-                  confirmingDelete={confirmingDelete === d.id}
-                  renaming={renaming === d.id}
-                  onOpen={() => navigate(`/d/${d.id}`)}
-                  onToggleStar={(e) => toggleStar(d.id, e)}
-                  onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
-                  onRequestDelete={() => setConfirmingDelete(d.id)}
-                  onCancelDelete={() => openMenu(null)}
-                  onDelete={() => deleteDiagram(d.id)}
-                  onDuplicate={() => duplicateDiagram(d.id)}
-                  onRequestRename={() => { openMenu(null); setRenaming(d.id); }}
-                  onCommitRename={(title) => renameDiagram(d.id, title)}
-                  onCancelRename={() => setRenaming(null)}
-                />
-              ))}
-            </div>
+            <>
+              {owned.length > 0 && <div className={CARD_GRID}>{owned.map(renderCard)}</div>}
+              {shared.length > 0 && (
+                <section className={owned.length > 0 ? 'mt-10' : ''}>
+                  <h2 className="mb-4 text-lg font-semibold text-ink-900">Shared with me</h2>
+                  <div className={CARD_GRID}>{shared.map(renderCard)}</div>
+                </section>
+              )}
+            </>
           )}
         </main>
 
@@ -309,6 +330,11 @@ function DiagramCard({
   onCancelRename: () => void;
 }) {
   const timeAgo = formatRelativeTime(diagram.updatedAt);
+  // Star, rename, duplicate and delete are all owner-only on the server — the
+  // star because it is one column on the row rather than a per-user flag — so
+  // a card for somebody else's diagram carries none of them, and says who it
+  // belongs to and what this user may do with it instead.
+  const isOwner = diagram.role === 'owner';
 
   return (
     <div
@@ -341,6 +367,12 @@ function DiagramCard({
             <p className="truncate text-sm font-medium text-ink-900">{diagram.title}</p>
           )}
           <div className="flex shrink-0 items-center gap-0.5">
+            {!isOwner && (
+              <span className="rounded-full bg-black/[0.05] px-2 py-0.5 text-[11px] font-medium text-ink-600">
+                {diagram.role === 'editor' ? 'Can edit' : 'Can view'}
+              </span>
+            )}
+            {isOwner && (
             <button
               onClick={onToggleStar}
               // The name changes with the state so a screen reader hears what
@@ -351,6 +383,8 @@ function DiagramCard({
             >
               <Star size={13} className={diagram.starred ? 'fill-yellow-400 text-yellow-400' : ''} />
             </button>
+            )}
+            {isOwner && (
             <div className="relative">
               <button
                 aria-label="Diagram actions"
@@ -408,9 +442,12 @@ function DiagramCard({
                 </div>
               )}
             </div>
+            )}
           </div>
         </div>
-        <p className="mt-0.5 text-xs text-ink-600/60">{timeAgo}</p>
+        <p className="mt-0.5 text-xs text-ink-600/60">
+          {diagram.ownerName ? `${diagram.ownerName} · ${timeAgo}` : timeAgo}
+        </p>
       </div>
     </div>
   );

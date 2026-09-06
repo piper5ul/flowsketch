@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { filterDiagrams, loadDiagrams, sortDiagrams } from './diagramList';
+import { filterDiagrams, loadDiagrams, sortDiagrams, splitByOwnership } from './diagramList';
 import { api } from './api';
 import { useToastStore } from '../store/useToastStore';
 import type { DiagramMeta } from '../../shared/types';
@@ -116,5 +116,29 @@ describe('sortDiagrams', () => {
     const diagrams = [meta('old', { updatedAt: older }), meta('new', { updatedAt: newer })];
     sortDiagrams(diagrams, 'updated');
     expect(diagrams.map((d) => d.id)).toEqual(['old', 'new']);
+  });
+});
+
+describe('splitByOwnership', () => {
+  it('separates the user\'s own diagrams from the ones shared with them', () => {
+    const mine = meta('mine');
+    const asEditor = meta('e', { role: 'editor', ownerName: 'Ada' });
+    const asViewer = meta('v', { role: 'viewer', ownerName: 'Grace' });
+
+    expect(splitByOwnership([mine, asEditor, asViewer])).toEqual({
+      owned: [mine],
+      shared: [asEditor, asViewer],
+    });
+  });
+
+  it('keeps the order the API sent within each section', () => {
+    const list = [meta('a'), meta('b', { role: 'viewer' }), meta('c'), meta('d', { role: 'editor' })];
+    const { owned, shared } = splitByOwnership(list);
+    expect(owned.map((d) => d.id)).toEqual(['a', 'c']);
+    expect(shared.map((d) => d.id)).toEqual(['b', 'd']);
+  });
+
+  it('gives both sections back empty for an empty list', () => {
+    expect(splitByOwnership([])).toEqual({ owned: [], shared: [] });
   });
 });
