@@ -25,6 +25,8 @@
     "prepare": "simple-git-hooks"
   },
   "dependencies": {
+    "@hocuspocus/provider": "^4.6.0",
+    "@hocuspocus/server": "^4.6.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@radix-ui/react-popover": "^1.1.23",
@@ -44,6 +46,9 @@
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
+    "ws": "^8.21.3",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.32",
     "zod": "^4.5.4",
     "zustand": "^5.0.14"
   },
@@ -58,6 +63,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/supertest": "^7.2.1",
+    "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.4",
     "concurrently": "^10.0.4",
     "oxlint": "^1.75.0",

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import http from 'node:http';
 import path from 'node:path';
 import { toNodeHandler } from 'better-auth/node';
 import { auth } from './auth.js';
@@ -9,6 +10,7 @@ import { imagesRouter } from './images.js';
 import { sharedRouter } from './sharing.js';
 import { healthRouter } from './health.js';
 import { createApiLimiter } from './rateLimit.js';
+import { COLLAB_PATH, attachCollab } from './collab.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -52,6 +54,12 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// The HTTP server is built by hand rather than by `app.listen`, because the
+// collaboration server needs the `upgrade` event — which only the `http.Server`
+// has, and which `app.listen` creates and keeps to itself.
+const server = http.createServer(app);
+attachCollab(server);
+
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT} (collab on ${COLLAB_PATH})`);
 });
