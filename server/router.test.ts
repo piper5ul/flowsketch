@@ -103,6 +103,9 @@ beforeEach(() => {
   // to `versions.test.ts`; here it only has to stay out of the way, so the
   // newest snapshot is always "just now" and the interval suppresses it.
   prismaMock.diagramVersion.findFirst.mockResolvedValue({ createdAt: new Date() });
+  // The orphan scan reads stored versions as well as live diagrams. A diagram
+  // with no history is the default; the case where one exists is asserted below.
+  prismaMock.diagramVersion.findMany.mockResolvedValue([]);
 });
 
 describe('auth gate', () => {
@@ -590,6 +593,46 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     expect(prismaMock.image.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
     expect(fs.existsSync(sharedFile)).toBe(true);
+  });
+
+  it('keeps a dropped image that only a stored version still draws', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('in-history'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    // Nothing on any live board references it any more…
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    // …but a snapshot of the owner's own diagram still does, and restoring that
+    // snapshot has to bring the picture back with it.
+    prismaMock.diagramVersion.findMany.mockResolvedValue([{ data: bodyWith('in-history').data }]);
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const historicFile = imagePath('u1', 'in-history', 'png');
+    fs.writeFileSync(historicFile, 'x');
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    // Scoped to the owner's own history, as the diagram scan is to their boards.
+    expect(prismaMock.diagramVersion.findMany).toHaveBeenCalledWith({
+      where: { diagram: { userId: 'u1' } },
+      select: { data: true },
+    });
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+    expect(fs.existsSync(historicFile)).toBe(true);
+  });
+
+  it('deletes a dropped image once no version references it either', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    // History exists but draws something else, so it is no reason to keep it.
+    prismaMock.diagramVersion.findMany.mockResolvedValue([{ data: bodyWith('other').data }]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'dropped', mime: 'image/png' }]);
+    prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
+
+    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['dropped'] }, userId: 'u1' },
+    });
   });
 
   it('scans the survivors only after the row is updated', async () => {

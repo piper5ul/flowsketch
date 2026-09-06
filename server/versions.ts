@@ -16,16 +16,17 @@
  * the same request. It is deliberately best-effort: a failed prune leaves extra
  * rows, which is never a reason to fail the write that triggered it.
  *
- * Known gap, tracked as a follow-up: `deleteOrphanImages` (`server/images.ts`)
- * decides an image is dead by scanning **diagrams** only. An image that was
- * edited out of the live board is therefore deleted even while a stored version
- * still draws it, so restoring far enough back can bring back a node whose
- * picture is a 404. Teaching that scan about `DiagramVersion` is the fix; it
- * belongs with the image GC rather than here.
+ * History also keeps images alive. `deleteOrphanImages` (`server/images.ts`)
+ * counts a stored version as a reference, so an image edited off the live board
+ * survives for as long as a snapshot still draws it — which makes *retention*
+ * the moment such an image can become garbage, and the reason `pruneVersions`
+ * reads each surplus row's `data` before deleting it.
  */
 import { Router } from 'express';
 import { prisma } from './db.js';
 import { publicDiagram, requireDiagramRole } from './access.js';
+import { deleteOrphanImages } from './images.js';
+import { imageIdsInDiagram } from './imageRefs.js';
 import { authedUser } from './types.js';
 import { createVersionBody, validateBody, type CreateVersionBody } from './validation.js';
 import type { DiagramVersion, DiagramVersionMeta } from '../shared/types.js';
@@ -98,24 +99,53 @@ function toMeta(row: VersionRow): DiagramVersionMeta {
 }
 
 /**
+ * Free the images the pruned snapshots were the last thing referencing.
+ *
+ * Retention is the other half of the image GC's problem: the scan in
+ * `deleteOrphanImages` now keeps an image alive for as long as *some* version
+ * draws it, so dropping the version that drew it is the moment that image can
+ * become garbage — and nothing else ever revisits it.
+ *
+ * Best-effort and logged, separately from retention itself: by the time this
+ * runs the surplus rows are already gone, and a leftover file on disk is not a
+ * reason to report the prune as failed.
+ */
+async function freeImagesOnlyPrunedVersionsDrew(
+  diagramId: string,
+  ownerId: string,
+  pruned: { data: unknown }[],
+): Promise<void> {
+  const candidateIds = [...new Set(pruned.flatMap((v) => imageIdsInDiagram(v.data)))];
+  if (candidateIds.length === 0) return;
+  try {
+    await deleteOrphanImages(ownerId, candidateIds);
+  } catch (err) {
+    console.error(`Orphan image cleanup after retention failed for diagram ${diagramId}:`, err);
+  }
+}
+
+/**
  * Drop everything past the newest `MAX_VERSIONS` for one diagram.
  *
  * The ids are read first and deleted by id rather than deleting by a timestamp
  * cutoff: a cutoff has to decide what to do with rows sharing the boundary
- * millisecond, and would take the wrong side of it half the time.
+ * millisecond, and would take the wrong side of it half the time. `data` is
+ * read alongside them because once a row is deleted nothing can say which
+ * images it drew.
  *
  * Swallows its own failures — see the retention note at the top of the file.
  */
-async function pruneVersions(diagramId: string): Promise<void> {
+async function pruneVersions(diagramId: string, ownerId: string): Promise<void> {
   try {
     const surplus = await prisma.diagramVersion.findMany({
       where: { diagramId },
       orderBy: [...NEWEST_FIRST],
       skip: maxVersions(),
-      select: { id: true },
+      select: { id: true, data: true },
     });
     if (surplus.length === 0) return;
     await prisma.diagramVersion.deleteMany({ where: { id: { in: surplus.map((v) => v.id) } } });
+    await freeImagesOnlyPrunedVersionsDrew(diagramId, ownerId, surplus);
   } catch (err) {
     console.error(`Version retention failed for diagram ${diagramId}:`, err);
   }
@@ -130,6 +160,12 @@ export interface VersionInput {
   title: string;
   /** The signed-in user whose action produced the snapshot. */
   createdById: string;
+  /**
+   * Who owns the diagram, and therefore whose uploads retention may free.
+   * Not the same person as `createdById` when an editor is the one saving —
+   * an editor's edit frees the owner's files, never their own.
+   */
+  ownerId: string;
   /** Absent on an automatic snapshot. */
   label?: string;
 }
@@ -148,7 +184,7 @@ async function writeVersion(input: VersionInput): Promise<VersionRow> {
     },
     select: { ...META_SELECT },
   });
-  await pruneVersions(input.diagramId);
+  await pruneVersions(input.diagramId, input.ownerId);
   return version;
 }
 
@@ -226,6 +262,7 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
   async (req, res) => {
     const access = await requireDiagramRole(req, res, 'editor', {
       id: true,
+      userId: true,
       data: true,
       title: true,
     });
@@ -236,6 +273,7 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
       data: access.diagram.data,
       title: access.diagram.title,
       createdById: authedUser(req).id,
+      ownerId: access.diagram.userId,
       label: req.body.label,
     });
     res.status(201).json(toMeta(version));
@@ -258,6 +296,7 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
 versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res) => {
   const access = await requireDiagramRole(req, res, 'editor', {
     id: true,
+    userId: true,
     data: true,
     title: true,
   });
@@ -277,6 +316,7 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     data: access.diagram.data,
     title: access.diagram.title,
     createdById: authedUser(req).id,
+    ownerId: access.diagram.userId,
     label: RESTORE_SNAPSHOT_LABEL,
   });
 

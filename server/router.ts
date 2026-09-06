@@ -186,6 +186,7 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
           data: existing.data,
           title: existing.title,
           createdById: authedUser(req).id,
+          ownerId,
         });
       } catch (err) {
         console.error(`Version snapshot failed for diagram ${req.params.id}:`, err);

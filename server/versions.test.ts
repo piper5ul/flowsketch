@@ -1,7 +1,15 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { AuthUser } from './types.js';
+
+// Retention can now delete image files (a snapshot may have been the last thing
+// drawing one), so point the storage layer somewhere disposable.
+const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-versions-uploads-'));
+process.env.UPLOAD_DIR = uploadDir;
 
 const { prismaMock, authState } = vi.hoisted(() => ({
   prismaMock: {
@@ -60,6 +68,7 @@ vi.mock('./middleware.js', () => ({
 const { apiRouter } = await import('./router.js');
 const { DEFAULT_MAX_VERSIONS, DEFAULT_VERSION_INTERVAL_MS, RESTORE_SNAPSHOT_LABEL, maxVersions, versionIntervalMs } =
   await import('./versions.js');
+const { imagePath } = await import('./storage.js');
 
 // The version routes live inside `apiRouter`, so the harness mounts exactly
 // what `index.ts` does — which is also what lets the recording tests drive the
@@ -78,6 +87,14 @@ function board(nodeIds: string[]) {
 
 const BEFORE = board(['a']);
 const AFTER = board(['a', 'b']);
+
+/** Diagram JSON whose single node draws `/api/images/<imageId>`. */
+function boardWithImage(imageId: string) {
+  return {
+    nodes: [{ id: 'n1', type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } }],
+    edges: [],
+  };
+}
 
 /** The access-layer row for a diagram `u1` owns, with `data`/`title` selected. */
 function ownedRow(over: object = {}) {
@@ -118,6 +135,10 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.VERSION_INTERVAL_MS;
   delete process.env.MAX_VERSIONS;
+});
+
+afterAll(() => {
+  fs.rmSync(uploadDir, { recursive: true, force: true });
 });
 
 describe('settings', () => {
@@ -213,13 +234,93 @@ describe('recording on PUT /api/diagrams/:id', () => {
       where: { diagramId: 'd1' },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: 2,
-      select: { id: true },
+      // `data` too: once the row is deleted nothing can say which images it
+      // drew, and retention is the moment those can become garbage.
+      select: { id: true, data: true },
     });
     // …and it is deleted by id, never by a timestamp cutoff that would have to
     // guess about rows sharing the boundary millisecond.
     expect(prismaMock.diagramVersion.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['old1', 'old2'] } },
     });
+  });
+
+  it('frees the images only the pruned versions were still drawing', async () => {
+    process.env.MAX_VERSIONS = '1';
+    prismaMock.diagram.findFirst.mockResolvedValue(ownedRow());
+    prismaMock.diagramVersion.findFirst.mockResolvedValue(null);
+    prismaMock.diagramVersion.findMany
+      // The prune's own read: one surplus snapshot, and it draws `forgotten`.
+      .mockResolvedValueOnce([{ id: 'old1', data: boardWithImage('forgotten') }])
+      // The orphan scan that follows, once that row is gone: no history left.
+      .mockResolvedValue([]);
+    prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: BEFORE }]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'forgotten', mime: 'image/png' }]);
+    prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const forgottenFile = imagePath('u1', 'forgotten', 'png');
+    fs.writeFileSync(forgottenFile, 'x');
+
+    await request(app).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
+
+    // Scoped to the diagram's owner, not to whoever's edit triggered the prune.
+    expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['forgotten'] }, userId: 'u1' },
+    });
+    expect(fs.existsSync(forgottenFile)).toBe(false);
+    // Only after the surplus rows are gone, or they would count as live refs.
+    expect(prismaMock.diagramVersion.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      prismaMock.image.findMany.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('keeps an image a surviving version still draws when another is pruned', async () => {
+    process.env.MAX_VERSIONS = '1';
+    prismaMock.diagram.findFirst.mockResolvedValue(ownedRow());
+    prismaMock.diagramVersion.findFirst.mockResolvedValue(null);
+    prismaMock.diagramVersion.findMany
+      .mockResolvedValueOnce([{ id: 'old1', data: boardWithImage('still-used') }])
+      // The snapshot that was kept draws it too, so it is not garbage.
+      .mockResolvedValue([{ data: boardWithImage('still-used') }]);
+    prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: BEFORE }]);
+
+    await request(app).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
+
+    expect(prismaMock.image.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('still saves the edit when cleaning up after the prune fails', async () => {
+    process.env.MAX_VERSIONS = '1';
+    prismaMock.diagram.findFirst.mockResolvedValue(ownedRow());
+    prismaMock.diagramVersion.findFirst.mockResolvedValue(null);
+    prismaMock.diagramVersion.findMany.mockResolvedValueOnce([
+      { id: 'old1', data: boardWithImage('boom') },
+    ]);
+    prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await request(app).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
+
+    expect(prismaMock.diagram.update).toHaveBeenCalled();
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
+  });
+
+  it('does not look for images when the pruned versions drew none', async () => {
+    process.env.MAX_VERSIONS = '1';
+    prismaMock.diagram.findFirst.mockResolvedValue(ownedRow());
+    prismaMock.diagramVersion.findFirst.mockResolvedValue(null);
+    prismaMock.diagramVersion.findMany.mockResolvedValueOnce([{ id: 'old1', data: BEFORE }]);
+    prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
+
+    await request(app).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
+
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 
   it('still saves the edit when the snapshot fails', async () => {
