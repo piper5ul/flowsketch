@@ -98,8 +98,38 @@ model Diagram {
   members  DiagramMember[]
   versions DiagramVersion[]
   threads  CommentThread[]
+  images   DiagramImage[]
 
   @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// Which uploaded images a diagram's *current* JSON draws — the index behind
+/// every question of the form "does anything still point at this image?".
+///
+/// The reference itself lives inside `Diagram.data`, where Postgres cannot
+/// index it, so answering that question used to mean reading the JSON of every
+/// diagram in scope: once to decide whether a member may fetch an image, once
+/// for a share token, once per garbage-collection pass. A row here per
+/// (diagram, image) pair turns all three into an indexed lookup.
+///
+/// It indexes **live diagrams only**. `DiagramVersion` snapshots also keep an
+/// image alive, and those are still found by scanning — a scan that only runs
+/// for an image already up for collection, which is rare, where the read paths
+/// above run on every request.
+///
+/// Rows are written by `syncDiagramImages` on every write that changes `data`
+/// and are cascaded away with either side, so the table never outlives what it
+/// describes. An existing database is backfilled once by
+/// `scripts/reindex-images.ts` (see DEPLOYMENT.md).
+model DiagramImage {
+  diagramId String
+  imageId   String
+
+  diagram Diagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  image   Image   @relation(fields: [imageId], references: [id], onDelete: Cascade)
+
+  @@id([diagramId, imageId])
+  @@index([imageId])
 }
 
 /// A conversation pinned to a diagram — one thread, one or more comments.
@@ -221,7 +251,8 @@ model Image {
   height    Int?
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  diagrams DiagramImage[]
 
   @@index([userId])
 }

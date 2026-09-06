@@ -32,6 +32,12 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       findMany: vi.fn(),
       deleteMany: vi.fn(),
     },
+    diagramImage: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
+      createMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
     diagramMember: {
       upsert: vi.fn(),
       deleteMany: vi.fn(),
@@ -132,6 +138,13 @@ beforeEach(() => {
   authState.user = testUser;
   prismaMock.diagram.update.mockResolvedValue({ id: 'd1', updatedAt: new Date(1) });
   prismaMock.diagramVersion.create.mockResolvedValue(versionRow());
+  // Every write that carries `data` syncs the `DiagramImage` index; the mock
+  // just runs the statements it batches.
+  prismaMock.$transaction.mockImplementation(async (ops: unknown) => Promise.all(ops as unknown[]));
+  // Nothing is indexed unless a test says so — which is what the collector's
+  // "no live diagram claims this image" case looks like.
+  prismaMock.diagramImage.findMany.mockResolvedValue([]);
+  prismaMock.image.findMany.mockResolvedValue([]);
   nothingToPrune();
 });
 
@@ -258,7 +271,8 @@ describe('recording on PUT /api/diagrams/:id', () => {
       // The orphan scan that follows, once that row is gone: no history left.
       .mockResolvedValue([]);
     prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: BEFORE }]);
+    // No live diagram of the owner's claims it in the index either.
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
     prismaMock.image.findMany.mockResolvedValue([{ id: 'forgotten', mime: 'image/png' }]);
     prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
 
@@ -288,11 +302,12 @@ describe('recording on PUT /api/diagrams/:id', () => {
       // The snapshot that was kept draws it too, so it is not garbage.
       .mockResolvedValue([{ data: boardWithImage('still-used') }]);
     prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
-    prismaMock.diagram.findMany.mockResolvedValue([{ data: BEFORE }]);
 
     await request(server).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
 
-    expect(prismaMock.image.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.findMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ select: { id: true, mime: true } }),
+    );
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
   });
 
@@ -304,7 +319,7 @@ describe('recording on PUT /api/diagrams/:id', () => {
       { id: 'old1', data: boardWithImage('boom') },
     ]);
     prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
-    prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
+    prismaMock.diagramImage.findMany.mockRejectedValue(new Error('database on fire'));
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     await request(server).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
@@ -323,7 +338,7 @@ describe('recording on PUT /api/diagrams/:id', () => {
 
     await request(server).put('/api/diagrams/d1').send({ data: AFTER }).expect(200);
 
-    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.diagramImage.findMany).not.toHaveBeenCalled();
   });
 
   it('still saves the edit when the snapshot fails', async () => {
@@ -544,6 +559,40 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     });
     // The owner's share token is not part of a restore's answer.
     expect(res.body).not.toHaveProperty('shareToken');
+  });
+
+  it('points the image index at the board it restored', async () => {
+    const restored = boardWithImage('was-deleted');
+    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: restored, title: 'Then' });
+    prismaMock.diagram.update.mockResolvedValue({
+      id: 'd1',
+      title: 'Then',
+      data: restored,
+      updatedAt: new Date('2026-09-06T13:00:00.000Z'),
+    });
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'was-deleted' }]);
+
+    await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
+
+    // A restore is a write to `data` like any other: the board it brings back
+    // may draw images the one it replaced did not.
+    expect(prismaMock.diagramImage.createMany).toHaveBeenCalledWith({
+      data: [{ diagramId: 'd1', imageId: 'was-deleted' }],
+      skipDuplicates: true,
+    });
+    expect(prismaMock.diagramImage.deleteMany).toHaveBeenCalledWith({
+      where: { diagramId: 'd1', imageId: { notIn: ['was-deleted'] } },
+    });
+  });
+
+  it('still answers 200 when the index sync fails, the restore having happened', async () => {
+    prismaMock.$transaction.mockRejectedValue(new Error('database on fire'));
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
+
+    expect(logged).toHaveBeenCalled();
+    logged.mockRestore();
   });
 
   it('is allowed to an editor', async () => {

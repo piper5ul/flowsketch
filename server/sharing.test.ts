@@ -25,6 +25,9 @@ const { prismaMock, authState } = vi.hoisted(() => ({
     image: {
       findUnique: vi.fn(),
     },
+    diagramImage: {
+      findFirst: vi.fn(),
+    },
     user: {
       findUnique: vi.fn(),
     },
@@ -80,11 +83,6 @@ const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 );
-
-/** A node drawing `/api/images/<imageId>`, as a diagram stores it. */
-function nodeWithImage(imageId: string) {
-  return { id: 'n1', type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } };
-}
 
 /** The access-layer row for a member of `role` on someone else's diagram. */
 function memberRow(role: 'editor' | 'viewer', row: object = { id: 'd1' }) {
@@ -228,7 +226,7 @@ describe('GET /api/shared/:token/images/:imageId', () => {
 
   it('serves an image the shared diagram draws, unauthenticated', async () => {
     authState.user = null;
-    prismaMock.diagram.findUnique.mockResolvedValue({ data: { nodes: [nodeWithImage('drawn')], edges: [] } });
+    prismaMock.diagramImage.findFirst.mockResolvedValue({ diagramId: 'd1' });
     prismaMock.image.findUnique.mockResolvedValue({
       id: 'drawn',
       userId: 'owner-user',
@@ -240,25 +238,33 @@ describe('GET /api/shared/:token/images/:imageId', () => {
 
     expect(res.headers['content-type']).toBe('image/png');
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
+    // The allow-list is the index, not the diagram's JSON: the board is never
+    // loaded to serve one picture out of it.
+    expect(prismaMock.diagramImage.findFirst).toHaveBeenCalledWith({
+      where: { imageId: 'drawn', diagram: { shareToken: 'tok123' } },
+      select: { diagramId: true },
+    });
+    expect(prismaMock.diagram.findUnique).not.toHaveBeenCalled();
   });
 
   it('404s an image the diagram does not reference, so a token cannot walk the owner\'s uploads', async () => {
-    prismaMock.diagram.findUnique.mockResolvedValue({ data: { nodes: [nodeWithImage('drawn')], edges: [] } });
+    prismaMock.diagramImage.findFirst.mockResolvedValue(null);
 
     await request(server).get('/api/shared/tok123/images/other').expect(404);
 
-    // Never even looked the row up: the diagram's own JSON is the allow-list.
+    // Never even looked the row up: what the diagram references is the allow-list.
     expect(prismaMock.image.findUnique).not.toHaveBeenCalled();
   });
 
   it('404s every image once the token is revoked', async () => {
-    prismaMock.diagram.findUnique.mockResolvedValue(null);
+    // No diagram answers to the token, so no index row joins to one either.
+    prismaMock.diagramImage.findFirst.mockResolvedValue(null);
     await request(server).get('/api/shared/stale-token/images/drawn').expect(404);
     expect(prismaMock.image.findUnique).not.toHaveBeenCalled();
   });
 
   it('404s when the row is referenced but its file is gone', async () => {
-    prismaMock.diagram.findUnique.mockResolvedValue({ data: { nodes: [nodeWithImage('ghost')], edges: [] } });
+    prismaMock.diagramImage.findFirst.mockResolvedValue({ diagramId: 'd1' });
     prismaMock.image.findUnique.mockResolvedValue({
       id: 'ghost',
       userId: 'owner-user',

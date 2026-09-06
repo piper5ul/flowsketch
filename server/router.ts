@@ -4,6 +4,7 @@ import { requireAuth } from './middleware.js';
 import { publicDiagram, requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
+import { syncDiagramImages } from './diagramImages.js';
 import { sharingRouter } from './sharing.js';
 import { commentsRouter } from './comments.js';
 import { recordVersionIfDue, versionsRouter } from './versions.js';
@@ -22,6 +23,26 @@ import {
 function droppedImages(before: unknown, after: unknown): string[] {
   const kept = new Set(imageIdsInDiagram(after));
   return imageIdsInDiagram(before).filter((id) => !kept.has(id));
+}
+
+/**
+ * Point the `DiagramImage` index at what this diagram now draws, reporting
+ * whether it worked.
+ *
+ * Best-effort like the version snapshot and the orphan cleanup: the write the
+ * caller asked for is already committed, and failing their save over an index
+ * they cannot see would be the wrong trade. The boolean is what the callers
+ * use to hold *back* the garbage collector — an index that may be stale is a
+ * reason not to delete anything, never a reason to delete more.
+ */
+async function indexImages(diagramId: string, data: unknown): Promise<boolean> {
+  try {
+    await syncDiagramImages(diagramId, data);
+    return true;
+  } catch (err) {
+    console.error(`Image index sync failed for diagram ${diagramId}:`, err);
+    return false;
+  }
 }
 
 export const apiRouter = Router();
@@ -98,6 +119,10 @@ apiRouter.post<Record<string, string>, unknown, CreateDiagramBody>(
         data: data || { nodes: [], edges: [] },
       },
     });
+    // A create carrying `data` is the import path, and an imported board can
+    // already point at images. Indexing it here is what keeps the image routes
+    // and the GC from having to read its JSON later.
+    await indexImages(diagram.id, diagram.data);
     // The caller owns what they just created, so nothing is stripped — it goes
     // through the serializer so that no diagram-returning route is an exception.
     res.status(201).json(publicDiagram(diagram, 'owner'));
@@ -195,9 +220,12 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
     }
 
     // Only after the row is written, or the pre-edit JSON would still count as
-    // a live reference to the images the edit just removed. A cleanup failure
-    // leaves orphaned files, not a failed PUT: the edit is already saved.
-    if (droppedImageIds.length > 0) {
+    // a live reference to the images the edit just removed — and the index has
+    // to be current before the collector reads it, for the same reason. A
+    // cleanup failure leaves orphaned files, not a failed PUT: the edit is
+    // already saved.
+    const indexed = data === undefined || (await indexImages(req.params.id, data));
+    if (indexed && droppedImageIds.length > 0) {
       try {
         await deleteOrphanImages(ownerId, droppedImageIds);
       } catch (err) {
@@ -251,6 +279,10 @@ apiRouter.post('/diagrams/:id/duplicate', async (req, res) => {
       starred: false,
     },
   });
+  // The copy draws the same images the original did, so it gets the same index
+  // rows — without them the copy would be the only thing referencing an image
+  // and the collector would still call it garbage.
+  await indexImages(copy.id, copy.data);
   // The copy belongs to the caller, so again nothing is stripped; the call is
   // here so that adding a route beside this one inherits the rule.
   res.status(201).json(publicDiagram(copy, 'owner'));
