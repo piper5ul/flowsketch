@@ -55,6 +55,9 @@ const EXCLUDED_SELECTORS = [
   // board, which puts it inside what is captured. A discussion about the
   // drawing is not part of the drawing.
   '.comment-pin',
+  // Likewise a peer's cursor: it is in the viewport so it pans with the board,
+  // and who happened to be looking is not part of the drawing.
+  '.presence-cursor',
   '.react-flow__handle',
   '.quick-add-btn',
   '.connector-joint-hit',

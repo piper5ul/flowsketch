@@ -22,6 +22,7 @@ import { ConnectorMarkerDefs } from '../edges/ConnectorMarkerDefs';
 import { useCollabStore } from '../store/useCollabStore';
 import { useCommentStore, type CommentAnchor } from '../store/useCommentStore';
 import { CommentPins } from './CommentPins';
+import { PresenceCursors } from './PresenceCursors';
 import { LeftRail } from './LeftRail';
 import { FloatingToolbar } from './FloatingToolbar';
 import { BottomBar } from './BottomBar';
@@ -609,6 +610,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="var(--canvas-dot)" className="rf-canvas" />
         <ConnectorMarkerDefs />
         {canComment && <CommentPins />}
+        {canComment && <PresenceCursors />}
         <AlignmentGuides />
         {minimap && <CanvasMiniMap />}
       </ReactFlow>

@@ -436,6 +436,58 @@ a:focus-visible {
   outline-style: solid;
 }
 
+/* A shape somebody else has selected (`PresenceCursors`' other half — the
+   attribute is written by ShapeNode and FrameNode from `usePeerSelection`).
+
+   Drawn in that person's own colour, which is why it is an inline custom
+   property rather than a token: the colour identifies *who*, and it is the same
+   colour as their cursor and their avatar. An `outline`, like a search hit, so
+   the shape keeps exactly the size, fill and stroke its author gave it; thinner
+   and inset less far than your own selection ring, because what it says is
+   "someone is holding this", not "this is yours". */
+[data-peer-selected] {
+  outline: 1.5px solid var(--peer-color, var(--color-accent-500));
+  outline-offset: 1px;
+}
+
+/* Another person's pointer, drawn inside the viewport so it pans and zooms with
+   the board (see `PresenceCursors.tsx`). `presence-cursor` is on the image
+   export's exclusion list: who was looking is not part of the drawing.
+
+   The tip of the arrow sits on the reported point, so nothing is translated —
+   the SVG's own origin is the hot spot. `pointer-events: none` throughout: a
+   peer's cursor must never swallow a click meant for the shape under it. */
+.presence-cursor {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  pointer-events: none;
+  /* Above a selected node (React Flow lifts those to 1000) and above a comment
+     pin, which is the one thing on the board that must stay clickable. */
+  z-index: 1002;
+  white-space: nowrap;
+  /* The peer's own colour, set inline by `PresenceCursors`. Both halves below
+     read it from here: `currentColor` inside the chip would be the chip's own
+     white text, which is how the label came out white on white. */
+  color: var(--peer-color, var(--color-accent-500));
+  /* No transition on `left`/`top`: the position is already throttled, and
+     easing it would put every peer's cursor a frame behind where it is. */
+}
+
+.presence-cursor__name {
+  margin-top: 10px;
+  border-radius: 9999px;
+  background: var(--peer-color, var(--color-accent-500));
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  /* White on any palette colour: the palette is chosen dark enough for it. */
+  color: #fff;
+  box-shadow: 0 2px 8px -2px rgba(10, 10, 25, 0.5);
+}
+
 /* Edge selection joint handles (endpoint markers + draggable bend point) */
 /* White in both themes on purpose: a joint is chrome drawn on top of the user's
    own colours, so it has to read against any fill *and* against either canvas.

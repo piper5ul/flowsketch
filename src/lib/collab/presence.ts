@@ -81,6 +81,20 @@ export function peerColor(userId: string): string {
   return PEER_COLORS[hash % PEER_COLORS.length];
 }
 
+/**
+ * One or two letters standing for a name, for the avatar in the top bar.
+ *
+ * First and last initial of a full name, two letters of a single one. `?` for a
+ * name that is nothing but space: the circle is drawn either way, and an empty
+ * one says less than a question mark does.
+ */
+export function initialsOf(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+}
+
 /** The document a diagram's presence lives on. Mirrored by the server's parser. */
 export function presenceDocumentName(diagramId: string): string {
   return `diagram:${diagramId}`;

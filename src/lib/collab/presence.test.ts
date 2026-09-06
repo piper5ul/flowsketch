@@ -3,6 +3,7 @@ import {
   CURSOR_INTERVAL_MS,
   PEER_COLORS,
   collabUrl,
+  initialsOf,
   peerColor,
   peersFrom,
   presenceDocumentName,
@@ -47,6 +48,32 @@ describe('peerColor', () => {
 
   it('has a colour for the empty id rather than undefined', () => {
     expect(PEER_COLORS).toContain(peerColor(''));
+  });
+});
+
+describe('initialsOf', () => {
+  it('takes the first and last initial of a full name', () => {
+    expect(initialsOf('Ada Lovelace')).toBe('AL');
+    expect(initialsOf('Ada Byron King Lovelace')).toBe('AL');
+  });
+
+  it('takes two letters from a single name', () => {
+    expect(initialsOf('Ada')).toBe('AD');
+  });
+
+  it('survives a one-letter name', () => {
+    expect(initialsOf('A')).toBe('A');
+  });
+
+  it('ignores the padding around and between the words', () => {
+    expect(initialsOf('  ada   lovelace  ')).toBe('AL');
+  });
+
+  it('says something rather than nothing for an empty name', () => {
+    // A name is whatever the account was created with, and the avatar is drawn
+    // either way — an empty circle says less than a question mark does.
+    expect(initialsOf('')).toBe('?');
+    expect(initialsOf('   ')).toBe('?');
   });
 });
 

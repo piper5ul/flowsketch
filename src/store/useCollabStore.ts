@@ -10,6 +10,7 @@
  * timer does — it is not state anything renders, and a re-render must never
  * have to diff it.
  */
+import type { CSSProperties } from 'react';
 import { create } from 'zustand';
 import {
   connectPresence,
@@ -118,4 +119,16 @@ export const useCollabStore = create<CollabState>((set, get) => ({
  */
 export function usePeerSelection(nodeId: string): Peer | undefined {
   return useCollabStore((state) => state.selectionOwners.get(nodeId));
+}
+
+/**
+ * The inline custom property the `[data-peer-selected]` outline takes its
+ * colour from, or nothing at all when no peer holds the node.
+ *
+ * The cast is unavoidable and is kept here rather than at each call site:
+ * `CSSProperties` has no room for a custom property, and the colour cannot come
+ * from a class — it identifies a person, not a state.
+ */
+export function peerOutlineStyle(peer: Peer | undefined): CSSProperties | undefined {
+  return peer ? ({ '--peer-color': peer.color } as CSSProperties) : undefined;
 }
