@@ -163,6 +163,28 @@ describe('store -> doc', () => {
     expect(docToDiagramData(doc).nodes[0].position).toEqual({ x: 77, y: 0 });
   });
 
+  it('replaces the document when a version is restored onto the open diagram', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('rectangle', { x: 0, y: 0 });
+    store().addShape('ellipse', { x: 200, y: 0 });
+
+    let updates = 0;
+    doc.on('update', () => { updates += 1; });
+
+    // What `HistoryPanel` does with the restore response: the same
+    // `loadDiagram` every open goes through, which the binding sees as one edit.
+    store().loadDiagram('test', 'Restored', false, {
+      version: 3,
+      nodes: [{ id: 'old', type: 'shape', position: { x: 9, y: 9 }, data: { label: 'Old' } }],
+      edges: [],
+    });
+
+    expect(updates).toBe(1);
+    expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['old']);
+    expect(docToDiagramData(doc)).toEqual(snapshot());
+  });
+
   it('writes nothing at all for a viewer', () => {
     const doc = new Y.Doc();
     bind(doc, { readOnly: true });

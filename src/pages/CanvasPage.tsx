@@ -109,11 +109,16 @@ export function CanvasPage() {
     return () => { cancelled = true; };
   }, [id, loadDiagram, navigate]);
 
-  // Presence, for as long as this diagram is open. Not gated on `readOnly`: a
-  // viewer is entitled to see who else is here and to be seen, which is what
-  // the server means by connecting them read-only rather than refusing them.
+  // The collaboration socket, for as long as this diagram is open: presence,
+  // and the shared document the diagram itself now lives in. Not gated on
+  // `readOnly` — a viewer is entitled to see who else is here, to be seen, and
+  // to watch the board change under them, which is what the server means by
+  // connecting them read-only rather than refusing them. Their binding is
+  // one-way; nothing on their canvas is written back.
+  //
   // The public `/s/:token` page never reaches this component, so an anonymous
-  // reader is left out by construction — there is no session to name them by.
+  // reader is left out by construction — there is no session to name them by,
+  // and no document to give them.
   //
   // Depends on the two fields rather than on `session.user`, which better-auth
   // hands back as a fresh object on every render: the identity of that object
@@ -122,13 +127,21 @@ export function CanvasPage() {
   const userName = session?.user.name;
   useEffect(() => {
     if (loading || loadError || !id || !userId || !userName) return;
-    useCollabStore.getState().connect(id, { id: userId, name: userName }, window.location.origin);
+    useCollabStore
+      .getState()
+      .connect(id, { id: userId, name: userName }, window.location.origin, { readOnly });
     return () => useCollabStore.getState().disconnect();
-  }, [loading, loadError, id, userId, userName]);
+  }, [loading, loadError, id, userId, userName, readOnly]);
 
   useEffect(() => {
     if (loading || loadError || !id || readOnly) return;
 
+    // Still the same loop for a diagram that is not collaborative (no session
+    // on the socket, or a server that refused it). For one that is, the
+    // document is the save and `saveDiagram` writes nothing: what it does is
+    // ask whether this browser's edits have reached the server, so the
+    // indicator, the retry backoff and the `pagehide` flush all keep working
+    // and none of them sends a whole copy of the board.
     const autosaver = createAutosaver({
       save: async () => {
         const outcome = await useDiagramStore.getState().saveDiagram();

@@ -1,18 +1,22 @@
 /**
- * Presence: who else has this diagram open, where their pointer is and what
- * they have selected.
+ * The collaboration connection: who else has this diagram open, where their
+ * pointer is, what they have selected — and, from phase 2, the document their
+ * edits and yours travel in.
  *
- * It rides Yjs **awareness**, which is the part of the CRDT that is deliberately
- * not the document — it is not persisted, it is dropped the moment a client goes
- * away, and it never enters the undo history. Phase 1 of `docs/realtime.md` is
- * awareness and nothing else: the `Y.Doc` behind the connection exists but stays
- * empty, and no diagram content travels over this socket yet.
+ * Presence rides Yjs **awareness**, which is the part of the CRDT that is
+ * deliberately not the document: it is not persisted, it is dropped the moment
+ * a client goes away, and it never enters the undo history. The diagram itself
+ * rides the `Y.Doc` this exposes as `document`; `src/lib/collab/binding.ts` is
+ * what ties that to the store, and it is tied only once `onSynced` has fired —
+ * the document is the source of truth, and binding to one that is still empty
+ * because the first message has not arrived would empty the canvas.
  *
  * Everything here except `connectPresence` is pure, because that is where the
  * decisions are: what colour someone gets, who counts as a peer, and how often a
  * moving pointer is allowed to speak.
  */
 import { HocuspocusProvider } from '@hocuspocus/provider';
+import type * as Y from 'yjs';
 
 /** A pointer position, in flow coordinates — never screen pixels. */
 export interface PresenceCursor {
@@ -247,16 +251,40 @@ export interface ConnectPresenceOptions {
   /** Called with the peer list whenever anybody's awareness changes. */
   onPeers: (peers: Peer[]) => void;
   onStatus: (status: PresenceStatus) => void;
+  /**
+   * Called once the server's first document message has been applied — the
+   * moment the `Y.Doc` really holds this diagram and may be bound to the store.
+   * Fires again after a reconnect, so the callback has to be idempotent.
+   */
+  onSynced?: () => void;
 }
 
 export interface PresenceConnection {
+  /** The shared document. Empty until `onSynced` has fired. */
+  document: Y.Doc;
   /** Report the pointer, in flow coordinates, or `null` when it leaves. */
   setCursor: (cursor: PresenceCursor | null) => void;
   /** Report which nodes are selected. */
   setSelection: (nodeIds: string[]) => void;
+  /**
+   * Resolves `true` once everything written locally has reached the server, or
+   * `false` if that has not happened within `FLUSH_TIMEOUT_MS`.
+   *
+   * This is what "saved" means for a collaborative diagram: the document is the
+   * save, so there is nothing to `PUT` — but the autosave loop still wants to
+   * know whether the edit has actually left the browser.
+   */
+  flush: () => Promise<boolean>;
   /** Close the socket and stop reporting. */
   destroy: () => void;
 }
+
+/**
+ * How long `flush` waits for the socket before reporting the edit as still in
+ * hand. Generous: a reconnect is worth waiting out, and the caller's answer to
+ * "no" is to ask again on a backoff rather than to lose anything.
+ */
+export const FLUSH_TIMEOUT_MS = 8000;
 
 /**
  * Opens the presence connection for one open diagram.
@@ -272,6 +300,7 @@ export function connectPresence({
   origin,
   onPeers,
   onStatus,
+  onSynced,
 }: ConnectPresenceOptions): PresenceConnection {
   const provider = new HocuspocusProvider({
     url: collabUrl(origin),
@@ -281,6 +310,9 @@ export function connectPresence({
     // presence, and a viewer whose access was revoked mid-session is already
     // being told so by the next thing they try to do.
     onAuthenticationFailed: () => onStatus('disconnected'),
+    // The document has arrived: from here it, and not the JSON the page loaded
+    // over HTTP, is what this diagram is.
+    onSynced: () => onSynced?.(),
   });
 
   const state: PresenceState = {
@@ -308,7 +340,30 @@ export function connectPresence({
     provider.setAwarenessField('cursor', cursor);
   }, CURSOR_INTERVAL_MS);
 
+  /** Resolves once the provider has nothing left to send, or gives up. */
+  const flush = () =>
+    new Promise<boolean>((resolve) => {
+      const settled = () => provider.isSynced && !provider.hasUnsyncedChanges;
+      if (settled()) {
+        resolve(true);
+        return;
+      }
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = (ok: boolean) => {
+        if (timer) clearTimeout(timer);
+        provider.off('synced', check);
+        provider.off('unsyncedChanges', check);
+        resolve(ok);
+      };
+      const check = () => { if (settled()) finish(true); };
+      provider.on('synced', check);
+      provider.on('unsyncedChanges', check);
+      timer = setTimeout(() => finish(false), FLUSH_TIMEOUT_MS);
+    });
+
   return {
+    document: provider.document,
+    flush,
     setCursor: (cursor) => {
       // Leaving the canvas is not a move: it takes effect at once, or a cursor
       // could be left hanging where the pointer last was until it comes back.

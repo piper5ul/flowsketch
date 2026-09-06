@@ -314,6 +314,32 @@ export type SaveStatus =
  */
 export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'skipped';
 
+/**
+ * How a collaborative diagram is written: not at all, by this module.
+ *
+ * Once the Yjs document is bound (`src/lib/collab/binding.ts`), the document
+ * *is* the save — the server renders `Diagram.data` from it — so `saveDiagram`
+ * must not `PUT` a whole copy of the board over the top of everybody's merged
+ * edits. What it does instead is ask whether this browser's edits have reached
+ * the server, which is the same question "Saved" has always answered.
+ *
+ * Registered from outside rather than imported, for the reason
+ * `setUnauthorizedHandler` is: `useCollabStore` reads this store, and an import
+ * the other way would be a cycle. `null` means the open diagram is not
+ * collaborative — a public share page, or a session whose socket was refused —
+ * and the JSON save below is still the only thing writing it.
+ */
+let flushDocument: (() => Promise<boolean>) | null = null;
+
+export function setDocumentFlush(flush: (() => Promise<boolean>) | null): void {
+  flushDocument = flush;
+}
+
+/** True while the open diagram's contents are being written to the document. */
+export function isDocumentBound(): boolean {
+  return flushDocument !== null;
+}
+
 /** Where the row actually is, once a save has been refused as stale. */
 export interface SaveConflict {
   /** The `updatedAt` the server reports — i.e. what another tab wrote. */
@@ -821,6 +847,22 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
+
+    // A collaborative diagram is already being written, continuously, by the
+    // socket. There is no body to send and no `ifUnmodifiedSince` to send it
+    // with — the conflict this tab used to be refused for is now a merge — so
+    // all that is left is to report whether the edit has left the browser. A
+    // "no" is a dropped socket, which the autosaver retries like any failure.
+    if (flushDocument) {
+      const flushed = await flushDocument();
+      if (flushed) {
+        set({ saveStatus: 'saved', conflict: null });
+        return 'saved';
+      }
+      set({ saveStatus: saveStatus === 'retrying' ? 'retrying' : 'error' });
+      return 'error';
+    }
+
     try {
       const result = await api.saveDiagram(
         diagramId,
