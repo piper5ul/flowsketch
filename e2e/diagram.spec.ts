@@ -200,3 +200,32 @@ test('an edit made inside the autosave debounce window survives navigating away'
   await page.getByText('Untitled').first().click();
   await expect(page.locator('.react-flow__node', { hasText: 'Saved on the way out' })).toBeVisible();
 });
+
+test('deleting a diagram from the dashboard asks for confirmation first', async ({ page }) => {
+  await signUp(page);
+
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  await page.getByRole('button', { name: 'Back to dashboard' }).click();
+
+  const card = page.getByText('Untitled').first();
+  await expect(card).toBeVisible();
+  const menuButton = page.getByRole('button', { name: 'Diagram actions' });
+
+  // Cancelling leaves the diagram alone.
+  await card.hover();
+  await menuButton.click();
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await expect(page.getByText('Delete this diagram?')).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel' }).click();
+  await expect(page.getByText('Delete this diagram?')).toBeHidden();
+  await expect(card).toBeVisible();
+
+  // Confirming removes it.
+  await card.hover();
+  await menuButton.click();
+  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirm delete' }).click();
+  await expect(page.getByRole('heading', { name: 'No diagrams yet' })).toBeVisible();
+  await expect(page.getByText('Untitled')).toHaveCount(0);
+});
