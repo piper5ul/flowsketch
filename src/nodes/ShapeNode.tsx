@@ -6,6 +6,7 @@ import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { Direction, FontSize, VerticalAlign } from '../types';
 import { isDarkFill } from '../lib/palette';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { useShiftKey } from '../lib/useShiftKey';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
 
@@ -33,6 +34,9 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
+  // Holding ⇧ while dragging a corner locks the aspect ratio, as in every
+  // other design tool. Image nodes are locked whether or not it is held.
+  const shiftHeld = useShiftKey();
   const ref = useRef<HTMLDivElement>(null);
   const shapeRef = useRef<HTMLDivElement>(null);
 
@@ -296,6 +300,7 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
 
       <NodeResizer
         isVisible={selected && !isLocked}
+        keepAspectRatio={shiftHeld}
         minWidth={60}
         minHeight={40}
         lineStyle={{ borderColor: 'transparent', borderWidth: 6 }}
