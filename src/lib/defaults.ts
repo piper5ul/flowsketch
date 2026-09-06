@@ -2,7 +2,7 @@
  * Defaults for freshly created elements. One home for the values the canvas,
  * the store and the toolbars all have to agree on.
  */
-import type { ArrowStyle, ConnectorData, ConnectorKind, StrokeWidth } from '../types';
+import type { ArrowStyle, ConnectorData, ConnectorKind, StrokeWidth } from '../types.js';
 
 /** Every connector starts this colour, and it is the fallback when data is missing. */
 export const DEFAULT_EDGE_STROKE = '#6B7080';

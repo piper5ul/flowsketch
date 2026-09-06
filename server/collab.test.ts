@@ -12,13 +12,20 @@ import type { Hocuspocus, onAuthenticatePayload, ConnectionConfiguration } from 
 import type { AddressInfo } from 'node:net';
 import { serveForFile } from './testServer.js';
 
-const { authMock, accessMock } = vi.hoisted(() => ({
+const { authMock, accessMock, prismaMock } = vi.hoisted(() => ({
   authMock: { api: { getSession: vi.fn() } },
   accessMock: { getDiagramAccess: vi.fn() },
+  // The persistence extension queries on every document load. Answering
+  // "nothing stored, no such diagram" is what leaves the documents in this file
+  // empty — presence is all that is under test here, and the persistence rules
+  // have `collabPersistence.test.ts` to themselves.
+  prismaMock: {
+    diagramDoc: { findUnique: vi.fn(async () => null), upsert: vi.fn(async () => ({})) },
+    diagram: { findUnique: vi.fn(async () => null), update: vi.fn(async () => ({})) },
+  },
 }));
 
-// Never constructed: `access.js` is mocked, and nothing else here reaches it.
-vi.mock('./db.js', () => ({ prisma: {} }));
+vi.mock('./db.js', () => ({ prisma: prismaMock }));
 vi.mock('./auth.js', () => ({ auth: authMock }));
 vi.mock('./access.js', () => accessMock);
 

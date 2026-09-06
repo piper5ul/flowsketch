@@ -10,10 +10,10 @@
  * Adding a version: bump `CURRENT_DIAGRAM_VERSION`, add a `vN -> vN+1` step to
  * `MIGRATIONS`, and leave the earlier steps alone.
  */
-import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types';
-import type { ArrowStyle, StrokeWidth } from '../types';
-import { computeMarkers } from './edgeMarkers';
-import { DEFAULT_EDGE_STROKE } from './defaults';
+import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
+import type { ArrowStyle, StrokeWidth } from '../types.js';
+import { computeMarkers } from './edgeMarkers.js';
+import { DEFAULT_EDGE_STROKE } from './defaults.js';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 3;

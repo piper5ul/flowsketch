@@ -1,5 +1,5 @@
-import type { ArrowStyle, ConnectorData, StrokeWidth } from '../types';
-import { DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from './defaults';
+import type { ArrowStyle, ConnectorData, StrokeWidth } from '../types.js';
+import { DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from './defaults.js';
 
 /**
  * Arrowhead size, in px, for each line width. An arrowhead is sized rather
