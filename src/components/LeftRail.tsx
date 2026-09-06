@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CornerDownRight,
   ChevronRight,
+  Frame,
   Shapes,
   Spline,
 } from 'lucide-react';
@@ -84,7 +85,32 @@ const MORE_SHAPE_TOOLS: { tool: ShapeTool; shortcut?: string }[] = [
   { tool: 'arrow' },
 ];
 
-const MORE_SHAPE_SET = new Set<Tool>(MORE_SHAPE_TOOLS.map((s) => s.tool));
+/**
+ * What the "More shapes" popover offers, in grid order.
+ *
+ * Every entry but the last names a `ShapeKind`, so its icon and label come from
+ * the shared shape tables. A frame is not a shape — it is a section other
+ * shapes go into — so it brings its own, and lives here rather than on the rail
+ * itself because it is drawn far less often than a rectangle.
+ */
+const MORE_TOOLS: {
+  tool: Tool;
+  label: string;
+  // Wider than `LucideIcon`: the shape table's icons are hand-drawn components
+  // of its own, and this list holds both.
+  Icon: React.ComponentType<{ size?: number }>;
+  shortcut?: string;
+}[] = [
+  ...MORE_SHAPE_TOOLS.map(({ tool, shortcut }) => ({
+    tool: tool as Tool,
+    label: SHAPE_LABELS[tool],
+    Icon: SHAPE_ICONS[tool],
+    shortcut,
+  })),
+  { tool: 'frame', label: 'Frame', Icon: Frame, shortcut: 'F' },
+];
+
+const MORE_SHAPE_SET = new Set<Tool>(MORE_TOOLS.map((s) => s.tool));
 
 function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: string }) {
   const active = useDiagramStore((s) => s.tool === tool);
@@ -118,10 +144,9 @@ function MoreShapesMenu() {
           className="panel-in z-50 rounded-2xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
         >
           <div className="grid grid-cols-5 gap-0.5">
-            {MORE_SHAPE_TOOLS.map(({ tool: kind, shortcut }) => {
-              const Icon = SHAPE_ICONS[kind];
+            {MORE_TOOLS.map(({ tool: kind, label, Icon, shortcut }) => {
               return (
-                <Tooltip key={kind} label={SHAPE_LABELS[kind]} shortcut={shortcut} side="top">
+                <Tooltip key={kind} label={label} shortcut={shortcut} side="top">
                   <button
                     onClick={() => {
                       setTool(kind);

@@ -40,7 +40,7 @@ const QUICK_ADD: { direction: Direction; style: React.CSSProperties }[] = [
   { direction: 'left', style: { left: -12, top: '50%', transform: 'translateY(-50%)' } },
 ];
 
-export function ShapeNode({ id, data, width, height, selected }: NodeProps<ShapeNodeType>) {
+export function ShapeNode({ id, data, width, height, selected, parentId }: NodeProps<ShapeNodeType>) {
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const setNodeSizeTransient = useDiagramStore((s) => s.setNodeSizeTransient);
   const addConnectedShape = useDiagramStore((s) => s.addConnectedShape);
@@ -122,6 +122,8 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   if (isImageNode) {
     return (
       <div
+        data-node-type="shape"
+        data-parent-id={parentId}
         data-search-hit={searchHit}
         className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       >
@@ -239,6 +241,11 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   return (
     <div
       data-shape={data.shape}
+      // The container this shape belongs to, if any — absent when it sits on
+      // the board itself. Rendered so a test can read the parenting a drop into
+      // a frame produced without reaching into the store.
+      data-node-type="shape"
+      data-parent-id={parentId}
       data-search-hit={searchHit}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       style={wrapperStyle}

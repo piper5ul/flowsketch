@@ -41,6 +41,9 @@ import type { ShapeData, ShapeKind, Tool } from '../types';
 const GRID_SIZE = 10;
 const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 
+/** Half a new frame's box, so the click that places one lands in its middle. */
+const FRAME_OFFSET = { x: 240, y: 160 };
+
 function isTypingTarget(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false;
   return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
@@ -60,6 +63,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
   const onConnect = useDiagramStore((s) => s.onConnect);
   const addShape = useDiagramStore((s) => s.addShape);
+  const addFrame = useDiagramStore((s) => s.addFrame);
   const tool = useDiagramStore((s) => s.tool);
   const setTool = useDiagramStore((s) => s.setTool);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
@@ -74,6 +78,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // what the top bar's presence stands for: the public `/s/:token` page mounts
   // this same canvas with nobody behind it.
   const canComment = topBar;
+
+  /** True while a tool that places something is held, rather than Select or Pan. */
+  const isDrawingTool = tool === 'connector' || tool === 'frame' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
@@ -214,8 +221,66 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     [],
   );
 
+  /**
+   * Drops whatever the active drawing tool places, centred on the click, and
+   * returns to Select.
+   *
+   * Its own callback because a frame covers a large part of the board once it
+   * is there: a click inside one is a click on a *node*, not on the pane, so
+   * the shape tools have to be servable from both handlers or nothing could be
+   * drawn inside a frame.
+   */
+  const placeTool = useCallback(
+    (event: { clientX: number; clientY: number }) => {
+      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      // Clicking a node to draw through it also selects it, and React Flow
+      // lifts a selected node a thousand z-indices — which would leave a frame
+      // sitting on top of the shape just dropped into it, swallowing the drag
+      // that is meant to make it a child. Placing something is not selecting
+      // what it was placed over.
+      const state = useDiagramStore.getState();
+      if (state.nodes.some((n) => n.selected) || state.edges.some((e) => e.selected)) {
+        useDiagramStore.setState({
+          nodes: state.nodes.map((n) => ({ ...n, selected: false })),
+          edges: state.edges.map((e) => ({ ...e, selected: false })),
+        });
+      }
+      if (tool === 'frame') {
+        addFrame({ x: point.x - FRAME_OFFSET.x, y: point.y - FRAME_OFFSET.y });
+        setTool('select');
+        return;
+      }
+      if (!SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) return;
+      const shape = tool as ShapeKind;
+      const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
+      addShape(shape, { x: point.x - sizeOffset.x, y: point.y - sizeOffset.y });
+      setTool('select');
+    },
+    [tool, screenToFlowPosition, addShape, addFrame, setTool],
+  );
+
+  /**
+   * Where a drag lands decides which frame the dragged nodes are in — dropped
+   * inside one they join it, dragged out of one they leave. The store converts
+   * the positions so nothing moves on screen, and records nothing at all when
+   * nothing changed hands.
+   */
+  const onNodeDragStop = useCallback(
+    (_event: MouseEvent | TouchEvent, _node: ShapeNode, nodes: ShapeNode[]) => {
+      useDiagramStore.getState().reparentByPosition(nodes.map((n) => n.id));
+    },
+    [],
+  );
+
   const onNodeClick = useCallback(
-    (_event: React.MouseEvent, node: ShapeNode) => {
+    (event: React.MouseEvent, node: ShapeNode) => {
+      // A frame is a node, so a click inside one never reaches `onPaneClick`.
+      // Drawing tools are served here too, or a frame would be a hole in the
+      // board that nothing could be drawn into.
+      if (tool === 'frame' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) {
+        placeTool(event);
+        return;
+      }
       if (tool !== 'connector') return;
       // A floating arrow's endpoints are not shapes the user can connect to.
       if (isAnchorNode(node.data)) return;
@@ -239,7 +304,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       });
       connectorSourceRef.current = null;
     },
-    [tool, addEdges, defaultConnector],
+    [tool, addEdges, defaultConnector, placeTool],
   );
 
   const onPaneClick = useCallback(
@@ -285,14 +350,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         return;
       }
 
-      if (!SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) return;
-      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
-      const shape = tool as ShapeKind;
-      const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
-      addShape(shape, { x: position.x - sizeOffset.x, y: position.y - sizeOffset.y });
-      setTool('select');
+      placeTool(event);
     },
-    [tool, screenToFlowPosition, addShape, setTool, setEditingNodeId, addNodes, addEdges, defaultConnector],
+    [tool, screenToFlowPosition, setTool, setEditingNodeId, addNodes, addEdges, defaultConnector, placeTool],
   );
 
   // A fresh connector renders no label element, so there is nothing to
@@ -467,6 +527,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         onNodeClick={onNodeClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
+        onNodeDragStop={onNodeDragStop}
         // A read-only board used to have no menus at all, every item on them
         // being an edit. "Comment" is the exception — writing one is a
         // viewer's right — so the two menus that offer it open for a signed-in
@@ -493,7 +554,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         // React Flow's own three gates. Dragging and connecting are edits; and
         // with nothing selectable there is no selection for the floating
         // toolbar to act on, which is the belt to the braces of not rendering it.
-        nodesDraggable={!readOnly && tool !== 'connector'}
+        // Nothing is draggable while a drawing tool is held either: a click on
+        // a node is how a shape is placed inside a frame, and a drag would
+        // shove the frame around instead of dropping anything into it.
+        nodesDraggable={!readOnly && !isDrawingTool}
         nodesConnectable={!readOnly}
         elementsSelectable={!readOnly}
         panOnScroll
@@ -510,7 +574,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         fitView={!opening.viewport}
         fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         defaultViewport={opening.viewport ?? { x: 0, y: 0, zoom: 0.8 }}
-        className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOL_KINDS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
+        className={`${tool === 'pan' ? 'cursor-grab' : isDrawingTool ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
         proOptions={{ hideAttribution: true }}
       >
         {/* Both the backdrop and the dots come from the theme tokens, so the

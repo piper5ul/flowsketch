@@ -12,6 +12,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Change a shape into another kind from the floating toolbar's **Shape** button — the label, size and colors stay put
 - Resize any shape by dragging selection handles
 - Smart alignment guides that snap to neighboring shapes while dragging
+- **Groups** — select two or more shapes and press `⌘G` to make them move as one. A group draws nothing of its own: a dashed outline when you point at it or select it, and nothing at all otherwise, so it never appears in an export. Groups nest, deleting one deletes what is inside it, and copying one copies its contents. `⌘⇧G` lets them go again
 
 ### Connectors
 - **Elbow (Manhattan) routing** with automatic obstacle avoidance
@@ -41,6 +42,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 
 ### Canvas
 - Infinite pan and zoom canvas
+- **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Unlike a group, a frame is part of the drawing and appears in exports
 - Undo / redo history
 - Export to PNG
 - Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
@@ -95,6 +97,7 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `Y` | Cylinder |
 | `S` / `N` | Sticky note |
 | `T` | Text |
+| `F` | Frame |
 | `A` / `L` | Connector |
 
 Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.
@@ -122,6 +125,8 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `[` | Send selection to back |
 | `⌘]` | Bring selection forward |
 | `⌘[` | Send selection backward |
+| `⌘G` | Group the selection (needs 2 shapes) |
+| `⌘⇧G` | Ungroup the selected group(s) |
 | `⌘⇧L` | Lock / unlock selection |
 | `⌥⇧` + arrows | Align the selection left / right / top / bottom (needs 2 shapes) |
 | `⌥⇧H` / `⌥⇧V` | Align the selection on its horizontal / vertical centre line |
