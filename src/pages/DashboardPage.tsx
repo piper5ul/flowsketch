@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
 import {
   Plus,
   Star,
@@ -12,22 +13,32 @@ import {
   Pencil,
   Search,
   Upload,
+  ArrowLeft,
+  FolderInput,
+  PanelLeft,
 } from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
 import {
+  ALL_DIAGRAMS,
   DIAGRAM_SORTS,
+  applyFolderSelection,
+  countByFolder,
   filterDiagrams,
   loadDiagrams,
+  loadFolders,
   sortDiagrams,
   splitByOwnership,
   type DiagramSort,
+  type FolderSelection,
 } from '../lib/diagramList';
 import { parseDiagramExport } from '../lib/diagramFile';
 import { migrateDiagramData } from '../lib/diagramMigrations';
-import type { DiagramData, DiagramMeta } from '../../shared/types';
+import type { DiagramData, DiagramMeta, FolderInfo } from '../../shared/types';
 import { Tooltip, TooltipProvider } from '../components/Tooltip';
 import { Toasts } from '../components/Toasts';
+import { FolderSidebar } from '../components/FolderSidebar';
+import { DIAGRAM_DRAG_TYPE } from '../lib/diagramDrag';
 import { toastError } from '../store/useToastStore';
 
 /** How many placeholder cards fill the grid while the list is loading. */
@@ -42,12 +53,19 @@ export function DashboardPage() {
   const { data: session } = useSession();
   const navigate = useNavigate();
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
+  const [folders, setFolders] = useState<FolderInfo[]>([]);
   const [listState, setListState] = useState<ListState>('loading');
   const [menuOpen, setMenuOpen] = useState<string | null>(null);
   // Set to a diagram id while its menu is showing the delete confirmation.
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  // Set to a diagram id while its menu is showing the folder picker.
+  const [movingToFolder, setMovingToFolder] = useState<string | null>(null);
   // Set to a diagram id while its title is being edited in place.
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [selection, setSelection] = useState<FolderSelection>(ALL_DIAGRAMS);
+  // Only consulted below the sidebar's breakpoint, where the rail is a panel
+  // the user opens rather than a column that is always there.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [sort, setSort] = useState<DiagramSort>('updated');
   const fileInput = useRef<HTMLInputElement>(null);
@@ -56,22 +74,41 @@ export function DashboardPage() {
   // pinned to the front of the list it is in, not lifted out of it, and a
   // search that matches nothing of the user's own can still match one of the
   // diagrams they have been invited to.
+  //
+  // The sidebar's selection narrows first, so search and sort apply to what is
+  // on screen rather than to the whole account — searching inside a folder
+  // finds what is in that folder.
   const { owned, shared } = useMemo(() => {
     const arrange = (list: DiagramMeta[]) => sortDiagrams(filterDiagrams(list, query), sort);
-    const split = splitByOwnership(diagrams);
-    return { owned: arrange(split.owned), shared: arrange(split.shared) };
-  }, [diagrams, query, sort]);
+    const sections = applyFolderSelection(splitByOwnership(diagrams), selection);
+    return { owned: arrange(sections.owned), shared: arrange(sections.shared) };
+  }, [diagrams, query, sort, selection]);
 
-  // Opening or closing a menu always drops any confirmation it was showing, so
-  // a menu never reopens mid-confirm.
+  // Counted from the loaded list rather than from `FolderInfo.diagramCount`, so
+  // the number beside a folder follows a move immediately.
+  const folderCounts = useMemo(() => countByFolder(diagrams), [diagrams]);
+  const hasShared = useMemo(() => diagrams.some((d) => d.role !== 'owner'), [diagrams]);
+
+  const selectedFolderName =
+    selection.kind === 'folder' ? folders.find((f) => f.id === selection.id)?.name : undefined;
+  /** The heading over the owned grid, or `null` for the unnarrowed dashboard. */
+  const sectionTitle =
+    selection.kind === 'starred' ? 'Starred' : selection.kind === 'folder' ? selectedFolderName ?? '' : null;
+
+  // Opening or closing a menu always drops any confirmation or folder picker it
+  // was showing, so a menu never reopens mid-confirm.
   const openMenu = useCallback((id: string | null) => {
     setMenuOpen(id);
     setConfirmingDelete(null);
+    setMovingToFolder(null);
   }, []);
 
   const refresh = useCallback(async () => {
     setListState('loading');
-    const result = await loadDiagrams();
+    // Both at once: the sidebar and the grid are one screen, and a folder rail
+    // that arrives a beat after the cards it filters is a layout that jumps.
+    const [result, folderList] = await Promise.all([loadDiagrams(), loadFolders()]);
+    setFolders(folderList);
     if (!result.ok) {
       setListState('error');
       return;
@@ -158,6 +195,60 @@ export function DashboardPage() {
     }
   }, [diagrams]);
 
+  const createFolder = useCallback(async (name: string) => {
+    try {
+      const folder = await api.createFolder(name);
+      // Appended, because the server lists folders oldest first.
+      setFolders((prev) => [...prev, folder]);
+    } catch {
+      toastError('Could not create the folder. Please try again.');
+    }
+  }, []);
+
+  const renameFolder = useCallback(async (id: string, name: string) => {
+    const previous = folders.find((f) => f.id === id);
+    if (!previous) return;
+    // Optimistic: the sidebar was just typed into, so it follows the keystrokes.
+    setFolders((prev) => prev.map((f) => (f.id === id ? { ...f, name } : f)));
+    try {
+      await api.renameFolder(id, name);
+    } catch {
+      setFolders((prev) => prev.map((f) => (f.id === id ? previous : f)));
+      toastError('Could not rename the folder. Please try again.');
+    }
+  }, [folders]);
+
+  const deleteFolder = useCallback(async (id: string) => {
+    try {
+      await api.deleteFolder(id);
+    } catch {
+      toastError('Could not delete the folder. Please try again.');
+      return;
+    }
+    setFolders((prev) => prev.filter((f) => f.id !== id));
+    // The server unfiles them rather than deleting them, so the cards stay —
+    // they simply come back to All diagrams.
+    setDiagrams((prev) => prev.map((d) => (d.folderId === id ? { ...d, folderId: null } : d)));
+    // A view of a folder that is gone is a view of nothing.
+    setSelection((current) => (current.kind === 'folder' && current.id === id ? ALL_DIAGRAMS : current));
+  }, []);
+
+  /** Files a diagram into `folderId`, or back to the root for `null`. */
+  const moveDiagram = useCallback(async (id: string, folderId: string | null) => {
+    openMenu(null);
+    const current = diagrams.find((d) => d.id === id);
+    if (!current || current.folderId === folderId) return;
+    // Optimistic, because the card has to leave the grid it was dragged out of
+    // straight away — the round trip would leave it sitting in the old folder.
+    setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, folderId } : d)));
+    try {
+      await api.moveDiagramToFolder(id, folderId);
+    } catch {
+      setDiagrams((prev) => prev.map((d) => (d.id === id ? { ...d, folderId: current.folderId } : d)));
+      toastError('Could not move the diagram. Please try again.');
+    }
+  }, [diagrams, openMenu]);
+
   const handleSignOut = useCallback(async () => {
     await signOut();
     navigate('/login');
@@ -170,8 +261,13 @@ export function DashboardPage() {
       diagram={d}
       menuOpen={menuOpen === d.id}
       confirmingDelete={confirmingDelete === d.id}
+      movingToFolder={movingToFolder === d.id}
+      folders={folders}
       renaming={renaming === d.id}
       onOpen={() => navigate(`/d/${d.id}`)}
+      onRequestMove={() => setMovingToFolder(d.id)}
+      onCancelMove={() => setMovingToFolder(null)}
+      onMove={(folderId) => moveDiagram(d.id, folderId)}
       onToggleStar={(e) => toggleStar(d.id, e)}
       onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
       onRequestDelete={() => setConfirmingDelete(d.id)}
@@ -208,8 +304,18 @@ export function DashboardPage() {
 
         {/* Content */}
         <main className="mx-auto max-w-6xl px-6 py-8">
-          <div className="mb-6 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-ink-900">My Diagrams</h2>
+          <div className="mb-6 flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <button
+                onClick={() => setSidebarOpen((open) => !open)}
+                aria-label="Toggle folders"
+                aria-expanded={sidebarOpen}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-hover hover:text-ink-900 min-[880px]:hidden"
+              >
+                <PanelLeft size={16} />
+              </button>
+              <h2 className="truncate text-lg font-semibold text-ink-900">My Diagrams</h2>
+            </div>
             <div className="flex items-center gap-2">
               <input
                 ref={fileInput}
@@ -240,56 +346,86 @@ export function DashboardPage() {
             </div>
           </div>
 
-          {listState === 'ready' && diagrams.length > 0 && (
-            <div className="mb-4 flex items-center gap-2">
-              <div className="relative flex-1">
-                <Search
-                  size={14}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-600/50"
-                />
-                <input
-                  type="search"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  aria-label="Search diagrams"
-                  placeholder="Search diagrams"
-                  className="w-full rounded-lg bg-panel py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
-                />
-              </div>
-              <select
-                value={sort}
-                onChange={(e) => setSort(e.target.value as DiagramSort)}
-                aria-label="Sort diagrams"
-                className="rounded-lg bg-panel px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none focus:ring-accent-500/40"
-              >
-                {DIAGRAM_SORTS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+          <div className="flex flex-col gap-6 min-[880px]:flex-row min-[880px]:gap-8">
+            {/* The rail is a column from 880 px up, and a panel the "Toggle
+                folders" button opens below it — same markup either way, so a
+                folder is never in two places at once. */}
+            <div className={clsx('min-[880px]:block', sidebarOpen ? 'block' : 'hidden')}>
+              <FolderSidebar
+                folders={folders}
+                counts={folderCounts}
+                selection={selection}
+                hasShared={hasShared}
+                onSelect={setSelection}
+                onCreate={createFolder}
+                onRename={renameFolder}
+                onDelete={deleteFolder}
+                onDropDiagram={(folderId, diagramId) => void moveDiagram(diagramId, folderId)}
+              />
             </div>
-          )}
 
-          {listState === 'loading' ? (
-            <SkeletonGrid />
-          ) : listState === 'error' ? (
-            <ErrorState onRetry={refresh} />
-          ) : diagrams.length === 0 ? (
-            <EmptyState onCreate={createDiagram} />
-          ) : owned.length + shared.length === 0 ? (
-            <p className="py-20 text-center text-sm text-ink-600">No diagrams match “{query.trim()}”.</p>
-          ) : (
-            <>
-              {owned.length > 0 && <div className={CARD_GRID}>{owned.map(renderCard)}</div>}
-              {shared.length > 0 && (
-                <section className={owned.length > 0 ? 'mt-10' : ''}>
-                  <h2 className="mb-4 text-lg font-semibold text-ink-900">Shared with me</h2>
-                  <div className={CARD_GRID}>{shared.map(renderCard)}</div>
-                </section>
+            <div className="min-w-0 flex-1">
+              {listState === 'ready' && diagrams.length > 0 && (
+                <div className="mb-4 flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search
+                      size={14}
+                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-600/50"
+                    />
+                    <input
+                      type="search"
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      aria-label="Search diagrams"
+                      placeholder="Search diagrams"
+                      className="w-full rounded-lg bg-panel py-2 pl-9 pr-3 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none placeholder:text-ink-600/50 focus:ring-accent-500/40"
+                    />
+                  </div>
+                  <select
+                    value={sort}
+                    onChange={(e) => setSort(e.target.value as DiagramSort)}
+                    aria-label="Sort diagrams"
+                    className="rounded-lg bg-panel px-3 py-2 text-sm text-ink-900 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle outline-none focus:ring-accent-500/40"
+                  >
+                    {DIAGRAM_SORTS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
-            </>
-          )}
+
+              {listState === 'loading' ? (
+                <SkeletonGrid />
+              ) : listState === 'error' ? (
+                <ErrorState onRetry={refresh} />
+              ) : diagrams.length === 0 ? (
+                <EmptyState onCreate={createDiagram} />
+              ) : owned.length + shared.length === 0 ? (
+                <EmptySelection selection={selection} query={query} folderName={selectedFolderName} />
+              ) : (
+                <>
+                  {owned.length > 0 && (
+                    <section>
+                      {/* "All diagrams" needs no heading — the page already has
+                          one. Every narrower view says which one it is. */}
+                      {sectionTitle && (
+                        <h2 className="mb-4 text-lg font-semibold text-ink-900">{sectionTitle}</h2>
+                      )}
+                      <div className={CARD_GRID}>{owned.map(renderCard)}</div>
+                    </section>
+                  )}
+                  {shared.length > 0 && (
+                    <section className={owned.length > 0 ? 'mt-10' : ''}>
+                      <h2 className="mb-4 text-lg font-semibold text-ink-900">Shared with me</h2>
+                      <div className={CARD_GRID}>{shared.map(renderCard)}</div>
+                    </section>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
         </main>
 
         <Toasts />
@@ -302,6 +438,8 @@ function DiagramCard({
   diagram,
   menuOpen,
   confirmingDelete,
+  movingToFolder,
+  folders,
   renaming,
   onOpen,
   onToggleStar,
@@ -310,6 +448,9 @@ function DiagramCard({
   onCancelDelete,
   onDelete,
   onDuplicate,
+  onRequestMove,
+  onCancelMove,
+  onMove,
   onRequestRename,
   onCommitRename,
   onCancelRename,
@@ -317,6 +458,8 @@ function DiagramCard({
   diagram: DiagramMeta;
   menuOpen: boolean;
   confirmingDelete: boolean;
+  movingToFolder: boolean;
+  folders: FolderInfo[];
   renaming: boolean;
   onOpen: () => void;
   onToggleStar: (e: React.MouseEvent) => void;
@@ -325,6 +468,9 @@ function DiagramCard({
   onCancelDelete: () => void;
   onDelete: () => void;
   onDuplicate: () => void;
+  onRequestMove: () => void;
+  onCancelMove: () => void;
+  onMove: (folderId: string | null) => void;
   onRequestRename: () => void;
   onCommitRename: (title: string) => void;
   onCancelRename: () => void;
@@ -340,6 +486,13 @@ function DiagramCard({
     <div
       // A card being renamed must not open the diagram under the input.
       onClick={renaming ? undefined : onOpen}
+      // Only the owner's cards can be filed, and not while one is being typed
+      // into — a drag would steal the selection out of the rename input.
+      draggable={isOwner && !renaming}
+      onDragStart={(e) => {
+        e.dataTransfer.setData(DIAGRAM_DRAG_TYPE, diagram.id);
+        e.dataTransfer.effectAllowed = 'move';
+      }}
       className="group cursor-pointer rounded-xl bg-panel shadow-[0_1px_3px_rgba(20,20,50,0.08)] ring-1 ring-line-subtle transition hover:shadow-[0_4px_12px_rgba(20,20,50,0.12)] hover:ring-accent-500/30"
     >
       {/* Thumbnail */}
@@ -417,6 +570,46 @@ function DiagramCard({
                         </button>
                       </div>
                     </div>
+                  ) : movingToFolder ? (
+                    <div className="py-0.5">
+                      <button
+                        onClick={onCancelMove}
+                        // Named for what it does, not for what it says: the
+                        // heading text is "Move to…" and so is the menu item
+                        // that opened this, which would leave two controls
+                        // with one name.
+                        aria-label="Back to actions"
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs font-semibold uppercase tracking-wide text-ink-600 hover:bg-hover"
+                      >
+                        <ArrowLeft size={13} /> Move to…
+                      </button>
+                      <div className="max-h-56 overflow-y-auto">
+                        {folders.map((folder) => (
+                          <button
+                            key={folder.id}
+                            disabled={folder.id === diagram.folderId}
+                            onClick={() => onMove(folder.id)}
+                            className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-hover disabled:cursor-default disabled:text-ink-600/50 disabled:hover:bg-transparent"
+                          >
+                            <FolderInput size={13} className="shrink-0" />
+                            <span className="truncate">{folder.name}</span>
+                          </button>
+                        ))}
+                        <button
+                          disabled={diagram.folderId === null}
+                          onClick={() => onMove(null)}
+                          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-hover disabled:cursor-default disabled:text-ink-600/50 disabled:hover:bg-transparent"
+                        >
+                          <FolderInput size={13} className="shrink-0" />
+                          No folder
+                        </button>
+                      </div>
+                      {folders.length === 0 && (
+                        <p className="px-3 py-1.5 text-xs text-ink-600">
+                          No folders yet — make one in the sidebar.
+                        </p>
+                      )}
+                    </div>
                   ) : (
                     <>
                       <button
@@ -430,6 +623,12 @@ function DiagramCard({
                         className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-hover"
                       >
                         <Copy size={13} /> Duplicate
+                      </button>
+                      <button
+                        onClick={onRequestMove}
+                        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-ink-900 hover:bg-hover"
+                      >
+                        <FolderInput size={13} /> Move to…
                       </button>
                       <button
                         onClick={onRequestDelete}
@@ -513,6 +712,35 @@ function SkeletonGrid() {
       ))}
     </div>
   );
+}
+
+/**
+ * Why this particular grid is empty. A search that matched nothing outranks
+ * everything else, because that is what the user just did; otherwise the
+ * message names the view they are standing in, so an empty folder does not
+ * read like a lost diagram.
+ */
+function EmptySelection({
+  selection,
+  query,
+  folderName,
+}: {
+  selection: FolderSelection;
+  query: string;
+  folderName?: string;
+}) {
+  const trimmed = query.trim();
+  const message =
+    trimmed !== ''
+      ? `No diagrams match “${trimmed}”.`
+      : selection.kind === 'starred'
+        ? 'No starred diagrams yet. Star one to keep it at hand.'
+        : selection.kind === 'shared'
+          ? 'Nothing has been shared with you yet.'
+          : selection.kind === 'folder'
+            ? `“${folderName ?? 'This folder'}” is empty. Move a diagram here from its ⋯ menu, or drag a card onto the folder.`
+            : 'No diagrams here yet.';
+  return <p className="py-20 text-center text-sm text-ink-600">{message}</p>;
 }
 
 function ErrorState({ onRetry }: { onRetry: () => void }) {

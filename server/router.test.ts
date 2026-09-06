@@ -46,6 +46,9 @@ const { prismaMock, authState } = vi.hoisted(() => ({
     user: {
       findUnique: vi.fn(),
     },
+    folder: {
+      findFirst: vi.fn(),
+    },
   },
   authState: { user: null as AuthUser | null },
 }));
@@ -178,6 +181,7 @@ describe('GET /api/diagrams', () => {
       createdAt: new Date(0),
       updatedAt: new Date(0),
       thumbnail: null,
+      folderId: null,
       userId: 'u1',
       user: { name: 'User One' },
       members: [],
@@ -224,6 +228,22 @@ describe('GET /api/diagrams', () => {
     await request(server).get('/api/diagrams').expect(200);
     const [{ select }] = prismaMock.diagram.findMany.mock.calls[0] as [{ select: object }];
     expect(select).toMatchObject({ createdAt: true });
+  });
+
+  it('carries the folder an owned diagram is filed in', async () => {
+    prismaMock.diagram.findMany.mockResolvedValue([listRow({ folderId: 'f1' })]);
+    const res = await request(server).get('/api/diagrams').expect(200);
+    expect(res.body[0].folderId).toBe('f1');
+  });
+
+  it('reports someone else\'s diagram as unfiled, whatever folder its owner keeps it in', async () => {
+    prismaMock.diagram.findMany.mockResolvedValue([
+      listRow({ id: 'd2', userId: 'u2', user: { name: 'User Two' }, members: [{ role: 'editor' }], folderId: 'their-folder' }),
+    ]);
+    const res = await request(server).get('/api/diagrams').expect(200);
+    // Folders are personal filing: naming the owner's would leak a label this
+    // user can neither see in their sidebar nor change.
+    expect(res.body[0].folderId).toBeNull();
   });
 });
 
@@ -402,6 +422,75 @@ describe('PUT /api/diagrams/:id', () => {
     await request(server).put('/api/diagrams/d1').send({ thumbnail: huge }).expect(400);
     expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('PUT /api/diagrams/:id — moving between folders', () => {
+  it('files the diagram into one of the caller\'s own folders', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
+    prismaMock.folder.findFirst.mockResolvedValue({ id: 'f1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, folderId: 'f1' });
+
+    await request(server).put('/api/diagrams/d1').send({ folderId: 'f1' }).expect(200);
+
+    // The folder is looked up under the caller, which is the whole check.
+    expect(prismaMock.folder.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'f1', userId: 'u1' } }),
+    );
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({
+      where: { id: 'd1' },
+      data: { folderId: 'f1' },
+    });
+  });
+
+  it('unfiles it when folderId is sent as null, without looking a folder up', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, folderId: null });
+
+    await request(server).put('/api/diagrams/d1').send({ folderId: null }).expect(200);
+
+    expect(prismaMock.folder.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({
+      where: { id: 'd1' },
+      data: { folderId: null },
+    });
+  });
+
+  it('leaves the filing alone when folderId is absent from the body', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
+    prismaMock.diagram.update.mockResolvedValue(owned);
+
+    await request(server).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
+
+    expect(prismaMock.diagram.update).toHaveBeenCalledWith({
+      where: { id: 'd1' },
+      data: { title: 'Renamed' },
+    });
+  });
+
+  it('answers 404 for a folder the caller does not own, and writes nothing', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
+    // Scoped by `userId`, so somebody else's folder simply is not there.
+    prismaMock.folder.findFirst.mockResolvedValue(null);
+
+    await request(server).put('/api/diagrams/d1').send({ folderId: 'theirs' }).expect(404);
+
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses an editor\'s move: filing is the owner\'s, like the star', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
+
+    await request(server).put('/api/diagrams/d1').send({ folderId: 'f1' }).expect(403);
+
+    // Refused on the role alone — the editor's own folders are never consulted.
+    expect(prismaMock.folder.findFirst).not.toHaveBeenCalled();
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects a folderId that is not a string or null before any lookup', async () => {
+    await request(server).put('/api/diagrams/d1').send({ folderId: 42 }).expect(400);
+    expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
   });
 });
 
@@ -851,6 +940,19 @@ describe('POST /api/diagrams/:id/duplicate', () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor', source));
     await request(server).post('/api/diagrams/d1/duplicate').expect(403);
     expect(prismaMock.diagram.create).not.toHaveBeenCalled();
+  });
+
+  it('leaves the copy in the same folder as the original', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ ...source, folderId: 'f1' });
+    prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'd2', ...data }));
+
+    await request(server).post('/api/diagrams/d1/duplicate').expect(201);
+
+    expect(prismaMock.diagram.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ folderId: 'f1' }) }),
+    );
+    // Owner-only route, so the folder is already the caller's: no second check.
+    expect(prismaMock.folder.findFirst).not.toHaveBeenCalled();
   });
 
   it('keeps the copied title inside the length the API accepts', async () => {

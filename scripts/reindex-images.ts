@@ -19,6 +19,8 @@
  * Diagrams are read a page at a time: `data` is a whole board per row, and the
  * point of this table is to stop loading all of them at once.
  */
+// Load .env before anything opens a database connection.
+import 'dotenv/config';
 import { prisma } from '../server/db.js';
 import { syncDiagramImages } from '../server/diagramImages.js';
 import { imageIdsInDiagram } from '../server/imageRefs.js';

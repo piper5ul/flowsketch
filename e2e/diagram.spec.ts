@@ -352,15 +352,20 @@ test('a diagram card offers its star by name, and the star sticks', async ({ pag
   await expect(page.getByRole('heading', { name: 'My Diagrams' })).toBeVisible();
 
   // Icon-only, so the accessible name is all a screen reader (or this test) has
-  // to go on.
-  const star = page.getByRole('button', { name: /star/i }).first();
+  // to go on. Named exactly, because the sidebar's "Starred" view is a button
+  // too and a loose match would find that one first.
+  const star = page.getByRole('button', { name: 'Star diagram', exact: true });
   await expect(star).toHaveAttribute('aria-pressed', 'false');
 
   await star.click();
-  await expect(page.getByRole('button', { name: /unstar/i }).first()).toBeVisible();
+  const unstar = page.getByRole('button', { name: 'Unstar diagram', exact: true });
+  await expect(unstar).toBeVisible();
 
   await page.reload();
-  await expect(page.getByRole('button', { name: /star/i }).first()).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Unstar diagram', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 });
 
 test('a diagram exported as JSON can be imported back from the dashboard', async ({ page }) => {
@@ -1336,4 +1341,71 @@ test('a shape dropped in a frame joins it and then travels with it', async ({ pa
   expect(after.y - movedShape.y).toBeGreaterThan(80);
   expect(after.y - movedShape.y).toBeLessThan(120);
   expect(Math.abs(after.x - movedShape.x)).toBeLessThan(5);
+});
+
+test('a diagram can be filed in a folder, found there, and outlives the folder', async ({ page }) => {
+  await signUp(page);
+
+  // A folder is made from the sidebar, named in place.
+  await page.getByRole('button', { name: 'New folder' }).click();
+  await page.getByRole('textbox', { name: 'New folder name' }).fill('Client work');
+  await page.getByRole('textbox', { name: 'New folder name' }).press('Enter');
+  // The count rides in the row's accessible name, so asserting the name is
+  // asserting how many diagrams the sidebar says are in there.
+  const emptyFolder = page.getByRole('button', { name: 'Client work, 0 diagrams' });
+  await expect(emptyFolder).toBeVisible();
+
+  await newDiagram(page);
+  await page.getByRole('button', { name: 'Back to dashboard' }).click();
+  const card = page.getByText('Untitled').first();
+  await expect(card).toBeVisible();
+
+  // File it from the card's own menu.
+  await card.hover();
+  await page.getByRole('button', { name: 'Diagram actions' }).click();
+  await page.getByRole('button', { name: 'Move to…' }).click();
+  // `exact`, because the sidebar row for the same folder is named with its count.
+  await page.getByRole('button', { name: 'Client work', exact: true }).click();
+
+  const filledFolder = page.getByRole('button', { name: 'Client work, 1 diagram' });
+  await expect(filledFolder).toBeVisible();
+
+  // The folder lists it…
+  await filledFolder.click();
+  await expect(page.getByRole('heading', { name: 'Client work' })).toBeVisible();
+  await expect(page.getByText('Untitled')).toBeVisible();
+
+  // …and so does "All diagrams": filing narrows the view, it does not hide it.
+  await page.getByRole('button', { name: 'All diagrams' }).click();
+  await expect(page.getByText('Untitled')).toBeVisible();
+
+  // The filing survives a round trip rather than only living in the page.
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Client work, 1 diagram' })).toBeVisible();
+
+  // Rename it in place.
+  const folderRow = page.getByRole('button', { name: 'Client work, 1 diagram' });
+  await folderRow.hover();
+  await page.getByRole('button', { name: 'Actions for Client work' }).click();
+  await page.getByRole('button', { name: 'Rename folder' }).click();
+  await page.getByRole('textbox', { name: 'Folder name' }).fill('Clients');
+  await page.getByRole('textbox', { name: 'Folder name' }).press('Enter');
+  const renamed = page.getByRole('button', { name: 'Clients, 1 diagram' });
+  await expect(renamed).toBeVisible();
+
+  // Deleting asks first, and says what will happen to what is inside.
+  await renamed.hover();
+  await page.getByRole('button', { name: 'Actions for Clients' }).click();
+  await page.getByRole('button', { name: 'Delete folder' }).click();
+  await expect(page.getByText('Its diagrams are kept')).toBeVisible();
+  await page.getByRole('button', { name: 'Confirm delete folder' }).click();
+
+  // The row is gone; the diagram is not — it is back under All diagrams.
+  await expect(page.getByRole('button', { name: 'Clients, 1 diagram' })).toHaveCount(0);
+  await expect(page.getByText('No folders yet.')).toBeVisible();
+  await expect(page.getByText('Untitled')).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText('Untitled')).toBeVisible();
+  await expect(page.getByText('No folders yet.')).toBeVisible();
 });
