@@ -8,7 +8,7 @@ import {
   type EdgeAnchor,
   type Rect,
 } from '../lib/edgeGeometry';
-import { buildConnectorPath, controlThrough, type Point } from '../lib/connectorPath';
+import { buildConnectorPath, controlThrough, interpolatePolyline, type Point } from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
@@ -34,37 +34,9 @@ function rectOfNode(n: ShapeNode): Rect {
 }
 
 // ---------------------------------------------------------------------------
-// Polyline interpolation helpers for label positioning
+// Polyline helpers for label positioning (`interpolatePolyline`, the other half
+// of this pair, lives next to the geometry it measures).
 // ---------------------------------------------------------------------------
-
-function interpolatePolyline(
-  pts: { x: number; y: number }[],
-  t: number,
-): { x: number; y: number } {
-  if (pts.length < 2) return pts[0] ?? { x: 0, y: 0 };
-  t = Math.max(0, Math.min(1, t));
-  let total = 0;
-  const segs: number[] = [];
-  for (let i = 0; i < pts.length - 1; i++) {
-    const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
-    segs.push(d);
-    total += d;
-  }
-  if (total < 0.001) return pts[0];
-  const target = t * total;
-  let acc = 0;
-  for (let i = 0; i < segs.length; i++) {
-    if (acc + segs[i] >= target) {
-      const segT = segs[i] > 0 ? (target - acc) / segs[i] : 0;
-      return {
-        x: pts[i].x + (pts[i + 1].x - pts[i].x) * segT,
-        y: pts[i].y + (pts[i + 1].y - pts[i].y) * segT,
-      };
-    }
-    acc += segs[i];
-  }
-  return pts[pts.length - 1];
-}
 
 function nearestTOnPolyline(
   pts: { x: number; y: number }[],
@@ -318,12 +290,12 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
         }).points;
   }
 
-  const { d: svgPathString, center, points: pathPoints } = buildConnectorPath(connectorType, {
+  const { d: svgPathString, center, points: pathPoints, segments } = buildConnectorPath(connectorType, {
     source: { x: sx, y: sy },
     target: { x: tx, y: ty },
     sourceSide: sourceAnchor.side,
     targetSide: targetAnchor.side,
-    waypoint: waypoints[0] ?? null,
+    waypoints,
     routed,
   });
   const edgeCenterX = center.x;
@@ -331,20 +303,11 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   // Grab handles for the individual runs of an elbow. The other kinds have no
   // straight runs to grab, so their only handle is the bend at the centre.
-  const segmentHandles: { x: number; y: number; orientation: 'h' | 'v' }[] = [];
-  if (connectorType === 'elbow') {
-    for (let i = 0; i < pathPoints.length - 1; i++) {
-      const p1 = pathPoints[i];
-      const p2 = pathPoints[i + 1];
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      if (Math.hypot(dx, dy) < 28) continue;
-      const mx = (p1.x + p2.x) / 2;
-      const my = (p1.y + p2.y) / 2;
-      if (Math.hypot(mx - edgeCenterX, my - edgeCenterY) < 10) continue;
-      segmentHandles.push({ x: mx, y: my, orientation: Math.abs(dx) > Math.abs(dy) ? 'h' : 'v' });
-    }
-  }
+  const segmentHandles = connectorType === 'elbow'
+    ? segments.filter(
+        (s) => s.length >= 28 && Math.hypot(s.handle.x - edgeCenterX, s.handle.y - edgeCenterY) >= 10,
+      )
+    : [];
 
   pathPointsRef.current = pathPoints;
   dragRef.current = { kind: connectorType, source: { x: sx, y: sy }, target: { x: tx, y: ty } };
@@ -397,7 +360,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           {segmentHandles.map((h, i) => (
             <div
               key={i}
-              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${h.x}px, ${h.y}px)` }}
+              style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${h.handle.x}px, ${h.handle.y}px)` }}
               className={`connector-joint-hit nodrag nopan connector-joint-hit--${h.orientation}`}
               onPointerDown={onWaypointPointerDown}
             >

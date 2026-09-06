@@ -1,8 +1,8 @@
 /**
  * The geometry of a connector: one function that turns two anchor points (plus
  * whatever the router or the user contributed in between) into the `d` of the
- * rendered path, the point its bend handle sits on, and a polyline following it
- * for placing the label.
+ * rendered path, the runs its grab handles hang off, and a polyline following
+ * it for placing the label.
  *
  * Kept out of `ConnectorEdge` so the three shapes a connector can take are
  * testable without React Flow, a DOM, or a store.
@@ -21,19 +21,43 @@ export interface ConnectorPathArgs {
   /** The side of each shape the connector leaves from — a curve's tangent. */
   sourceSide: Direction;
   targetSide: Direction;
-  /** The one user-dragged bend, when the connector has one. */
-  waypoint?: Point | null;
+  /** The user-dragged bends, in order from the source end to the target end. */
+  waypoints?: Point[];
   /** Elbow only: the corners the router put between the two ends. */
   routed?: Point[];
+}
+
+/**
+ * One run of the path, and the grab handle in the middle of it. Their order is
+ * the path's own, so a run's index is the index a bend dragged out of it takes
+ * in `waypoints`.
+ */
+export interface PathSegment {
+  /** Where the handle sits: the middle of the run, on the drawn path. */
+  handle: Point;
+  /** Which way the run goes — an elbow's drag is constrained across it. */
+  orientation: 'h' | 'v';
+  /** The run's straight-line length, in px. */
+  length: number;
 }
 
 export interface ConnectorPath {
   /** The `d` attribute of the rendered path. */
   d: string;
-  /** Where the bend handle sits; the origin of the label's 0–1 offset. */
+  /** The middle of the path; the origin of the label's 0–1 offset. */
   center: Point;
   /** A polyline following the path, for interpolating the label along it. */
   points: Point[];
+  /** The runs between consecutive bends, each with the handle that grabs it. */
+  segments: PathSegment[];
+}
+
+/** A cubic Bézier, as the four points that draw it. */
+export interface CubicSegment {
+  from: Point;
+  c1: Point;
+  c2: Point;
+  to: Point;
 }
 
 const POSITION: Record<Direction, Position> = {
@@ -48,6 +72,9 @@ const BORDER_RADIUS = 10;
 
 /** How many segments a curve is flattened into for label interpolation. */
 const CURVE_SAMPLES = 24;
+
+/** The same, per run of a spline — one flattening for each bend it passes. */
+const SPLINE_SAMPLES = 12;
 
 /** An elbow polyline, with each corner replaced by a quadratic fillet. */
 export function smoothStepPath(points: Point[]): string {
@@ -132,44 +159,168 @@ function sampleQuadratic(a: Point, c: Point, b: Point): Point[] {
   return points;
 }
 
+/** The point at `t` on a cubic. */
+function cubicAt(s: CubicSegment, t: number): Point {
+  const u = 1 - t;
+  const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
+  return {
+    x: a * s.from.x + b * s.c1.x + c * s.c2.x + d * s.to.x,
+    y: a * s.from.y + b * s.c1.y + c * s.c2.y + d * s.to.y,
+  };
+}
+
 /**
  * The quadratic control point that puts `mid` at the halfway mark of the curve
  * from `a` to `b`. Used to approximate React Flow's cubic with a quadratic:
  * both run between the same two anchors and through the same midpoint, which is
  * close enough to carry a label along the visible curve.
- *
- * Also what the bend drag commits: a curve's control point is not on the curve,
- * so storing the pointer as the waypoint would move the curve half as far as
- * the pointer went.
  */
 export function controlThrough(a: Point, mid: Point, b: Point): Point {
   return { x: 2 * mid.x - (a.x + b.x) / 2, y: 2 * mid.y - (a.y + b.y) / 2 };
 }
 
+/**
+ * A Catmull-Rom spline through every one of `points`, as the cubic Béziers that
+ * draw it — one per run, in order.
+ *
+ * Catmull-Rom is the interpolating spline: unlike a plain Bézier through
+ * control points, the curve *passes through* each point it is given, which is
+ * what makes a dragged bend land under the pointer. Each run's control points
+ * are its neighbours' tangent, a sixth of the way along, so the curve leaves
+ * every bend heading for the next one. The two ends have no neighbour beyond
+ * them and stand in for their own, which straightens the first and last run
+ * rather than letting it overshoot.
+ */
+export function catmullRomToBezier(points: Point[]): CubicSegment[] {
+  if (points.length < 2) return [];
+
+  const segments: CubicSegment[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    const prev = points[i - 1] ?? points[i];
+    const from = points[i];
+    const to = points[i + 1];
+    const next = points[i + 2] ?? points[i + 1];
+    segments.push({
+      from,
+      c1: { x: from.x + (to.x - prev.x) / 6, y: from.y + (to.y - prev.y) / 6 },
+      c2: { x: to.x - (next.x - from.x) / 6, y: to.y - (next.y - from.y) / 6 },
+      to,
+    });
+  }
+  return segments;
+}
+
+/** The `d` of a chain of cubics. */
+function cubicPath(segments: CubicSegment[]): string {
+  const first = segments[0];
+  const parts = [`M ${first.from.x} ${first.from.y}`];
+  for (const s of segments) {
+    parts.push(`C ${s.c1.x} ${s.c1.y}, ${s.c2.x} ${s.c2.y}, ${s.to.x} ${s.to.y}`);
+  }
+  return parts.join(' ');
+}
+
+/** Flattens a chain of cubics into one polyline, without repeating the joins. */
+function sampleCubics(segments: CubicSegment[]): Point[] {
+  const points: Point[] = [segments[0].from];
+  for (const s of segments) {
+    for (let i = 1; i <= SPLINE_SAMPLES; i++) {
+      points.push(cubicAt(s, i / SPLINE_SAMPLES));
+    }
+  }
+  return points;
+}
+
+/** The `d` of a polyline: one `L` per point after the first. */
+function polylinePath(points: Point[]): string {
+  return points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+}
+
+/**
+ * The point at `t` (0–1) along a polyline, measured by length. What carries a
+ * connector's label along whatever shape the connector took.
+ */
+export function interpolatePolyline(pts: Point[], t: number): Point {
+  if (pts.length < 2) return pts[0] ?? { x: 0, y: 0 };
+  t = Math.max(0, Math.min(1, t));
+  let total = 0;
+  const segs: number[] = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const d = Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+    segs.push(d);
+    total += d;
+  }
+  if (total < 0.001) return pts[0];
+  const target = t * total;
+  let acc = 0;
+  for (let i = 0; i < segs.length; i++) {
+    if (acc + segs[i] >= target) {
+      const segT = segs[i] > 0 ? (target - acc) / segs[i] : 0;
+      return {
+        x: pts[i].x + (pts[i + 1].x - pts[i].x) * segT,
+        y: pts[i].y + (pts[i + 1].y - pts[i].y) * segT,
+      };
+    }
+    acc += segs[i];
+  }
+  return pts[pts.length - 1];
+}
+
+/**
+ * The middle of a cornered path: its middle vertex, so the handle sits on a
+ * bend rather than at half its length — except on a corner-free run, where that
+ * vertex *is* the target and the handle would hide the endpoint's own.
+ */
+function polylineCenter(points: Point[]): Point {
+  return points.length === 2 ? midpoint(points[0], points[1]) : points[Math.floor(points.length / 2)];
+}
+
+/** One run per pair of consecutive points, each grabbed at its midpoint. */
+function segmentsOf(points: Point[]): PathSegment[] {
+  const segments: PathSegment[] = [];
+  for (let i = 0; i < points.length - 1; i++) {
+    segments.push(runBetween(points[i], points[i + 1], midpoint(points[i], points[i + 1])));
+  }
+  return segments;
+}
+
+/** A run from `a` to `b`, grabbed at `handle` (which need not be on the chord). */
+function runBetween(a: Point, b: Point, handle: Point): PathSegment {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  return { handle, orientation: Math.abs(dx) > Math.abs(dy) ? 'h' : 'v', length: Math.hypot(dx, dy) };
+}
+
 export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs): ConnectorPath {
-  const { source, target, sourceSide, targetSide, waypoint, routed } = args;
+  const { source, target, sourceSide, targetSide, routed } = args;
+  const waypoints = args.waypoints ?? [];
 
   if (kind === 'elbow') {
+    // The router already threaded the bends: it was handed them as vertices,
+    // and `routed` is the orthogonal run of corners that came back.
     const points = cleanPath([source, ...(routed ?? []), target]);
     return {
       d: smoothStepPath(points),
-      // The router emits corners, not midpoints, so the handle goes on the
-      // middle vertex rather than at half the path's length — except on a
-      // corner-free run, where that vertex *is* the target and the bend handle
-      // would sit under the endpoint handle.
-      center: points.length === 2 ? midpoint(points[0], points[1]) : points[Math.floor(points.length / 2)],
+      center: polylineCenter(points),
       points,
+      segments: segmentsOf(points),
     };
   }
 
   if (kind === 'curved') {
-    // A dragged bend becomes the curve's control point; without one the curve
-    // is React Flow's cubic, which leaves each shape square to its own side.
-    if (waypoint) {
+    // A bent curve is a spline through every bend; an unbent one is React
+    // Flow's cubic, which leaves each shape square to its own side.
+    if (waypoints.length > 0) {
+      const through = [source, ...waypoints, target];
+      const cubics = catmullRomToBezier(through);
+      const points = sampleCubics(cubics);
       return {
-        d: `M ${source.x} ${source.y} Q ${waypoint.x} ${waypoint.y} ${target.x} ${target.y}`,
-        center: quadraticAt(source, waypoint, target, 0.5),
-        points: sampleQuadratic(source, waypoint, target),
+        d: cubicPath(cubics),
+        center: interpolatePolyline(points, 0.5),
+        points,
+        // A run of a spline bulges off its chord, so its handle is taken from
+        // the curve itself rather than from the two bends it joins.
+        segments: cubics.map((c) => runBetween(c.from, c.to, cubicAt(c, 0.5))),
       };
     }
     const [d, labelX, labelY] = getBezierPath({
@@ -181,14 +332,21 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
       targetPosition: POSITION[targetSide],
     });
     const center = { x: labelX, y: labelY };
-    return { d, center, points: sampleQuadratic(source, controlThrough(source, center, target), target) };
+    return {
+      d,
+      center,
+      points: sampleQuadratic(source, controlThrough(source, center, target), target),
+      segments: [runBetween(source, target, center)],
+    };
   }
 
-  if (waypoint) {
+  if (waypoints.length > 0) {
+    const points = [source, ...waypoints, target];
     return {
-      d: `M ${source.x} ${source.y} L ${waypoint.x} ${waypoint.y} L ${target.x} ${target.y}`,
-      center: waypoint,
-      points: [source, waypoint, target],
+      d: polylinePath(points),
+      center: polylineCenter(points),
+      points,
+      segments: segmentsOf(points),
     };
   }
 
@@ -198,5 +356,6 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
     targetX: target.x,
     targetY: target.y,
   });
-  return { d, center: { x: labelX, y: labelY }, points: [source, target] };
+  const center = { x: labelX, y: labelY };
+  return { d, center, points: [source, target], segments: [runBetween(source, target, center)] };
 }
