@@ -463,7 +463,15 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
             <div
               style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${edgeCenterX}px, ${edgeCenterY}px)` }}
               className="connector-joint-hit nodrag nopan"
+              title={waypoint ? 'Double-click to reset the route' : undefined}
               onPointerDown={onWaypointPointerDown}
+              // Undoes a dragged bend. The handle sits where a double-click
+              // would otherwise start editing the label (or drop a text shape
+              // on the pane), so the event stops here either way.
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (waypoint) updateEdgeData(id, { waypoint: null });
+              }}
             >
               <div className="connector-joint connector-joint--bend" />
             </div>

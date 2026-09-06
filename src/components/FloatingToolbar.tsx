@@ -9,6 +9,7 @@ import {
   ChevronUp,
   ChevronDown,
   Link2,
+  RotateCcw,
   Tag,
   X,
 } from 'lucide-react';
@@ -21,6 +22,10 @@ import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
 import type { StrokeStyle } from '../types';
+
+/** The toolbar's icon button. */
+const BUTTON_CLASS =
+  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30';
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
   solid: undefined,
@@ -138,6 +143,8 @@ export function FloatingToolbar() {
   const strokeStyle = selectedEdges[0]?.data?.strokeStyle ?? 'solid';
   const startArrow = selectedEdges[0]?.data?.startArrow ?? false;
   const endArrow = selectedEdges[0]?.data?.endArrow ?? true;
+  // Only a dragged bend can be reset, so the button is dead weight without one.
+  const hasWaypoint = selectedEdges.some((e) => e.data?.waypoint);
 
   return (
     <div
@@ -179,6 +186,16 @@ export function FloatingToolbar() {
                 )}
               >
                 <CornerDownRight size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Reset route" side="top">
+              <button
+                aria-label="Reset route"
+                onClick={() => updateSelectedEdgesStyle({ waypoint: null })}
+                disabled={!hasWaypoint}
+                className={BUTTON_CLASS}
+              >
+                <RotateCcw size={16} />
               </button>
             </Tooltip>
 

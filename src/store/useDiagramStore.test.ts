@@ -789,6 +789,57 @@ describe('updateEdgeData', () => {
     store().updateEdgeData(id, { label: 'yes' });
     expect(store().edges[0].markerEnd).toBe(before);
   });
+
+  it('clears a waypoint, and undo puts the routed bend back', () => {
+    const id = edgeId();
+    store().beginInteraction();
+    store().updateEdgeDataTransient(id, { waypoint: { x: 40, y: 90 } });
+
+    store().updateEdgeData(id, { waypoint: null });
+    expect(store().edges[0].data!.waypoint).toBeNull();
+
+    store().undo();
+    expect(store().edges[0].data!.waypoint).toEqual({ x: 40, y: 90 });
+  });
+});
+
+describe('updateSelectedEdgesStyle', () => {
+  /** Two shapes joined by a connector, with only the connector selected. */
+  function selectedEdgeId() {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const id = store().edges[0].id;
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => ({ ...n, selected: false })),
+      edges: s.edges.map((e) => ({ ...e, selected: e.id === id })),
+    }));
+    return id;
+  }
+
+  it('resets the route of every selected connector, and undo restores it', () => {
+    const id = selectedEdgeId();
+    store().beginInteraction();
+    store().updateEdgeDataTransient(id, { waypoint: { x: 40, y: 90 } });
+
+    store().updateSelectedEdgesStyle({ waypoint: null });
+    expect(store().edges[0].data!.waypoint).toBeNull();
+
+    store().undo();
+    expect(store().edges[0].data!.waypoint).toEqual({ x: 40, y: 90 });
+  });
+
+  it('leaves connectors outside the selection alone', () => {
+    const id = selectedEdgeId();
+    const b = store().addShape('rectangle', { x: 400, y: 0 });
+    store().addConnectedShape(b, 'right');
+    const other = store().edges.find((e) => e.id !== id)!.id;
+    store().beginInteraction();
+    store().updateEdgeDataTransient(other, { waypoint: { x: 1, y: 2 } });
+    useDiagramStore.setState((s) => ({ edges: s.edges.map((e) => ({ ...e, selected: e.id === id })) }));
+
+    store().updateSelectedEdgesStyle({ waypoint: null });
+    expect(store().edges.find((e) => e.id === other)!.data!.waypoint).toEqual({ x: 1, y: 2 });
+  });
 });
 
 describe('updateSelectedNodesStyle', () => {
