@@ -1,0 +1,76 @@
+/**
+ * The numbered pins that put a conversation where it happened.
+ *
+ * Rendered through `ViewportPortal`, so a pin lives inside
+ * `.react-flow__viewport` and is panned and zoomed by the same transform as the
+ * board — a pin positioned outside it would have to re-implement that transform
+ * and would drift the moment either one changed. The cost of being in there is
+ * that it is also inside what the image export captures, which is why every pin
+ * carries `comment-pin` and that class is on the export's exclusion list: a
+ * discussion is not part of the drawing.
+ *
+ * A pin is `nodrag nopan` because it sits over the board: without those,
+ * pressing one starts a canvas pan and the click never lands.
+ */
+import { ViewportPortal } from '@xyflow/react';
+import { useMemo } from 'react';
+import { threadNumbers, visibleThreads } from '../lib/comments';
+import { useCommentStore } from '../store/useCommentStore';
+import { useDiagramStore, type ShapeNode } from '../store/useDiagramStore';
+import type { CommentThreadInfo } from '../../shared/types';
+
+/** Where a pin is drawn, in flow coordinates, or `null` if it has nowhere to go. */
+function pinPosition(
+  thread: CommentThreadInfo,
+  nodes: ShapeNode[],
+): { x: number; y: number } | null {
+  if (thread.nodeId === null) {
+    return thread.x === null || thread.y === null ? null : { x: thread.x, y: thread.y };
+  }
+  const node = nodes.find((candidate) => candidate.id === thread.nodeId);
+  // `nodeId` is not a foreign key — the shape can be deleted out from under the
+  // thread. The conversation survives in the panel; the pin has nothing to
+  // point at, so it is not drawn.
+  if (!node) return null;
+  // The top-right corner, where a pin overlaps least of what it is about.
+  const width = node.width ?? node.measured?.width ?? 0;
+  return { x: node.position.x + width, y: node.position.y };
+}
+
+export function CommentPins() {
+  const threads = useCommentStore((s) => s.threads);
+  const filter = useCommentStore((s) => s.filter);
+  const activeThreadId = useCommentStore((s) => s.activeThreadId);
+  const openPanel = useCommentStore((s) => s.openPanel);
+  const nodes = useDiagramStore((s) => s.nodes);
+
+  // The same filter the panel is showing, so the board and the list never
+  // disagree about which conversations are being had: a resolved thread's pin
+  // comes back only when the user asks to see resolved ones.
+  const shown = useMemo(() => visibleThreads(threads, filter), [threads, filter]);
+  const numbers = useMemo(() => threadNumbers(threads), [threads]);
+
+  return (
+    <ViewportPortal>
+      {shown.map((thread) => {
+        const at = pinPosition(thread, nodes);
+        if (!at) return null;
+        const number = numbers.get(thread.id) ?? 0;
+        return (
+          <button
+            key={thread.id}
+            type="button"
+            aria-label={`Comment thread ${number}`}
+            aria-pressed={activeThreadId === thread.id}
+            onClick={() => openPanel(thread.id)}
+            className="comment-pin nodrag nopan"
+            style={{ position: 'absolute', left: at.x, top: at.y }}
+            data-resolved={thread.resolved ? 'true' : undefined}
+          >
+            {number}
+          </button>
+        );
+      })}
+    </ViewportPortal>
+  );
+}

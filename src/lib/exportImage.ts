@@ -51,6 +51,10 @@ const EXPORTING_CLASS = 'is-exporting-image';
  * always drawn and would otherwise be baked into the exported image.
  */
 const EXCLUDED_SELECTORS = [
+  // A comment pin lives inside the viewport so it pans and zooms with the
+  // board, which puts it inside what is captured. A discussion about the
+  // drawing is not part of the drawing.
+  '.comment-pin',
   '.react-flow__handle',
   '.quick-add-btn',
   '.connector-joint-hit',
