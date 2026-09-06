@@ -25,6 +25,24 @@ export async function loadDiagrams(): Promise<DiagramListResult> {
   }
 }
 
+/**
+ * The list split into the dashboard's two sections: the user's own diagrams,
+ * and the ones somebody else invited them to.
+ *
+ * The split is by `role` rather than by an `ownerName` being present, because
+ * the role is what the rest of the UI keys off too — the star, the actions
+ * menu and what the canvas will let them do when they open it.
+ */
+export function splitByOwnership(diagrams: DiagramMeta[]): {
+  owned: DiagramMeta[];
+  shared: DiagramMeta[];
+} {
+  return {
+    owned: diagrams.filter((d) => d.role === 'owner'),
+    shared: diagrams.filter((d) => d.role !== 'owner'),
+  };
+}
+
 export type DiagramSort = 'updated' | 'title' | 'created';
 
 /** The sort control's options, in the order it offers them. */

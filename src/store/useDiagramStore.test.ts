@@ -1221,6 +1221,57 @@ describe('loadDiagram', () => {
     expect(store().nodes.map((n) => n.id)).toEqual([id]);
     expect(store().diagramId).toBe('test');
   });
+
+  it('opens a diagram as its owner unless the caller says otherwise', () => {
+    store().loadDiagram('d', 'D', false, { nodes: [], edges: [] });
+    expect(store().role).toBe('owner');
+    expect(store().readOnly).toBe(false);
+  });
+
+  it('records the role the server reported, and reads a viewer\'s copy as read-only', () => {
+    store().loadDiagram('d', 'D', false, { nodes: [], edges: [] }, null, { role: 'editor' });
+    expect(store().role).toBe('editor');
+    expect(store().readOnly).toBe(false);
+
+    store().loadDiagram('d', 'D', false, { nodes: [], edges: [] }, null, { role: 'viewer' });
+    expect(store().role).toBe('viewer');
+    expect(store().readOnly).toBe(true);
+  });
+
+  it('takes an explicit readOnly, for a reader with no role at all', () => {
+    // The public /s/:token page: nobody is signed in, so there is no role to
+    // derive the answer from.
+    store().loadDiagram('d', 'D', false, { nodes: [], edges: [] }, null, { readOnly: true });
+    expect(store().readOnly).toBe(true);
+  });
+
+  it('clears a previous diagram\'s role rather than carrying it over', () => {
+    store().loadDiagram('a', 'A', false, { nodes: [], edges: [] }, null, { role: 'viewer' });
+    store().loadDiagram('b', 'B', false, { nodes: [], edges: [] });
+    expect(store().role).toBe('owner');
+    expect(store().readOnly).toBe(false);
+  });
+});
+
+describe('read-only mode', () => {
+  beforeEach(() => {
+    saveDiagram.mockClear();
+    saveDiagram.mockResolvedValue({ updatedAt: SAVED_AT });
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, null, { role: 'viewer' });
+  });
+
+  it('refuses to write the diagram back', async () => {
+    expect(await store().saveDiagram()).toBe('skipped');
+    expect(saveDiagram).not.toHaveBeenCalled();
+  });
+
+  it('still lets the store itself be edited — the gate is the UI, not this', () => {
+    // Deliberate: the actions stay total so a read-only board can be driven by
+    // anything that legitimately rewrites it (a restore, an image backfill)
+    // without every one of them needing a bypass.
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    expect(store().nodes.map((n) => n.id)).toEqual([id]);
+  });
 });
 
 describe('serializeDiagram', () => {

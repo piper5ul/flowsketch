@@ -23,6 +23,9 @@ export function CanvasPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadDiagram = useDiagramStore((s) => s.loadDiagram);
   const saveStatus = useDiagramStore((s) => s.saveStatus);
+  // A viewer's copy: nothing below this may write, so autosave, the thumbnail
+  // scheduler and the image backfill are all left unarmed.
+  const readOnly = useDiagramStore((s) => s.readOnly);
   const { data: session } = useSession();
   /** The diagram whose image backfill has already been started on this page. */
   const backfilled = useRef<string | null>(null);
@@ -84,7 +87,12 @@ export function CanvasPage() {
         // Throws when the row was written by a newer build of the app; that is
         // worth telling the user about rather than bouncing them silently.
         // `updatedAt` is the version every save from here on is guarded by.
-        loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt);
+        loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt, {
+          role: diagram.role,
+          // Only ever sent to the owner; everyone else loads a `null` and is
+          // never told whether a public link exists.
+          shareToken: diagram.shareToken ?? null,
+        });
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -101,7 +109,7 @@ export function CanvasPage() {
   }, [id, loadDiagram, navigate]);
 
   useEffect(() => {
-    if (loading || loadError || !id) return;
+    if (loading || loadError || !id || readOnly) return;
 
     const autosaver = createAutosaver({
       save: async () => {
@@ -198,7 +206,7 @@ export function CanvasPage() {
       // to save" rather than an error.
       void thumbnails.flush();
     };
-  }, [loading, loadError, id, runImageBackfill]);
+  }, [loading, loadError, id, readOnly, runImageBackfill]);
 
   // Autosave is never armed in this branch, so the unreadable diagram cannot be
   // overwritten by this build.

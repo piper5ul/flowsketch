@@ -10,7 +10,7 @@ import {
   type Connection,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import type { DiagramData, DiagramViewport } from '../../shared/types';
+import type { DiagramData, DiagramRole, DiagramViewport } from '../../shared/types';
 import type { ConnectorData, ConnectorKind, Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
@@ -218,10 +218,53 @@ export interface ClipboardPayload {
   edges: ConnectorEdge[];
 }
 
+/**
+ * What the diagram being opened is, beyond its contents: who the reader is to
+ * it, and whether they may write it back.
+ *
+ * Deliberately an options bag rather than two more positional arguments —
+ * `loadDiagram` already takes five, and a boolean in sixth place would be
+ * unreadable at every call site.
+ */
+export interface LoadDiagramOptions {
+  /** What the caller may do with it. Defaults to `owner` — their own diagram. */
+  role?: DiagramRole;
+  /**
+   * Overrides the role's own answer. The public `/s/:token` page loads a
+   * diagram nobody is signed in to, so it says `true` outright rather than
+   * inventing a role for an anonymous reader.
+   */
+  readOnly?: boolean;
+  /**
+   * The diagram's public share token, which the API sends to the owner alone.
+   * Held here so the share dialog can render the link it already knows about
+   * without re-fetching a diagram body it has no use for.
+   */
+  shareToken?: string | null;
+}
+
 interface DiagramState {
   diagramId: string | null;
   title: string;
   starred: boolean;
+  /**
+   * What this reader may do with the open diagram. `owner` until a load says
+   * otherwise, so a store that has never been loaded behaves as it always did.
+   */
+  role: DiagramRole;
+  /**
+   * True when the diagram must not be edited — a viewer's copy, or the public
+   * share page. **The store is not gated on it**: every action still mutates
+   * exactly as it would otherwise, because half-applied edits are far worse to
+   * debug than an edit that never had a way in. The gate is the UI (the rail,
+   * the toolbars and the context menu are not rendered), the command registry
+   * (every mutating command's `when` is false) and `saveDiagram`, which
+   * refuses to write. Undo history is likewise untouched: there is nothing to
+   * undo when nothing can be done.
+   */
+  readOnly: boolean;
+  /** The live public link's token, or `null` when there is no public link. */
+  shareToken: string | null;
   saveStatus: SaveStatus;
   /**
    * The `updatedAt` this client is building on — what it loaded, then what
@@ -255,11 +298,16 @@ interface DiagramState {
     starred: boolean,
     data: unknown,
     updatedAt?: string | null,
+    options?: LoadDiagramOptions,
   ) => void;
   /**
    * Writes the diagram. `overwrite` drops the `ifUnmodifiedSince` guard, which
    * is what the conflict banner's "Overwrite" does: the user has been told
    * another tab wrote, and has chosen this version anyway.
+   *
+   * Answers `'skipped'` without touching the network in read-only mode: the
+   * server would refuse it, and asking is how a viewer merely looking at a
+   * board would collect a "Save failed" toast.
    */
   saveDiagram: (options?: { keepalive?: boolean; overwrite?: boolean }) => Promise<SaveOutcome>;
   /**
@@ -269,6 +317,8 @@ interface DiagramState {
    * ignored its own thumbnail would go on to mistake it for another tab's work.
    */
   noteSaved: (updatedAt: string) => void;
+  /** Records the public link being turned on (a token) or off (`null`). */
+  setShareToken: (token: string | null) => void;
   setTitle: (title: string) => void;
   setStarred: (starred: boolean) => void;
   setEditingNodeId: (id: string | null) => void;
@@ -509,6 +559,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   diagramId: null,
   title: 'Untitled',
   starred: false,
+  role: 'owner' as DiagramRole,
+  readOnly: false,
+  shareToken: null,
   saveStatus: 'idle' as SaveStatus,
   loadedAt: null,
   conflict: null,
@@ -525,10 +578,12 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   canUndo: false,
   canRedo: false,
 
-  loadDiagram: (id, title, starred, data, updatedAt) => {
+  loadDiagram: (id, title, starred, data, updatedAt, options) => {
     // Migrate before touching any state: a payload from a newer build throws,
     // and the store must be left as it was rather than half-loaded.
     const migrated = migrateDiagramData(data);
+
+    const role = options?.role ?? 'owner';
 
     past = [];
     future = [];
@@ -538,6 +593,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       diagramId: id,
       title,
       starred,
+      role,
+      // A viewer cannot write, and the caller may say so outright for a reader
+      // who has no role at all (the public share page).
+      readOnly: options?.readOnly ?? role === 'viewer',
+      shareToken: options?.shareToken ?? null,
       saveStatus: 'idle',
       // This load *is* the resolution of a conflict, so the guard restarts
       // from whatever the server just handed back.
@@ -553,8 +613,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, viewport, saveStatus, loadedAt } = get();
-    if (!diagramId) return 'skipped';
+    const { diagramId, title, nodes, edges, viewport, saveStatus, loadedAt, readOnly } = get();
+    if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
     try {
@@ -607,6 +667,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     if (loadedAt !== null && updatedAt <= loadedAt) return;
     set({ loadedAt: updatedAt });
   },
+
+  setShareToken: (shareToken) => set({ shareToken }),
 
   setTitle: (title) => set({ title }),
   setStarred: (starred) => set({ starred }),

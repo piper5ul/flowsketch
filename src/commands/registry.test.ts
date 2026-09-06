@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createRegistry, formatShortcut } from './registry';
-import { bindingsOf, commands, registry } from './commands';
+import { bindingsOf, commandDeclarations, commands, registry } from './commands';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { Command, CommandContext, Keybinding } from './types';
 
@@ -185,7 +185,9 @@ describe('the FlowSketch command set', () => {
 
   it('binds no two unconditional commands to the same keystroke', () => {
     const seen = new Map<string, string>();
-    for (const command of commands) {
+    // The declarations, not the exported list: every mutating command picks up
+    // a `when` from the read-only gate, which would make this check vacuous.
+    for (const command of commandDeclarations) {
       // A `when` guard is what lets two commands share a keystroke (Enter
       // edits a shape or a connector label depending on the selection).
       if (command.when) continue;

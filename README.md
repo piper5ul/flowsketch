@@ -59,11 +59,18 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
 - Auto-save to server (diagrams persist across sessions), including the pan and zoom the diagram was left at
 
+### Collaboration
+- **Share link** — turn on "Anyone with the link can view" from the **Share** button and hand out a `/s/<token>` URL. It opens the board for anyone, signed in or not, with no way to change it. Turning the link off kills that URL for good; turning sharing back on mints a new one.
+- **Invite people by email** — invite an existing account as **Can view** or **Can edit**, change someone's role, or remove them, all from the same dialog. Editors draw on the board exactly as the owner does; viewers read it. Only the owner can rename, duplicate, delete or star a diagram.
+- **Shared with me** — diagrams other people have invited you to sit in their own section of the dashboard, with the owner's name and your role on each card. Search and sort apply within each section.
+- **View only** — a viewer (and anyone on a share link) gets the board without the shape rail, the selection toolbar or the editing shortcuts, and a "View only" pill where the save indicator normally sits. Nothing they do can write to the diagram.
+- **Version history** — the **History** button lists what the diagram has been, newest first ("Today 14:03 · Ada · Before restore"). A version is kept for each burst of editing rather than for each autosave, and you can take a labelled snapshot at any time. Preview any version in place, then restore it — what it replaces is snapshotted first, so a restore is itself undoable.
+
 ### Collaboration-Ready Backend
 - User authentication with email/password (BetterAuth)
 - Email verification via configurable SMTP
 - Per-user diagram dashboard
-- RESTful API for diagram CRUD
+- RESTful API for diagram CRUD, sharing, members and versions
 
 ## Keyboard shortcuts
 
@@ -239,7 +246,7 @@ flowsketch/
 │   ├── edges/           # Custom connector edge + its arrowhead marker defs
 │   ├── lib/             # Edge geometry, Manhattan router, shape outlines, color utilities
 │   ├── nodes/           # Custom shape node with 15 shape types
-│   ├── pages/           # Dashboard, canvas, login, signup pages
+│   ├── pages/           # Dashboard, canvas, shared (/s/:token), login, signup pages
 │   ├── store/           # Zustand diagram store
 │   └── types.ts         # Shared TypeScript types
 ├── server/              # Express API server + BetterAuth (+ router.test.ts)

@@ -48,6 +48,9 @@ export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void
   const redo = useDiagramStore((s) => s.redo);
   const canUndo = useDiagramStore((s) => s.canUndo);
   const canRedo = useDiagramStore((s) => s.canRedo);
+  // Nothing on a read-only board can be undone, so the pair is dropped rather
+  // than shown permanently greyed out.
+  const readOnly = useDiagramStore((s) => s.readOnly);
   const zoom = useStore((s) => s.transform[2]);
   const minimap = useViewPreferences((s) => s.minimap);
   const gridSnap = useViewPreferences((s) => s.gridSnap);
@@ -61,14 +64,16 @@ export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void
 
   return (
     <div className="pointer-events-none absolute bottom-5 right-5 z-20 flex items-center gap-2">
-      <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
-        <IconButton onClick={undo} disabled={!canUndo} label="Undo" shortcut={shortcutOf('history.undo')}>
-          <Undo2 size={17} />
-        </IconButton>
-        <IconButton onClick={redo} disabled={!canRedo} label="Redo" shortcut={shortcutOf('history.redo')}>
-          <Redo2 size={17} />
-        </IconButton>
-      </div>
+      {!readOnly && (
+        <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+          <IconButton onClick={undo} disabled={!canUndo} label="Undo" shortcut={shortcutOf('history.undo')}>
+            <Undo2 size={17} />
+          </IconButton>
+          <IconButton onClick={redo} disabled={!canRedo} label="Redo" shortcut={shortcutOf('history.redo')}>
+            <Redo2 size={17} />
+          </IconButton>
+        </div>
+      )}
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
         <IconButton onClick={run('view.zoomOut')} label="Zoom out" shortcut={shortcutOf('view.zoomOut')}>
           <Minus size={16} />

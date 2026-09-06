@@ -20,6 +20,23 @@ async function signUp(page: Page) {
 const TINY_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAbElEQVR42u3XMQ0AIAxFQeQgAiUoQSKuwECZukC4hLEDN738svoMX20jfLfdFwAAAACAFOCVj57uAQAAAAByACUGAAAAsAeUGAAAAMAeUGIAAAAAe0CJAQAAAOwBJQYAAACwB5QYAAAA4BvABjVC6Vo+2hhHAAAAAElFTkSuQmCC';
 
+/**
+ * Draws one labelled rectangle on the open canvas and waits for it to be saved,
+ * so a second reader of the same diagram is guaranteed to see it.
+ */
+async function drawLabelledShape(page: Page, pane: Locator, label: string) {
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.dblclick();
+  await page.keyboard.type(label);
+  await page.keyboard.press('Escape');
+  await expect(node).toContainText(label);
+  await expect(page.getByText('Saved')).toBeVisible();
+  return node;
+}
+
 /** Opens a new diagram and waits for its canvas. */
 async function newDiagram(page: Page) {
   await page.getByRole('button', { name: 'New Diagram' }).first().click();
@@ -857,6 +874,12 @@ test('a second tab editing the same diagram is caught before its work is overwri
   await second.keyboard.press('Escape');
   await expect(second.getByText('Saved')).toBeVisible();
 
+  // Back to the first tab, the way the user would switch to it. Explicit
+  // because a background tab has its animation frames throttled by the
+  // browser, and every actionability check Playwright makes on it waits on
+  // one — which is what left this test a few seconds off its own timeout.
+  await page.bringToFront();
+
   // The first tab is now building on a version the server has moved past, so
   // its next autosave is refused rather than silently dropping "Second tab".
   await first.dblclick();
@@ -872,4 +895,148 @@ test('a second tab editing the same diagram is caught before its work is overwri
   await expect(page.locator('.react-flow__node').nth(1)).toContainText('Second tab');
 
   await second.close();
+});
+
+test('a public link opens the diagram read-only, and revoking it kills the URL', async ({ page, browser }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  await drawLabelledShape(page, pane, 'Public shape');
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await expect(dialog).toBeVisible();
+  // `click`, not `check`: the box reflects what the server says, so it only
+  // ticks once `POST …/share` has answered with a token.
+  await dialog.getByLabel('Anyone with the link can view').click();
+  await expect(dialog.getByLabel('Public link')).toBeVisible();
+
+  const link = await dialog.getByLabel('Public link').inputValue();
+  expect(link).toMatch(/\/s\/[^/]+$/);
+
+  // A brand new context: no cookies, so nobody is signed in to anything.
+  const visitor = await browser.newContext();
+  const visitorPage = await visitor.newPage();
+  await visitorPage.goto(link);
+
+  await expect(visitorPage.locator('.react-flow__node', { hasText: 'Public shape' })).toBeVisible();
+  await expect(visitorPage.getByText('View only')).toBeVisible();
+  // Read-only means the drawing tools are not there at all, not merely inert.
+  await expect(visitorPage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
+
+  // Turning the link off leaves the old URL pointing at nothing.
+  await dialog.getByRole('button', { name: 'Turn off' }).click();
+  await expect(dialog.getByLabel('Public link')).toHaveCount(0);
+
+  await visitorPage.reload();
+  await expect(visitorPage.getByText('This link is no longer active')).toBeVisible();
+  await expect(visitorPage.locator('.react-flow__node')).toHaveCount(0);
+
+  await visitor.close();
+});
+
+test('an invited editor finds the diagram, edits it, and loses that when demoted', async ({ page, browser }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  await drawLabelledShape(page, pane, 'Owner shape');
+  const diagramUrl = page.url();
+
+  // A second account, in its own context so the two sessions never mix.
+  const invitee = await browser.newContext();
+  const inviteePage = await invitee.newPage();
+  const inviteeEmail = await signUp(inviteePage);
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(inviteeEmail);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(inviteeEmail)).toBeVisible();
+
+  // It is not theirs, so it lands in its own section rather than among their own.
+  await inviteePage.goto('/');
+  await expect(inviteePage.getByRole('heading', { name: 'Shared with me' })).toBeVisible();
+  await expect(inviteePage.getByText('Can edit')).toBeVisible();
+  await inviteePage.getByText('Untitled').first().click();
+  await expect(inviteePage).toHaveURL(/\/d\/[^/]+$/);
+
+  // An editor edits: the second shape is saved under their own session.
+  const inviteePane = inviteePage.locator('.react-flow__pane');
+  await expect(inviteePane).toBeVisible();
+  await expect(inviteePage.locator('.react-flow__node')).toHaveCount(1);
+  await inviteePage.keyboard.press('r');
+  await inviteePane.click({ position: { x: 900, y: 260 } });
+  await expect(inviteePage.locator('.react-flow__node')).toHaveCount(2);
+  await expect(inviteePage.getByText('Saved')).toBeVisible();
+
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  // Demoted to viewer, their next load of the same diagram is read-only.
+  await page.getByRole('button', { name: 'Share' }).click();
+  await dialog.getByLabel(`Role for ${inviteeEmail}`).selectOption('viewer');
+  await expect(dialog.getByLabel(`Role for ${inviteeEmail}`)).toHaveValue('viewer');
+
+  await inviteePage.reload();
+  await expect(inviteePage.getByText('View only')).toBeVisible();
+  await expect(inviteePage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
+  // And the board is still there to read — this is a demotion, not a removal.
+  await expect(inviteePage.locator('.react-flow__node')).toHaveCount(2);
+
+  expect(page.url()).toBe(diagramUrl);
+  await invitee.close();
+});
+
+test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const node = await drawLabelledShape(page, pane, 'Version one');
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await expect(panel).toBeVisible();
+
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+
+  // Preview fetches the version's body and draws it from that version's own
+  // coordinates — one shape, at this point in the diagram's life.
+  await checkpoint.getByRole('button', { name: 'Preview' }).click();
+  const preview = checkpoint.getByRole('img', { name: 'Version preview' });
+  await expect(preview).toBeVisible();
+  await expect(preview.locator('rect')).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Preview' }).click();
+  await expect(preview).toHaveCount(0);
+
+  // The panel covers the right of the canvas, so it goes away while the board
+  // is edited and comes back to do the restore.
+  await panel.getByRole('button', { name: 'Close history' }).click();
+  await expect(panel).toBeHidden();
+
+  await node.dblclick();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Version two');
+  await page.keyboard.press('Escape');
+  await expect(node).toContainText('Version two');
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  await page.getByRole('button', { name: 'History' }).click();
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+  await expect(panel.getByText('Your current state is saved first')).toBeVisible();
+  await panel.getByRole('button', { name: 'Restore this version' }).click();
+
+  // The board goes back to the snapshot...
+  await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
+  // ...and what it replaced is itself now a version, so the restore is undoable.
+  await expect(panel.getByText('Before restore')).toBeVisible();
+
+  // The restore wrote the row, and the client's conflict guard followed it —
+  // an edit straight afterwards saves rather than colliding with that write.
+  await page.locator('.react-flow__node').first().dblclick();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Version three');
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
