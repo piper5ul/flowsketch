@@ -3,18 +3,22 @@ import {
   applyNodeChanges,
   applyEdgeChanges,
   addEdge as rfAddEdge,
-  MarkerType,
   type Node,
   type Edge,
-  type EdgeMarkerType,
   type NodeChange,
   type EdgeChange,
   type Connection,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
+import type { DiagramData } from '../../shared/types';
 import type { ConnectorData, ConnectorKind, Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import { computeMarkers } from '../lib/edgeMarkers';
+import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { api } from '../lib/api';
+
+// Re-exported here because this is where the rest of the app reaches for it.
+export { computeMarkers };
 
 // ---------------------------------------------------------------------------
 // Smart alignment guides — snap dragged nodes to other nodes' edges/centers
@@ -134,22 +138,6 @@ function computeAlignmentSnap(
 export type ShapeNode = Node<ShapeData, 'shape'>;
 export type ConnectorEdge = Edge<ConnectorData, 'connector'>;
 
-/**
- * Arrowheads are top-level edge fields (`markerStart`/`markerEnd`), not
- * `data`, so React Flow can generate a correctly-colored `<marker>` def per
- * edge. Call this whenever stroke color or arrow visibility changes.
- */
-export function computeMarkers(data: Pick<ConnectorData, 'stroke' | 'startArrow' | 'endArrow'>): {
-  markerStart?: EdgeMarkerType;
-  markerEnd?: EdgeMarkerType;
-} {
-  const marker: EdgeMarkerType = { type: MarkerType.ArrowClosed, color: data.stroke, width: 10, height: 10 };
-  return {
-    markerStart: data.startArrow ? marker : undefined,
-    markerEnd: data.endArrow ? marker : undefined,
-  };
-}
-
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 // Toolbar interaction flag — prevents contentEditable blur from
@@ -185,7 +173,8 @@ interface DiagramState {
   canUndo: boolean;
   canRedo: boolean;
 
-  loadDiagram: (id: string, title: string, starred: boolean, data: { nodes: unknown[]; edges: unknown[] }) => void;
+  /** @throws when `data` was written by a newer version — see `migrateDiagramData`. */
+  loadDiagram: (id: string, title: string, starred: boolean, data: unknown) => void;
   saveDiagram: (options?: { keepalive?: boolean }) => Promise<void>;
   setTitle: (title: string) => void;
   setStarred: (starred: boolean) => void;
@@ -311,6 +300,15 @@ function serializeEdges(edges: ConnectorEdge[]) {
   }));
 }
 
+/** The exact JSON written to `Diagram.data` — always stamped with a version. */
+export function serializeDiagram(nodes: ShapeNode[], edges: ConnectorEdge[]): DiagramData {
+  return {
+    version: CURRENT_DIAGRAM_VERSION,
+    nodes: serializeNodes(nodes) as unknown as DiagramData['nodes'],
+    edges: serializeEdges(edges) as unknown as DiagramData['edges'],
+  };
+}
+
 export const useDiagramStore = create<DiagramState>((set, get) => ({
   diagramId: null,
   title: 'Untitled',
@@ -329,21 +327,21 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   canRedo: false,
 
   loadDiagram: (id, title, starred, data) => {
+    // Migrate before touching any state: a payload from a newer build throws,
+    // and the store must be left as it was rather than half-loaded.
+    const migrated = migrateDiagramData(data);
+
     past = [];
     future = [];
     suppressHistory = false;
     lastNudgeAt = 0;
-    const edges = ((data.edges || []) as ConnectorEdge[]).map((e) => ({
-      ...e,
-      ...(e.data ? computeMarkers(e.data) : {}),
-    }));
     set({
       diagramId: id,
       title,
       starred,
       saveStatus: 'idle',
-      nodes: (data.nodes || []) as ShapeNode[],
-      edges,
+      nodes: migrated.nodes as unknown as ShapeNode[],
+      edges: migrated.edges as unknown as ConnectorEdge[],
       ...historyFlags(),
     });
   },
@@ -355,7 +353,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     try {
       await api.saveDiagram(
         diagramId,
-        { title, data: { nodes: serializeNodes(nodes), edges: serializeEdges(edges) } },
+        { title, data: serializeDiagram(nodes, edges) },
         options,
       );
       set({ saveStatus: 'saved' });

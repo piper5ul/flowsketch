@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeMarkers, useDiagramStore } from './useDiagramStore';
+import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
+import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 
 const store = () => useDiagramStore.getState();
 
@@ -485,5 +486,36 @@ describe('loadDiagram', () => {
     expect(store().title).toBe('D');
     expect(store().starred).toBe(true);
     expect(store().edges[0].markerEnd).toMatchObject({ color: '#123456' });
+  });
+
+  it('runs the payload through the migrations', () => {
+    // A v0 node with no `type` — React Flow needs one to pick a renderer.
+    store().loadDiagram('d', 'D', false, { nodes: [{ id: 'n1', position: { x: 0, y: 0 } }], edges: [] });
+    expect(store().nodes[0].type).toBe('shape');
+  });
+
+  it('rejects a diagram from a newer version without touching the current one', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    expect(() =>
+      store().loadDiagram('d', 'D', false, { version: CURRENT_DIAGRAM_VERSION + 1, nodes: [], edges: [] }),
+    ).toThrow(/newer version/i);
+    expect(store().nodes.map((n) => n.id)).toEqual([id]);
+    expect(store().diagramId).toBe('test');
+  });
+});
+
+describe('serializeDiagram', () => {
+  it('stamps the saved JSON with the current format version', () => {
+    const id = store().addShape('rectangle', { x: 1, y: 2 });
+    const data = serializeDiagram(store().nodes, store().edges);
+    expect(data.version).toBe(CURRENT_DIAGRAM_VERSION);
+    expect(data.nodes).toMatchObject([{ id, type: 'shape', position: { x: 1, y: 2 } }]);
+  });
+
+  it('round-trips through the migration unchanged', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges)));
+    expect(migrateDiagramData(saved)).toEqual(saved);
   });
 });

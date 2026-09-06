@@ -31,10 +31,10 @@ export const api = {
       body: JSON.stringify({ title }),
     }),
 
+  // `data` is deliberately `unknown`: it is a free-form JSON column that may
+  // hold any version the app has ever written. `migrateDiagramData` types it.
   getDiagram: (id: string) =>
-    request<{ id: string; title: string; starred: boolean; data: { nodes: unknown[]; edges: unknown[] } }>(
-      `/api/diagrams/${id}`,
-    ),
+    request<{ id: string; title: string; starred: boolean; data: unknown }>(`/api/diagrams/${id}`),
 
   /**
    * `keepalive` lets the request outlive the page that started it, which is

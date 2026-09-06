@@ -31,6 +31,11 @@ describe('diagramData', () => {
     });
   });
 
+  it('accepts and keeps the format version the client stamps on the payload', () => {
+    const parsed = diagramData.parse({ version: 1, nodes: [node], edges: [edge] });
+    expect(parsed).toMatchObject({ version: 1 });
+  });
+
   it('rejects nodes that are not an array', () => {
     expect(diagramData.safeParse({ nodes: 'nope', edges: [] }).success).toBe(false);
   });
