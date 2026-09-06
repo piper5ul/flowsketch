@@ -86,9 +86,19 @@ export function CanvasPage() {
     });
 
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
-      if (state.nodes === prev.nodes && state.edges === prev.edges && state.title === prev.title) return;
+      // A pan is a change worth saving on its own — the viewport is stored with
+      // the diagram — so it schedules a save like any edit.
+      if (
+        state.nodes === prev.nodes &&
+        state.edges === prev.edges &&
+        state.title === prev.title &&
+        state.viewport === prev.viewport
+      ) {
+        return;
+      }
       autosaver.schedule();
-      // A retitle does not change the picture, so only shape edits mark it stale.
+      // Neither a retitle nor a pan changes the picture, so only shape edits
+      // mark the thumbnail stale.
       if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
     });
 

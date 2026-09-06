@@ -51,7 +51,9 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
-- Auto-save to server (diagrams persist across sessions)
+- Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
+- Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
+- Auto-save to server (diagrams persist across sessions), including the pan and zoom the diagram was left at
 
 ### Collaboration-Ready Backend
 - User authentication with email/password (BetterAuth)
@@ -106,6 +108,9 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `⌘]` | Bring selection forward |
 | `⌘[` | Send selection backward |
 | `⌘⇧L` | Lock / unlock selection |
+| `⌥⇧` + arrows | Align the selection left / right / top / bottom (needs 2 shapes) |
+| `⌥⇧H` / `⌥⇧V` | Align the selection on its horizontal / vertical centre line |
+| `⌘⌥⇧H` / `⌘⌥⇧V` | Distribute the selection horizontally / vertically (needs 3 shapes) |
 
 ### Clipboard & style
 

@@ -10,7 +10,7 @@
  * Adding a version: bump `CURRENT_DIAGRAM_VERSION`, add a `vN -> vN+1` step to
  * `MIGRATIONS`, and leave the earlier steps alone.
  */
-import type { DiagramData, SerializedEdge, SerializedNode } from '../../shared/types';
+import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types';
 import type { ArrowStyle, StrokeWidth } from '../types';
 import { computeMarkers } from './edgeMarkers';
 import { DEFAULT_EDGE_STROKE } from './defaults';
@@ -30,6 +30,19 @@ function isNonEmptyString(value: unknown): value is string {
 
 function recordsOf(value: unknown): Bag[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+/**
+ * The stored viewport, if it is one. Whatever comes back here is handed
+ * straight to React Flow as its `defaultViewport`, so a half-written or
+ * hand-edited value is dropped in favour of framing the content instead.
+ */
+function viewportOf(value: unknown): DiagramViewport | undefined {
+  if (!isRecord(value)) return undefined;
+  const { x, y, zoom } = value;
+  if (typeof x !== 'number' || typeof y !== 'number' || typeof zoom !== 'number') return undefined;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(zoom)) return undefined;
+  return { x, y, zoom };
 }
 
 function emptyDiagram(): DiagramData {
@@ -129,10 +142,16 @@ export function migrateDiagramData(raw: unknown): DiagramData {
     data = MIGRATIONS[v](data);
   }
 
-  return {
+  const migrated: DiagramData = {
     ...data,
     version: CURRENT_DIAGRAM_VERSION,
     nodes: recordsOf(data.nodes) as unknown as SerializedNode[],
     edges: recordsOf(data.edges) as unknown as SerializedEdge[],
   };
+
+  const viewport = viewportOf(data.viewport);
+  if (viewport) migrated.viewport = viewport;
+  else delete migrated.viewport;
+
+  return migrated;
 }

@@ -6,6 +6,19 @@ export interface DiagramData {
   version?: number;
   nodes: SerializedNode[];
   edges: SerializedEdge[];
+  /**
+   * Where the canvas was left. Absent on every diagram saved before this was
+   * stored, and on one that has never been panned, which is why it needed no
+   * version bump: the canvas frames the content itself when it is missing.
+   */
+  viewport?: DiagramViewport;
+}
+
+/** A React Flow viewport, as `onMoveEnd` reports it. */
+export interface DiagramViewport {
+  x: number;
+  y: number;
+  zoom: number;
 }
 
 export interface SerializedNode {

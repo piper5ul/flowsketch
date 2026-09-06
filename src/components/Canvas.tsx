@@ -6,9 +6,11 @@ import {
   ConnectionMode,
   useReactFlow,
   type FinalConnectionState,
+  type Viewport,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
+import { useViewPreferences } from '../store/useViewPreferences';
 import { makeEdgeData } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { useImageInsert } from '../lib/useImageInsert';
@@ -22,10 +24,19 @@ import { FloatingToolbar } from './FloatingToolbar';
 import { BottomBar } from './BottomBar';
 import { TopBar } from './TopBar';
 import { AlignmentGuides } from './AlignmentGuides';
+import { CanvasMiniMap } from './CanvasMiniMap';
 import { TextFormatBar } from './TextFormatBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import type { ShapeData, ShapeKind, Tool } from '../types';
+
+/**
+ * The grid a dragged shape lands on while snapping is on. 10 px is a divisor of
+ * the 10 px far-nudge and of every default shape size, so a snapped shape stays
+ * snapped when it is nudged or resized.
+ */
+const GRID_SIZE = 10;
+const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 
 function isTypingTarget(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false;
@@ -44,6 +55,8 @@ export function Canvas() {
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
+  const minimap = useViewPreferences((s) => s.minimap);
+  const gridSnap = useViewPreferences((s) => s.gridSnap);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
@@ -55,6 +68,28 @@ export function Canvas() {
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+
+  // Read once, at mount: React Flow only reads `defaultViewport` and `fitView`
+  // on init, and CanvasPage mounts this component after the diagram has loaded.
+  const [opening] = useState(() => {
+    const state = useDiagramStore.getState();
+    return { viewport: state.viewport, willFit: !state.viewport && state.nodes.length > 0 };
+  });
+
+  // The fit React Flow performs on open moves the canvas itself, and reporting
+  // that as a pan would autosave — bumping the timestamp of every diagram the
+  // user merely looked at. That one report is skipped, and only when a fit is
+  // actually coming: an empty diagram has nothing to fit, so the next move
+  // there is a real gesture.
+  const skipMoveReport = useRef(opening.willFit);
+
+  const onMoveEnd = useCallback((_event: unknown, viewport: Viewport) => {
+    if (skipMoveReport.current) {
+      skipMoveReport.current = false;
+      return;
+    }
+    useDiagramStore.getState().setViewport(viewport);
+  }, []);
 
   useEffect(() => {
     if (tool !== 'connector') connectorSourceRef.current = null;
@@ -383,6 +418,11 @@ export function Canvas() {
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
+        // Grid snapping is opt-in and orthogonal to the shape-to-shape
+        // alignment guides, which keep working either way: the grid rounds the
+        // drag, the guides still line the shape up with its neighbours.
+        snapToGrid={gridSnap}
+        snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={30}
         connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}
@@ -397,18 +437,21 @@ export function Canvas() {
         zoomOnDoubleClick={false}
         minZoom={0.2}
         maxZoom={2.5}
-        // CanvasPage mounts Canvas only after the diagram has loaded, so
-        // fitView frames the actual content on open; defaultViewport is the
-        // fallback for an empty diagram, where there is nothing to fit.
-        fitView
+        onMoveEnd={onMoveEnd}
+        // A diagram that has been panned reopens exactly where it was left.
+        // Without a stored viewport, CanvasPage has already loaded the diagram
+        // by the time this mounts, so fitView frames the actual content — and
+        // defaultViewport is what an empty diagram, with nothing to fit, gets.
+        fitView={!opening.viewport}
         fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-        defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
+        defaultViewport={opening.viewport ?? { x: 0, y: 0, zoom: 0.8 }}
         className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOL_KINDS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#D6D9E4" className="rf-canvas" />
         <ConnectorMarkerDefs />
         <AlignmentGuides />
+        {minimap && <CanvasMiniMap />}
       </ReactFlow>
 
       <TopBar />

@@ -979,6 +979,35 @@ describe('serializeDiagram', () => {
   });
 });
 
+describe('the saved viewport', () => {
+  const viewport = { x: -120, y: 40, zoom: 1.5 };
+
+  it('is empty until the canvas reports one, so an unpanned diagram opens framed', () => {
+    expect(store().viewport).toBeNull();
+    expect(serializeDiagram(store().nodes, store().edges, store().viewport).viewport).toBeUndefined();
+  });
+
+  it('round-trips through serialize and load', () => {
+    store().setViewport(viewport);
+    const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges, store().viewport)));
+    expect(saved.viewport).toEqual(viewport);
+
+    store().loadDiagram('other', 'Other', false, saved);
+    expect(store().viewport).toEqual(viewport);
+  });
+
+  it('is dropped when the next diagram has none of its own', () => {
+    store().setViewport(viewport);
+    store().loadDiagram('other', 'Other', false, { nodes: [], edges: [] });
+    expect(store().viewport).toBeNull();
+  });
+
+  it('is transient: panning is not an undo step', () => {
+    store().setViewport(viewport);
+    expect(store().canUndo).toBe(false);
+  });
+});
+
 describe('saveDiagram', () => {
   beforeEach(() => {
     saveDiagram.mockClear();
@@ -1003,6 +1032,16 @@ describe('saveDiagram', () => {
     store().setTitle('   ');
     await store().saveDiagram();
     expect(saveDiagram).toHaveBeenCalledWith('test', expect.objectContaining({ title: 'Untitled' }), undefined);
+  });
+
+  it('sends the current viewport along with the diagram', async () => {
+    store().setViewport({ x: 10, y: -20, zoom: 0.75 });
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith(
+      'test',
+      expect.objectContaining({ data: expect.objectContaining({ viewport: { x: 10, y: -20, zoom: 0.75 } }) }),
+      undefined,
+    );
   });
 
   it('trims the title it sends', async () => {

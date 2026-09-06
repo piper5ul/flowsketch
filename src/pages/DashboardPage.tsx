@@ -163,6 +163,7 @@ export function DashboardPage() {
               <Tooltip label="Sign out" side="bottom">
                 <button
                   onClick={handleSignOut}
+                  aria-label="Sign out"
                   className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-black/[0.04] hover:text-ink-900"
                 >
                   <LogOut size={16} />
@@ -342,6 +343,10 @@ function DiagramCard({
           <div className="flex shrink-0 items-center gap-0.5">
             <button
               onClick={onToggleStar}
+              // The name changes with the state so a screen reader hears what
+              // the click will do, and `aria-pressed` carries where it stands.
+              aria-label={diagram.starred ? 'Unstar diagram' : 'Star diagram'}
+              aria-pressed={diagram.starred}
               className="flex h-6 w-6 items-center justify-center rounded text-ink-600/40 transition hover:text-yellow-400"
             >
               <Star size={13} className={diagram.starred ? 'fill-yellow-400 text-yellow-400' : ''} />

@@ -1,7 +1,9 @@
 import { renderDiagramPng } from '../lib/exportImage';
+import { useViewPreferences } from '../store/useViewPreferences';
+import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import type { FontSize, ShapeKind, Tool } from '../types';
 import { createRegistry } from './registry';
-import type { Command, CommandContext, DiagramState } from './types';
+import type { Command, CommandContext, DiagramState, Keybinding } from './types';
 
 export { bindingsOf, formatShortcut, shortcutLabels, detectPlatform } from './registry';
 
@@ -465,6 +467,35 @@ export const commands: Command[] = [
     shortcut: [{ key: '?' }, { key: '?', shift: true }, { key: '/', shift: true }],
     run: (ctx) => ctx.ui.openShortcuts(),
   },
+
+  // ---- arrange: align & distribute ---------------------------------------
+  // Aligning needs something to align *to*, so every one of these is gated on
+  // a real multi-selection: two nodes for align, three for distribute (the
+  // outer two stay put, so below three there is no middle to spread).
+  //
+  // ⌥ rewrites `event.key` on macOS — ⌥⇧H arrives as "Ó" — which is exactly
+  // what the registry's `event.code` fallback is for, so the letters are still
+  // written here the way they are printed on the key.
+  ...alignCommands(),
+  ...distributeCommands(),
+
+  // ---- view: canvas chrome -----------------------------------------------
+  // Both toggles live in `useViewPreferences` rather than the diagram store:
+  // they are per-browser preferences, not part of any diagram. Neither takes a
+  // keystroke — the letters left are worth more to a tool — so they reach the
+  // user through the bottom bar, and through here for the sake of one list.
+  {
+    id: 'view.toggleMinimap',
+    title: 'Show minimap',
+    group: 'view',
+    run: () => useViewPreferences.getState().toggleMinimap(),
+  },
+  {
+    id: 'view.toggleGridSnap',
+    title: 'Snap to grid',
+    group: 'view',
+    run: () => useViewPreferences.getState().toggleGridSnap(),
+  },
 ];
 
 export const registry = createRegistry(commands);
@@ -480,6 +511,59 @@ export const GROUP_LABELS: { group: Command['group']; label: string }[] = [
   { group: 'view', label: 'View' },
   { group: 'history', label: 'History' },
 ];
+
+/**
+ * Align: one command per edge of the selection's bounding box, on ⌥⇧ plus the
+ * arrow that points at that edge, with ⌥⇧H / ⌥⇧V for the two centre lines.
+ *
+ * Declared as a hoisted function so the commands themselves sit at the end of
+ * the list, where a new one can be added without touching anything above it.
+ */
+function alignCommands(): Command[] {
+  const modes: [AlignMode, string, Keybinding][] = [
+    ['left', 'Align left', { key: 'ArrowLeft', alt: true, shift: true }],
+    ['right', 'Align right', { key: 'ArrowRight', alt: true, shift: true }],
+    ['top', 'Align top', { key: 'ArrowUp', alt: true, shift: true }],
+    ['bottom', 'Align bottom', { key: 'ArrowDown', alt: true, shift: true }],
+    ['centerX', 'Align horizontal centres', { key: 'h', alt: true, shift: true }],
+    ['centerY', 'Align vertical centres', { key: 'v', alt: true, shift: true }],
+  ];
+
+  return modes.map(([mode, title, shortcut]) => ({
+    id: `arrange.align${mode[0].toUpperCase()}${mode.slice(1)}`,
+    title,
+    group: 'arrange',
+    shortcut,
+    contextMenu: 'node',
+    when: (ctx) => selectedNodes(ctx.store.getState()).length >= 2,
+    run: (ctx) => ctx.store.getState().alignSelected(mode),
+  }));
+}
+
+/**
+ * Distribute: the same H / V letters as the centre-line aligns, one modifier up.
+ *
+ * ⌥⌃H / ⌥⌃V would read better, but this registry folds ⌘ and Ctrl into one
+ * `meta` flag — so a ⌃⌥V binding is indistinguishable from ⌘⌥V, which
+ * `style.paste` already owns and which is matched first. ⇧ keeps them apart.
+ */
+function distributeCommands(): Command[] {
+  const axes: [DistributeAxis, string, string][] = [
+    ['x', 'Distribute horizontally', 'h'],
+    ['y', 'Distribute vertically', 'v'],
+  ];
+
+  return axes.map(([axis, title, key]) => ({
+    id: `arrange.distribute${axis.toUpperCase()}`,
+    title,
+    group: 'arrange',
+    shortcut: { key, meta: true, alt: true, shift: true },
+    contextMenu: 'node',
+    // The outermost two never move, so there is nothing to spread below three.
+    when: (ctx) => selectedNodes(ctx.store.getState()).length >= 3,
+    run: (ctx) => ctx.store.getState().distributeSelected(axis),
+  }));
+}
 
 /** The shape kinds a tool command can place, so Canvas can keep its own list honest. */
 export const SHAPE_TOOL_KINDS: ShapeKind[] = [
