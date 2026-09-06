@@ -103,6 +103,23 @@ const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys }) => ({
 export const commandDeclarations: Command[] = [
   ...toolCommands,
 
+  // ---- comments ----------------------------------------------------------
+  {
+    id: 'comment.add',
+    title: 'Comment',
+    group: 'comments',
+    // First on both menus: it is the one thing here that is offered to a
+    // viewer, and a reviewer should not have to read past nine editing
+    // actions to find it.
+    contextMenu: ['node', 'pane'],
+    // No `when`. The gate is that `startComment` is only supplied by a canvas
+    // with a session behind it, and the public share page opens no context
+    // menu at all — so a predicate here would only ever answer for a menu
+    // nobody can see. It is on `READ_ONLY_COMMAND_IDS` because commenting is
+    // a viewer's right, not an edit of the diagram.
+    run: (ctx) => ctx.ui.startComment?.(),
+  },
+
   // ---- history -----------------------------------------------------------
   {
     id: 'history.undo',
@@ -520,6 +537,9 @@ export const commandDeclarations: Command[] = [
  */
 const READ_ONLY_COMMAND_IDS = new Set<string>([
   'tool.select',
+  // Reading *and* writing a comment are a viewer's right — see
+  // `server/comments.ts` — so this survives the read-only gate.
+  'comment.add',
   'tool.pan',
   'select.all',
   'edit.escape',
@@ -569,6 +589,9 @@ export const registry = createRegistry(commands);
 /** Cheat-sheet section order and headings. */
 export const GROUP_LABELS: { group: Command['group']; label: string }[] = [
   { group: 'tools', label: 'Tools' },
+  // Nothing in this group carries a keystroke yet, so the sheet drops the
+  // section; it is named here so that the first one to get one turns up.
+  { group: 'comments', label: 'Comments' },
   { group: 'edit', label: 'Editing' },
   { group: 'select', label: 'Selection' },
   { group: 'arrange', label: 'Arrange' },

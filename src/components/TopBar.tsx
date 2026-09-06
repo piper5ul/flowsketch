@@ -1,10 +1,13 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Eye, History, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes, Users } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Eye, History, MessageSquare, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes, Users } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
 import { HistoryPanel } from './HistoryPanel';
+import { CommentsPanel } from './CommentsPanel';
 import { ShareDialog } from './ShareDialog';
+import { openThreadCount } from '../lib/comments';
+import { useCommentStore } from '../store/useCommentStore';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
 import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
 import { buildDiagramExport, diagramFileName } from '../lib/diagramFile';
@@ -71,6 +74,12 @@ export function TopBar() {
             board looked like last week is the same permission as being shown
             what it looks like now. The panel withholds the two writes. */}
         <HistoryButton />
+        {/* Offered to every member, viewers included: reading and writing a
+            comment are both a viewer's right, because a reviewer who cannot
+            write anything down is not reviewing. The public share page mounts
+            no TopBar at all, which is what keeps it off an anonymous reader —
+            every comment route needs a session and a name. */}
+        <CommentsButton />
         {/* Owner-only in substance — every sharing route is — but an editor is
             still offered it, because the dialog is the only place the list of
             collaborators lives and they are allowed to read it. A viewer gets
@@ -99,6 +108,57 @@ function HistoryButton() {
         </button>
       </div>
       {open && <HistoryPanel onClose={close} />}
+    </div>
+  );
+}
+
+/**
+ * Opens the comments sheet, and is where the diagram's threads are loaded.
+ *
+ * The fetch lives here rather than in the panel because the count on this
+ * button — and the pins on the canvas — have to be right whether or not the
+ * panel has ever been opened. It is mounted exactly when a signed-in member has
+ * the diagram open, which is exactly when there is a conversation to fetch.
+ */
+function CommentsButton() {
+  const diagramId = useDiagramStore((s) => s.diagramId);
+  const open = useCommentStore((s) => s.panelOpen);
+  const threads = useCommentStore((s) => s.threads);
+  const openCount = openThreadCount(threads);
+
+  useEffect(() => {
+    if (!diagramId) return;
+    void useCommentStore.getState().load(diagramId);
+    // A different diagram is a different conversation, and an unmounted canvas
+    // has none at all.
+    return () => useCommentStore.getState().reset();
+  }, [diagramId]);
+
+  const toggle = useCallback(() => {
+    const store = useCommentStore.getState();
+    if (store.panelOpen) store.closePanel();
+    else store.openPanel();
+  }, []);
+
+  return (
+    <div className="pointer-events-auto">
+      <div className="flex items-center gap-2 rounded-2xl bg-panel/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
+        <button
+          onClick={toggle}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-hover"
+        >
+          <MessageSquare size={15} /> Comments
+          {openCount > 0 && (
+            <span
+              aria-label={`${openCount} open ${openCount === 1 ? 'thread' : 'threads'}`}
+              className="flex h-4 min-w-4 items-center justify-center rounded-full bg-accent-500 px-1 text-[10px] font-bold text-white"
+            >
+              {openCount}
+            </span>
+          )}
+        </button>
+      </div>
+      {open && <CommentsPanel />}
     </div>
   );
 }

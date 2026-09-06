@@ -328,6 +328,51 @@ a:focus-visible {
   display: none;
 }
 
+/* A comment thread's pin on the board (`CommentPins.tsx`).
+
+   Chrome, not diagram: the accent is the same in both themes, and the class is
+   on the image export's exclusion list so a discussion never lands in a PNG.
+   `translate(-50%, -50%)` centres the pin on the point it is given, which is a
+   shape's top-right corner or the spot the thread was dropped on. */
+.comment-pin {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: 2px solid #fff;
+  border-radius: 9999px;
+  background: var(--color-accent-500);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  /* The viewport is `pointer-events: none` so that clicks reach the pane
+     beneath it; anything inside it that is meant to be clicked has to opt back
+     in, the way the quick-add buttons do. */
+  pointer-events: all;
+  transform: translate(-50%, -50%);
+  /* Above the shapes. React Flow lifts a selected node to `z-index: 1000`, and
+     its resize handles run along the very edge a pin is anchored to — a handle
+     that swallowed the click would make the pin on a selected shape unopenable. */
+  z-index: 1001;
+  box-shadow: 0 2px 8px -2px rgba(10, 10, 25, 0.5);
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.comment-pin:hover {
+  transform: translate(-50%, -50%) scale(1.12);
+}
+
+/* A resolved pin is only ever on screen because the user asked to see resolved
+   threads, so it says so rather than competing with the open ones. */
+.comment-pin[data-resolved='true'] {
+  background: var(--color-ink-600);
+}
+
 /* Quick-add directional buttons that appear when hovering a shape */
 .quick-add-btn {
   position: absolute;

@@ -71,6 +71,9 @@ describe('the read-only gate', () => {
       'view.fitView',
       'view.shortcuts',
       'view.toggleMinimap',
+      // Reading *and* writing a comment are a viewer's right — a reviewer who
+      // cannot write anything down is not reviewing.
+      'comment.add',
     ]) {
       expect(offered(id, readOnly), `${id} was withdrawn`).toBe(true);
     }
@@ -93,5 +96,19 @@ describe('the read-only gate', () => {
       // or it does not survive.
       if (stillOffered) expect(gated.when, declaration.id).toBe(declaration.when);
     }
+  });
+});
+
+describe('the comment command', () => {
+  const command = registry.find('comment.add')!;
+
+  it('is offered on the shape and canvas menus, but not on a connector', () => {
+    expect(command.contextMenu).toEqual(['node', 'pane']);
+  });
+
+  it('does nothing on a canvas that cannot attribute a comment', () => {
+    // The public share page supplies no `startComment`: there is no session
+    // there to put a name against a remark.
+    expect(() => command.run({ ui: {} } as unknown as CommandContext)).not.toThrow();
   });
 });

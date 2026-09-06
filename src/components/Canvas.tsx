@@ -19,6 +19,8 @@ import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { ConnectorMarkerDefs } from '../edges/ConnectorMarkerDefs';
+import { useCommentStore, type CommentAnchor } from '../store/useCommentStore';
+import { CommentPins } from './CommentPins';
 import { LeftRail } from './LeftRail';
 import { FloatingToolbar } from './FloatingToolbar';
 import { BottomBar } from './BottomBar';
@@ -67,6 +69,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const readOnly = useDiagramStore((s) => s.readOnly);
   const minimap = useViewPreferences((s) => s.minimap);
   const gridSnap = useViewPreferences((s) => s.gridSnap);
+  // Commenting needs a session and a name against the remark, which is exactly
+  // what the top bar's presence stands for: the public `/s/:token` page mounts
+  // this same canvas with nobody behind it.
+  const canComment = topBar;
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
@@ -76,6 +82,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // Both clipboards live outside the store: neither belongs in a saved diagram.
   const clipboardRef = useRef<ClipboardPayload | null>(null);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
+  // What the "Comment" menu item would pin a thread to: the shape that was
+  // right-clicked, or the point on the board that was. A ref rather than state
+  // because nothing renders from it — it is read once, by the command.
+  const commentAnchorRef = useRef<CommentAnchor | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
@@ -126,9 +136,20 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         },
         end: () => useDiagramStore.getState().setTool(prevToolRef.current),
       },
-      ui: { openShortcuts: () => setShortcutsOpen(true) },
+      ui: {
+        openShortcuts: () => setShortcutsOpen(true),
+        // Supplied only where there is a session to attribute a comment to.
+        // The public share page mounts this same canvas with nobody behind it,
+        // and every comment route needs a name against the remark.
+        startComment: topBar
+          ? () => {
+              const anchor = commentAnchorRef.current;
+              if (anchor) useCommentStore.getState().beginCompose(anchor);
+            }
+          : undefined,
+      },
     }),
-    [zoomIn, zoomOut, zoomTo, fitView],
+    [zoomIn, zoomOut, zoomTo, fitView, topBar],
   );
 
   const runCommand = useCallback(
@@ -153,6 +174,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     (event: React.MouseEvent, node: ShapeNode) => {
       event.preventDefault();
       if (!node.selected) selectOnly('node', node.id);
+      commentAnchorRef.current = { nodeId: node.id };
       setContextMenu({ x: event.clientX, y: event.clientY, target: 'node' });
     },
     [selectOnly],
@@ -167,10 +189,17 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     [selectOnly],
   );
 
-  const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
-    event.preventDefault();
-    setContextMenu({ x: event.clientX, y: event.clientY, target: 'pane' });
-  }, []);
+  const onPaneContextMenu = useCallback(
+    (event: React.MouseEvent | MouseEvent) => {
+      event.preventDefault();
+      // Read now, while the click's screen position still means something: the
+      // user can pan before picking "Comment", and the pin belongs where they
+      // right-clicked, not where that pixel ends up.
+      commentAnchorRef.current = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      setContextMenu({ x: event.clientX, y: event.clientY, target: 'pane' });
+    },
+    [screenToFlowPosition],
+  );
 
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
@@ -437,12 +466,17 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         onNodeClick={onNodeClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
-        // Every item on those menus either edits the diagram or is offered by
-        // the bottom bar anyway, so a read-only board has none: right-clicking
-        // it falls through to the browser's own menu.
-        onNodeContextMenu={readOnly ? undefined : onNodeContextMenu}
+        // A read-only board used to have no menus at all, every item on them
+        // being an edit. "Comment" is the exception — writing one is a
+        // viewer's right — so the two menus that offer it open for a signed-in
+        // viewer as well, carrying that and the handful of read-only view
+        // actions. The public page keeps the browser's own menu: there is no
+        // session there to put a name against a remark. `ContextMenu` renders
+        // nothing when every item has been gated away, so this never opens an
+        // empty panel. The edge menu is unchanged — it is all edits.
+        onNodeContextMenu={canComment || !readOnly ? onNodeContextMenu : undefined}
         onEdgeContextMenu={readOnly ? undefined : onEdgeContextMenu}
-        onPaneContextMenu={readOnly ? undefined : onPaneContextMenu}
+        onPaneContextMenu={canComment || !readOnly ? onPaneContextMenu : undefined}
         // Grid snapping is opt-in and orthogonal to the shape-to-shape
         // alignment guides, which keep working either way: the grid rounds the
         // drag, the guides still line the shape up with its neighbours.
@@ -484,6 +518,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
             the dot's `fill` reads, so a `var()` here resolves at paint time. */}
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="var(--canvas-dot)" className="rf-canvas" />
         <ConnectorMarkerDefs />
+        {canComment && <CommentPins />}
         <AlignmentGuides />
         {minimap && <CanvasMiniMap />}
       </ReactFlow>

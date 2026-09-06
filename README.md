@@ -65,13 +65,14 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - **Invite people by email** — invite an existing account as **Can view** or **Can edit**, change someone's role, or remove them, all from the same dialog. Editors draw on the board exactly as the owner does; viewers read it. Only the owner can rename, duplicate, delete or star a diagram.
 - **Shared with me** — diagrams other people have invited you to sit in their own section of the dashboard, with the owner's name and your role on each card. Search and sort apply within each section.
 - **View only** — a viewer (and anyone on a share link) gets the board without the shape rail, the selection toolbar or the editing shortcuts, and a "View only" pill where the save indicator normally sits. Nothing they do can write to the diagram.
+- **Comments** — right-click a shape or the canvas and pick **Comment** to pin a conversation to it. A numbered pin marks each open thread on the board and follows the shape it is on; clicking it opens the **Comments** sheet on that thread, where anyone with access can reply. Filter by Open / Resolved / All, resolve a thread to take its pin off the board, and reopen it later. Commenting is a viewer's right too — a reviewer who cannot write anything down is not reviewing — though only editors, and whoever opened a thread, can call it settled. Pins are chrome, not drawing: they never appear in an exported PNG or SVG.
 - **Version history** — the **History** button lists what the diagram has been, newest first ("Today 14:03 · Ada · Before restore"). A version is kept for each burst of editing rather than for each autosave, and you can take a labelled snapshot at any time. Preview any version in place, then restore it — what it replaces is snapshotted first, so a restore is itself undoable.
 
 ### Collaboration-Ready Backend
 - User authentication with email/password (BetterAuth)
 - Email verification via configurable SMTP
 - Per-user diagram dashboard
-- RESTful API for diagram CRUD, sharing, members and versions
+- RESTful API for diagram CRUD, sharing, members, versions and comments
 
 ## Keyboard shortcuts
 

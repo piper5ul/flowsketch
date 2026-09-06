@@ -18,6 +18,7 @@ export interface Keybinding {
 
 export type CommandGroup =
   | 'tools'
+  | 'comments'
   | 'edit'
   | 'select'
   | 'arrange'
@@ -86,5 +87,17 @@ export interface CommandContext {
   styleClipboard: Holder<Partial<ShapeData> | null>;
   /** Hold-to-pan: `begin` remembers the current tool, `end` restores it. */
   pan: { begin: () => void; end: () => void };
-  ui: { openShortcuts: () => void };
+  ui: {
+    openShortcuts: () => void;
+    /**
+     * Starts a comment thread on whatever the right-click menu was opened
+     * over — a shape, or the point on the canvas that was clicked.
+     *
+     * Optional because commenting needs a session and a name: the public
+     * `/s/:token` page mounts the same canvas with nobody behind it and
+     * supplies no handler, so the menu item is a no-op there rather than a
+     * request that was always going to be refused.
+     */
+    startComment?: () => void;
+  };
 }
