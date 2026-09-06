@@ -418,6 +418,66 @@ describe('onNodesChange with locked nodes', () => {
   });
 });
 
+describe('alignment guides while dragging', () => {
+  // `loadDiagram` resets the nodes but not the guides drawn over them.
+  beforeEach(() => {
+    useDiagramStore.setState({ guides: [] });
+  });
+
+  /** A default-sized (180×100) rectangle. */
+  const rect = (x: number, y: number) => store().addShape('rectangle', { x, y });
+  const posOf = (id: string) => store().nodes.find((n) => n.id === id)!.position;
+
+  /** The change React Flow emits for a node being dragged to `x, y`. */
+  const drag = (id: string, x: number, y: number) =>
+    ({ type: 'position', id, position: { x, y }, dragging: true }) as const;
+
+  it('snaps a single dragged node onto a stationary one', () => {
+    const still = rect(500, 1000);
+    const moving = rect(0, 0);
+    store().onNodesChange([drag(moving, 497, 0)]);
+
+    expect(posOf(moving).x).toBe(500);
+    expect(posOf(still)).toEqual({ x: 500, y: 1000 });
+    expect(store().guides.length).toBeGreaterThan(0);
+  });
+
+  it('snaps a two-node drag as one box, moving both by the same delta', () => {
+    rect(500, 1000);
+    const a = rect(0, 0);
+    const b = rect(0, 300);
+    // Both dragged together, the pair's left edge 3px shy of the third node's.
+    store().onNodesChange([drag(a, 497, 0), drag(b, 497, 300)]);
+
+    expect(posOf(a)).toEqual({ x: 500, y: 0 });
+    expect(posOf(b)).toEqual({ x: 500, y: 300 });
+    expect(store().guides.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the dragged nodes\' spacing when the snap comes from the far edge', () => {
+    // The stationary node's left edge lines up with the *pair's* right edge,
+    // which only the trailing node can reach: the leading one must move with it.
+    rect(860, 1000);
+    const a = rect(0, 0);
+    const b = rect(200, 0);
+    store().onNodesChange([drag(a, 480, 0), drag(b, 677, 0)]);
+
+    expect(posOf(a)).toEqual({ x: 483, y: 0 });
+    expect(posOf(b)).toEqual({ x: 680, y: 0 });
+  });
+
+  it('does not snap to the nodes being dragged themselves', () => {
+    const a = rect(0, 0);
+    const b = rect(203, 0);
+    store().onNodesChange([drag(a, 0, 0), drag(b, 203, 0)]);
+
+    // b's left edge is 3px from a's right edge, but both are travelling, so
+    // there is nothing standing still to snap to.
+    expect(posOf(b)).toEqual({ x: 203, y: 0 });
+    expect(store().guides).toHaveLength(0);
+  });
+});
+
 describe('z-order', () => {
   function ids() {
     return store().nodes.map((n) => n.id);
@@ -450,6 +510,231 @@ describe('z-order', () => {
     expect(ids()).toEqual([b, a, c]);
     store().sendBackward();
     expect(ids()).toEqual([a, b, c]);
+  });
+});
+
+describe('alignSelected', () => {
+  /** A rectangle at an explicit position and size. */
+  function rect(x: number, y: number, w = 180, h = 100) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  const posOf = (id: string) => store().nodes.find((n) => n.id === id)!.position;
+
+  it('moves the selection onto the bounding box\'s left edge', () => {
+    const a = rect(0, 0);
+    const b = rect(120, 200);
+    select(a, b);
+    store().alignSelected('left');
+
+    expect(posOf(a).x).toBe(0);
+    expect(posOf(b).x).toBe(0);
+    // The other axis is left alone.
+    expect(posOf(b).y).toBe(200);
+  });
+
+  it('aligns tops, bottoms and both centre lines', () => {
+    const a = rect(0, 0, 100, 50);
+    const b = rect(200, 300, 100, 150);
+    select(a, b);
+
+    store().alignSelected('top');
+    expect(posOf(a).y).toBe(0);
+    expect(posOf(b).y).toBe(0);
+
+    store().alignSelected('bottom');
+    // Bounds now run 0 → 150, so the shorter rect drops to y = 100.
+    expect(posOf(a).y).toBe(100);
+    expect(posOf(b).y).toBe(0);
+
+    store().alignSelected('right');
+    expect(posOf(a).x).toBe(200);
+    expect(posOf(b).x).toBe(200);
+
+    store().alignSelected('centerX');
+    expect(posOf(a).x).toBe(200);
+    expect(posOf(b).x).toBe(200);
+
+    store().alignSelected('centerY');
+    expect(posOf(a).y).toBe(50);
+    expect(posOf(b).y).toBe(0);
+  });
+
+  it('leaves an unselected node alone', () => {
+    const a = rect(0, 0);
+    const b = rect(120, 200);
+    const outsider = rect(500, 500);
+    select(a, b);
+    store().alignSelected('left');
+
+    expect(posOf(outsider)).toEqual({ x: 500, y: 500 });
+  });
+
+  it('records exactly one history entry for the whole move', () => {
+    const a = rect(0, 0);
+    const b = rect(120, 200);
+    select(a, b);
+    store().alignSelected('left');
+
+    store().undo();
+    expect(posOf(b)).toEqual({ x: 120, y: 200 });
+    expect(posOf(a)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('does nothing with fewer than two nodes selected', () => {
+    const a = rect(50, 60);
+    select(a);
+    store().alignSelected('left');
+    expect(posOf(a)).toEqual({ x: 50, y: 60 });
+
+    // No selection at all, and no history entry either.
+    select();
+    store().alignSelected('left');
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('anchors on a locked node without moving it', () => {
+    const locked = rect(0, 0);
+    const free = rect(120, 200);
+    select(locked);
+    store().toggleLock();
+
+    select(locked, free);
+    store().alignSelected('left');
+
+    expect(posOf(locked)).toEqual({ x: 0, y: 0 });
+    expect(posOf(free).x).toBe(0);
+  });
+
+  it('records no history entry when the selection is already aligned', () => {
+    const a = rect(0, 0);
+    const b = rect(0, 200);
+    select(a, b);
+    store().alignSelected('left');
+
+    // The only entries are the two addShape calls, so two undos empty the canvas.
+    store().undo();
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+});
+
+describe('distributeSelected', () => {
+  function rect(x: number, y: number, w = 100, h = 100) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('spreads three unevenly spaced nodes into equal gaps', () => {
+    const a = rect(0, 0);
+    const b = rect(150, 0);
+    const c = rect(400, 0);
+    select(a, b, c);
+    store().distributeSelected('x');
+
+    // 500 of span holding 300 of node leaves 200 over two gaps.
+    expect(nodeOf(a).position.x).toBe(0);
+    expect(nodeOf(b).position.x).toBe(200);
+    expect(nodeOf(c).position.x).toBe(400);
+  });
+
+  it('records one history entry and leaves an even row alone', () => {
+    const a = rect(0, 0);
+    const b = rect(200, 0);
+    const c = rect(400, 0);
+    select(a, b, c);
+    store().distributeSelected('x');
+    expect(nodeOf(b).position.x).toBe(200);
+
+    // Nothing moved, so the three addShape entries are the whole history.
+    store().undo();
+    store().undo();
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('does nothing with fewer than three nodes selected', () => {
+    const a = rect(0, 0);
+    const b = rect(150, 0);
+    select(a, b);
+    store().distributeSelected('x');
+    expect(nodeOf(b).position.x).toBe(150);
+  });
+
+  it('leaves a locked node where it is', () => {
+    const a = rect(0, 0);
+    const b = rect(150, 0);
+    const c = rect(400, 0);
+    select(b);
+    store().toggleLock();
+
+    select(a, b, c);
+    store().distributeSelected('x');
+    expect(nodeOf(b).position.x).toBe(150);
+  });
+});
+
+describe('matchSizeSelected', () => {
+  function rect(x: number, y: number, w: number, h: number) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('resizes the selection to the largest node in it', () => {
+    const small = rect(0, 0, 100, 50);
+    const big = rect(300, 0, 200, 120);
+    select(small, big);
+    store().matchSizeSelected('both');
+
+    expect(nodeOf(small)).toMatchObject({ width: 200, height: 120 });
+    // The reference itself is untouched, position included.
+    expect(nodeOf(big)).toMatchObject({ width: 200, height: 120, position: { x: 300, y: 0 } });
+  });
+
+  it('matches one dimension at a time', () => {
+    const small = rect(0, 0, 100, 50);
+    const big = rect(300, 0, 200, 120);
+    select(small, big);
+
+    store().matchSizeSelected('width');
+    expect(nodeOf(small)).toMatchObject({ width: 200, height: 50 });
+
+    store().matchSizeSelected('height');
+    expect(nodeOf(small)).toMatchObject({ width: 200, height: 120 });
+  });
+
+  it('records one history entry for the resize', () => {
+    const small = rect(0, 0, 100, 50);
+    const big = rect(300, 0, 200, 120);
+    select(small, big);
+    store().matchSizeSelected('both');
+
+    store().undo();
+    expect(nodeOf(small)).toMatchObject({ width: 100, height: 50 });
+    expect(nodeOf(big)).toMatchObject({ width: 200, height: 120 });
+  });
+
+  it('does nothing with a single node selected, and never resizes a locked one', () => {
+    const a = rect(0, 0, 100, 50);
+    const b = rect(300, 0, 200, 120);
+    select(a);
+    store().matchSizeSelected('both');
+    expect(nodeOf(a)).toMatchObject({ width: 100, height: 50 });
+
+    select(a);
+    store().toggleLock();
+    select(a, b);
+    store().matchSizeSelected('both');
+    expect(nodeOf(a)).toMatchObject({ width: 100, height: 50 });
   });
 });
 
@@ -517,6 +802,40 @@ describe('updateSelectedNodesStyle', () => {
     expect(store().nodes[1].data.fill).not.toBe('#111111');
     expect(store().defaultFill).toBe('#111111');
     expect(store().defaultStroke).toBe('#222222');
+  });
+});
+
+describe('updateSelectedNodesData', () => {
+  it('formats every selected shape at once', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('ellipse', { x: 200, y: 0 });
+    const outsider = store().addShape('rectangle', { x: 400, y: 0 });
+    select(a, b);
+    store().updateSelectedNodesData({ bold: true, fontSize: 'large' });
+
+    expect(store().nodes.find((n) => n.id === a)!.data).toMatchObject({ bold: true, fontSize: 'large' });
+    expect(store().nodes.find((n) => n.id === b)!.data).toMatchObject({ bold: true, fontSize: 'large' });
+    expect(store().nodes.find((n) => n.id === outsider)!.data.bold).toBeUndefined();
+  });
+
+  it('leaves an image alone — it has no text to format', () => {
+    const shape = store().addShape('rectangle', { x: 0, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 64, height: 64, position: { x: 200, y: 0 } });
+    select(shape, image);
+    store().updateSelectedNodesData({ bold: true });
+
+    expect(store().nodes.find((n) => n.id === shape)!.data.bold).toBe(true);
+    expect(store().nodes.find((n) => n.id === image)!.data.bold).toBeUndefined();
+  });
+
+  it('records one history entry for the whole selection', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 200, y: 0 });
+    select(a, b);
+    store().updateSelectedNodesData({ italic: true });
+
+    store().undo();
+    expect(store().nodes.every((n) => n.data.italic === undefined)).toBe(true);
   });
 });
 

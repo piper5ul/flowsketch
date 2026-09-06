@@ -16,6 +16,17 @@ import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
+import {
+  alignNodes,
+  distributeNodes,
+  matchSize,
+  type AlignMode,
+  type ArrangePosition,
+  type ArrangeRect,
+  type ArrangeSize,
+  type DistributeAxis,
+  type MatchDimension,
+} from '../lib/arrange';
 import { api } from '../lib/api';
 import { toastError } from './useToastStore';
 
@@ -140,6 +151,25 @@ function computeAlignmentSnap(
 export type ShapeNode = Node<ShapeData, 'shape'>;
 export type ConnectorEdge = Edge<ConnectorData, 'connector'>;
 
+/**
+ * A node's box. `width`/`height` are what the store sets; `measured` is what
+ * React Flow observed for a node whose size follows its content.
+ */
+function nodeWidth(node: ShapeNode): number {
+  return node.width ?? node.measured?.width ?? 0;
+}
+
+function nodeHeight(node: ShapeNode): number {
+  return node.height ?? node.measured?.height ?? 0;
+}
+
+/** The selection as plain rects, in node order, for the `arrange` helpers. */
+function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
+  return nodes
+    .filter((n) => n.selected)
+    .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
+}
+
 export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 // Toolbar interaction flag — prevents contentEditable blur from
@@ -228,6 +258,13 @@ interface DiagramState {
   toggleLock: () => void;
   updateSelectedNodesData: (patch: Partial<ShapeData>) => void;
 
+  /** Lines the selection up on its own bounding box. Needs two nodes to mean anything. */
+  alignSelected: (mode: AlignMode) => void;
+  /** Equalises the gaps between the selection's edges. Needs three: the ends stay put. */
+  distributeSelected: (axis: DistributeAxis) => void;
+  /** Resizes the selection to its largest node. Needs two. */
+  matchSizeSelected: (dim: MatchDimension) => void;
+
   deleteSelection: () => void;
   undo: () => void;
   redo: () => void;
@@ -262,6 +299,52 @@ function pushSnapshot(snapshot: Snapshot) {
 
 function pushHistory(state: DiagramState) {
   pushSnapshot(snapshotOf(state));
+}
+
+/**
+ * Applies positions computed by one of the `arrange` helpers, as a single
+ * history entry — or none at all when nothing would actually move, so a command
+ * run on an already-aligned selection does not cost the user a ⌘Z. Locked nodes
+ * sit the move out the way they sit out a nudge, but they still counted towards
+ * the geometry, so locking a node makes it the anchor everything else lines up on.
+ */
+function commitArrangedPositions(positions: Record<string, ArrangePosition>) {
+  const state = useDiagramStore.getState();
+  const movedIds = new Set(
+    state.nodes
+      .filter((n) => {
+        const next = positions[n.id];
+        return !n.data.locked && next && (next.x !== n.position.x || next.y !== n.position.y);
+      })
+      .map((n) => n.id),
+  );
+  if (movedIds.size === 0) return;
+
+  pushHistory(state);
+  useDiagramStore.setState({
+    nodes: state.nodes.map((n) => (movedIds.has(n.id) ? { ...n, position: positions[n.id] } : n)),
+  });
+}
+
+/** The size counterpart of `commitArrangedPositions`, with the same rules. */
+function commitArrangedSizes(sizes: Record<string, ArrangeSize>) {
+  const state = useDiagramStore.getState();
+  const resizedIds = new Set(
+    state.nodes
+      .filter((n) => {
+        const next = sizes[n.id];
+        return !n.data.locked && next && (next.w !== nodeWidth(n) || next.h !== nodeHeight(n));
+      })
+      .map((n) => n.id),
+  );
+  if (resizedIds.size === 0) return;
+
+  pushHistory(state);
+  useDiagramStore.setState({
+    nodes: state.nodes.map((n) =>
+      resizedIds.has(n.id) ? { ...n, width: sizes[n.id].w, height: sizes[n.id].h } : n,
+    ),
+  });
 }
 
 /** The `ConnectorData` fields `computeMarkers` reads. */
@@ -422,25 +505,41 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     if (isDragging) {
       const state = get();
-      const draggedIds = new Set(
-        changes.filter((c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true).map((c) => c.id),
+      const posChanges = changes.filter(
+        (c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true,
       );
+      const draggedIds = new Set(posChanges.map((c) => c.id));
       const others = state.nodes
         .filter((n) => !draggedIds.has(n.id))
-        .map((n) => ({ x: n.position.x, y: n.position.y, w: n.width ?? n.measured?.width ?? 0, h: n.height ?? n.measured?.height ?? 0 }));
+        .map((n) => ({ x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
 
-      if (others.length > 0 && draggedIds.size === 1) {
-        const posChange = changes.find((c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.dragging === true)!;
-        const node = state.nodes.find((n) => n.id === posChange.id)!;
-        const newX = posChange.position?.x ?? node.position.x;
-        const newY = posChange.position?.y ?? node.position.y;
-        const w = node.width ?? node.measured?.width ?? 0;
-        const h = node.height ?? node.measured?.height ?? 0;
+      // Where each dragged node would land before any snapping.
+      const dragged = posChanges.flatMap((change) => {
+        const node = state.nodes.find((n) => n.id === change.id);
+        if (!node) return [];
+        return [{
+          change,
+          x: change.position?.x ?? node.position.x,
+          y: change.position?.y ?? node.position.y,
+          w: nodeWidth(node),
+          h: nodeHeight(node),
+        }];
+      });
 
-        const { dx, dy, guides } = computeAlignmentSnap({ x: newX, y: newY, w, h }, others);
+      if (others.length > 0 && dragged.length > 0) {
+        // A multi-selection snaps as one rigid box: the guides are computed for
+        // its bounding box and the resulting offset is applied to every node in
+        // it, so the shapes keep their spacing instead of collapsing onto the
+        // same guide one by one.
+        const x = Math.min(...dragged.map((d) => d.x));
+        const y = Math.min(...dragged.map((d) => d.y));
+        const w = Math.max(...dragged.map((d) => d.x + d.w)) - x;
+        const h = Math.max(...dragged.map((d) => d.y + d.h)) - y;
+
+        const { dx, dy, guides } = computeAlignmentSnap({ x, y, w, h }, others);
 
         if (dx !== 0 || dy !== 0) {
-          posChange.position = { x: newX + dx, y: newY + dy };
+          for (const d of dragged) d.change.position = { x: d.x + dx, y: d.y + dy };
         }
         set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides }));
         return;
@@ -809,11 +908,34 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
+  // Formatting (and the copied style behind ⌘⌥C / ⌘⌥V) applied to the whole
+  // selection at once. Images carry no text and no fill or stroke of their own,
+  // so they sit it out rather than collecting data nothing will ever render.
   updateSelectedNodesData: (patch) => {
     pushHistory(get());
     set((s) => ({
-      nodes: s.nodes.map((n) => (n.selected ? { ...n, data: { ...n.data, ...patch } } : n)),
+      nodes: s.nodes.map((n) =>
+        n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
+      ),
     }));
+  },
+
+  alignSelected: (mode) => {
+    const rects = selectedRects(get().nodes);
+    if (rects.length < 2) return;
+    commitArrangedPositions(alignNodes(rects, mode));
+  },
+
+  distributeSelected: (axis) => {
+    const rects = selectedRects(get().nodes);
+    if (rects.length < 3) return;
+    commitArrangedPositions(distributeNodes(rects, axis));
+  },
+
+  matchSizeSelected: (dim) => {
+    const rects = selectedRects(get().nodes);
+    if (rects.length < 2) return;
+    commitArrangedSizes(matchSize(rects, dim));
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is
