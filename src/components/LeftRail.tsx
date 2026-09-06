@@ -8,14 +8,27 @@ import {
   CornerDownRight,
   ChevronRight,
   Shapes,
+  Spline,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { useImageInsert } from '../lib/useImageInsert';
 import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
-import type { ShapeKind, Tool } from '../types';
+import type { ConnectorKind, ShapeKind, Tool } from '../types';
 
 const ImageIcon = SHAPE_ICONS.image;
+
+/**
+ * The kinds the connector button can be set to draw. Each also names the icon
+ * the rail button itself wears while that kind is the default, so the tool
+ * shows what it would draw before it draws it.
+ */
+const CONNECTOR_KINDS: { kind: ConnectorKind; label: string; Icon: LucideIcon }[] = [
+  { kind: 'elbow', label: 'Elbow', Icon: CornerDownRight },
+  { kind: 'straight', label: 'Straight', Icon: ArrowRight },
+  { kind: 'curved', label: 'Curved', Icon: Spline },
+];
 
 // Props are forwarded to the button so a Radix `asChild` trigger can wrap this
 // the way it wraps a plain one.
@@ -140,6 +153,8 @@ export function LeftRail() {
   const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
   const insertImages = useImageInsert();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ConnectorToolIcon =
+    CONNECTOR_KINDS.find((c) => c.kind === defaultConnector)?.Icon ?? CornerDownRight;
 
   const onFilesPicked = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -197,7 +212,7 @@ export function LeftRail() {
                 shortcut="A"
                 onClick={() => setTool('connector')}
               >
-                {defaultConnector === 'elbow' ? <CornerDownRight size={18} /> : <ArrowRight size={18} />}
+                <ConnectorToolIcon size={18} />
               </RailButton>
               <button
                 onClick={(e) => {
@@ -216,32 +231,22 @@ export function LeftRail() {
               sideOffset={12}
               className="panel-in z-50 flex flex-col gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
             >
-              <button
-                onClick={() => {
-                  setDefaultStyle({ connector: 'elbow' });
-                  setTool('connector');
-                  setConnectorMenuOpen(false);
-                }}
-                className={clsx(
-                  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10',
-                  defaultConnector === 'elbow' && 'bg-accent-500/90 text-white hover:bg-accent-500',
-                )}
-              >
-                <CornerDownRight size={16} /> Elbow
-              </button>
-              <button
-                onClick={() => {
-                  setDefaultStyle({ connector: 'straight' });
-                  setTool('connector');
-                  setConnectorMenuOpen(false);
-                }}
-                className={clsx(
-                  'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10',
-                  defaultConnector === 'straight' && 'bg-accent-500/90 text-white hover:bg-accent-500',
-                )}
-              >
-                <ArrowRight size={16} /> Straight
-              </button>
+              {CONNECTOR_KINDS.map(({ kind, label, Icon }) => (
+                <button
+                  key={kind}
+                  onClick={() => {
+                    setDefaultStyle({ connector: kind });
+                    setTool('connector');
+                    setConnectorMenuOpen(false);
+                  }}
+                  className={clsx(
+                    'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10',
+                    defaultConnector === kind && 'bg-accent-500/90 text-white hover:bg-accent-500',
+                  )}
+                >
+                  <Icon size={16} /> {label}
+                </button>
+              ))}
               <Popover.Arrow className="fill-ink-950" />
             </Popover.Content>
           </Popover.Portal>

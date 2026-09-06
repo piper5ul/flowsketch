@@ -864,6 +864,29 @@ describe('addConnectedShape', () => {
   });
 });
 
+describe('setDefaultStyle', () => {
+  it('draws quick-added connectors with the default kind', () => {
+    store().setDefaultStyle({ connector: 'curved' });
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    expect(store().edges[0].data!.connectorType).toBe('curved');
+  });
+
+  it('draws hand-dragged connectors with the default kind', () => {
+    store().setDefaultStyle({ connector: 'curved' });
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 300, y: 0 });
+    store().onConnect({ source: a, target: b, sourceHandle: 'right', targetHandle: 'left' });
+    expect(store().edges[0].data!.connectorType).toBe('curved');
+  });
+
+  it('leaves the colours alone when only the connector kind is set', () => {
+    const { defaultFill, defaultStroke } = store();
+    store().setDefaultStyle({ connector: 'straight' });
+    expect(store()).toMatchObject({ defaultFill, defaultStroke, defaultConnector: 'straight' });
+  });
+});
+
 describe('updateEdgeData', () => {
   /** An edge with the default styling, plus the id of its source shape. */
   function edgeId() {
