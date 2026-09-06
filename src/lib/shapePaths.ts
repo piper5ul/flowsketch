@@ -45,3 +45,42 @@ export const svgPaths: Record<ClipShapeKind, string> = {
 export function isClipShape(kind: ShapeKind): kind is ClipShapeKind {
   return kind in svgPaths;
 }
+
+/**
+ * How far a label has to sit in from each edge of the node's box, as a
+ * percentage of that box — the same 0–100 scale the paths are drawn in, so an
+ * inset stays right at every size the shape is stretched to.
+ *
+ * A rectangle's whole face holds text, but a silhouette's does not: a star is
+ * mostly points, a callout's tail hangs below the bubble it belongs to, and an
+ * arrow's head is no place for a word. Zero on every side is therefore the
+ * answer for a box, and the table below is the exceptions.
+ */
+export interface TextInset {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+const NO_INSET: TextInset = { top: 0, right: 0, bottom: 0, left: 0 };
+
+const TEXT_INSETS: Partial<Record<ShapeKind, TextInset>> = {
+  // The pentagon between the points. At mid-height the star spans x 23–77, and
+  // it narrows sharply above y≈34 and below y≈70.
+  star: { top: 28, right: 23, bottom: 26, left: 23 },
+  // The bubble stops at y=85; below that is only the tail.
+  callout: { top: 4, right: 8, bottom: 20, left: 8 },
+  // The bottom edge ripples around y=84, so the last sixth of the box is only
+  // sometimes there.
+  document: { top: 4, right: 8, bottom: 20, left: 8 },
+  // Full width only below the top bump, which starts around y=45.
+  cloud: { top: 30, right: 14, bottom: 16, left: 14 },
+  // The one lopsided inset: the shaft runs to x=62 and the head fills the rest,
+  // so the label sits on the shaft rather than in the point.
+  arrow: { top: 28, right: 42, bottom: 28, left: 6 },
+};
+
+export function textInset(kind: ShapeKind): TextInset {
+  return TEXT_INSETS[kind] ?? NO_INSET;
+}
