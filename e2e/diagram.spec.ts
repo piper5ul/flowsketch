@@ -20,6 +20,23 @@ async function signUp(page: Page) {
 const TINY_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAbElEQVR42u3XMQ0AIAxFQeQgAiUoQSKuwECZukC4hLEDN738svoMX20jfLfdFwAAAACAFOCVj57uAQAAAAByACUGAAAAsAeUGAAAAMAeUGIAAAAAe0CJAQAAAOwBJQYAAACwB5QYAAAA4BvABjVC6Vo+2hhHAAAAAElFTkSuQmCC';
 
+/**
+ * Draws one labelled rectangle on the open canvas and waits for it to be saved,
+ * so a second reader of the same diagram is guaranteed to see it.
+ */
+async function drawLabelledShape(page: Page, pane: Locator, label: string) {
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.dblclick();
+  await page.keyboard.type(label);
+  await page.keyboard.press('Escape');
+  await expect(node).toContainText(label);
+  await expect(page.getByText('Saved')).toBeVisible();
+  return node;
+}
+
 /** Opens a new diagram and waits for its canvas. */
 async function newDiagram(page: Page) {
   await page.getByRole('button', { name: 'New Diagram' }).first().click();
@@ -870,4 +887,41 @@ test('a second tab editing the same diagram is caught before its work is overwri
   await expect(page.locator('.react-flow__node').nth(1)).toContainText('Second tab');
 
   await second.close();
+});
+
+test('a public link opens the diagram read-only, and revoking it kills the URL', async ({ page, browser }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  await drawLabelledShape(page, pane, 'Public shape');
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await expect(dialog).toBeVisible();
+  // `click`, not `check`: the box reflects what the server says, so it only
+  // ticks once `POST …/share` has answered with a token.
+  await dialog.getByLabel('Anyone with the link can view').click();
+  await expect(dialog.getByLabel('Public link')).toBeVisible();
+
+  const link = await dialog.getByLabel('Public link').inputValue();
+  expect(link).toMatch(/\/s\/[^/]+$/);
+
+  // A brand new context: no cookies, so nobody is signed in to anything.
+  const visitor = await browser.newContext();
+  const visitorPage = await visitor.newPage();
+  await visitorPage.goto(link);
+
+  await expect(visitorPage.locator('.react-flow__node', { hasText: 'Public shape' })).toBeVisible();
+  await expect(visitorPage.getByText('View only')).toBeVisible();
+  // Read-only means the drawing tools are not there at all, not merely inert.
+  await expect(visitorPage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
+
+  // Turning the link off leaves the old URL pointing at nothing.
+  await dialog.getByRole('button', { name: 'Turn off' }).click();
+  await expect(dialog.getByLabel('Public link')).toHaveCount(0);
+
+  await visitorPage.reload();
+  await expect(visitorPage.getByText('This link is no longer active')).toBeVisible();
+  await expect(visitorPage.locator('.react-flow__node')).toHaveCount(0);
+
+  await visitor.close();
 });
