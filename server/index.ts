@@ -6,6 +6,7 @@ import { toNodeHandler } from 'better-auth/node';
 import { auth } from './auth.js';
 import { apiRouter } from './router.js';
 import { imagesRouter } from './images.js';
+import { healthRouter } from './health.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -18,10 +19,8 @@ app.use(cors({
   credentials: true,
 }));
 
-// Liveness probe for uptime checks and the e2e harness. Deliberately DB-free.
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
-});
+// `/api/health` (liveness, DB-free) and `/api/health?deep=1` (readiness).
+app.use('/api', healthRouter);
 
 app.all('/api/auth/*splat', toNodeHandler(auth));
 
