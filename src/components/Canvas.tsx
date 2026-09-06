@@ -577,6 +577,11 @@ export function Canvas() {
         zoomOnDoubleClick={false}
         minZoom={0.2}
         maxZoom={2.5}
+        // CanvasPage mounts Canvas only after the diagram has loaded, so
+        // fitView frames the actual content on open; defaultViewport is the
+        // fallback for an empty diagram, where there is nothing to fit.
+        fitView
+        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
         className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOLS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
         proOptions={{ hideAttribution: true }}
