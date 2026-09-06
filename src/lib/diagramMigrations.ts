@@ -16,7 +16,7 @@ import { computeMarkers } from './edgeMarkers';
 import { DEFAULT_EDGE_STROKE } from './defaults';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
-export const CURRENT_DIAGRAM_VERSION = 2;
+export const CURRENT_DIAGRAM_VERSION = 3;
 
 type Bag = Record<string, unknown>;
 
@@ -117,8 +117,38 @@ function v1ToV2(raw: Bag): Bag {
   return { ...raw, version: 2, edges };
 }
 
+/** A stored point, if it is one — a free-form JSON column holds anything. */
+function pointOf(value: unknown): { x: number; y: number } | null {
+  if (!isRecord(value)) return null;
+  const { x, y } = value;
+  if (typeof x !== 'number' || typeof y !== 'number') return null;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+/**
+ * v2 -> v3: the one dragged bend becomes a list of them.
+ *
+ * A stored `waypoint` is the single entry of the new `waypoints`; a `null` or
+ * absent one leaves the connector with no list at all, which is what a route
+ * nobody has touched holds. The old key is dropped rather than kept in step, so
+ * there is no second place a bend can be read from.
+ */
+function v2ToV3(raw: Bag): Bag {
+  const edges = recordsOf(raw.edges).map((edge) => {
+    if (!isRecord(edge.data) || !('waypoint' in edge.data)) return edge;
+    const { waypoint, ...rest } = edge.data;
+    const data: Bag = { ...rest };
+    const point = pointOf(waypoint);
+    if (point) data.waypoints = [point];
+    return { ...edge, data };
+  });
+
+  return { ...raw, version: 3, edges };
+}
+
 /** `MIGRATIONS[n]` upgrades a v`n` payload to v`n+1`. */
-const MIGRATIONS: ((raw: Bag) => Bag)[] = [v0ToV1, v1ToV2];
+const MIGRATIONS: ((raw: Bag) => Bag)[] = [v0ToV1, v1ToV2, v2ToV3];
 
 /**
  * Normalizes whatever the API returned into a `DiagramData` this build

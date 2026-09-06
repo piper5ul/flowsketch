@@ -163,7 +163,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
         const waypoint = layout?.kind === 'curved'
           ? controlThrough(layout.source, flow, layout.target)
           : { x: flow.x, y: flow.y };
-        updateEdgeDataTransient(id, { waypoint });
+        updateEdgeDataTransient(id, { waypoints: [waypoint] });
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -288,7 +288,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const stroke = data?.stroke ?? DEFAULT_EDGE_STROKE;
   const strokeStyle = data?.strokeStyle ?? 'solid';
   const connectorType = data?.connectorType ?? 'elbow';
-  const waypoint = data?.waypoint ?? null;
+  const waypoints = data?.waypoints ?? [];
   // Selection thickens the line by a hair on top of whatever width it is set to.
   const strokeWidth = CONNECTOR_STROKE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH] + (selected ? 0.5 : 0);
 
@@ -302,7 +302,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       (targetAnchor.side === 'left' || targetAnchor.side === 'right');
     const isCollinear = (isVertical && Math.abs(sx - tx) < 2) || (isHorizontal && Math.abs(sy - ty) < 2);
 
-    routed = isCollinear && !waypoint
+    routed = isCollinear && waypoints.length === 0
       ? []
       : manhattanRoute({
           sourceX: sx,
@@ -312,7 +312,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           sourceRect: rectOfNode(sourceNode),
           targetRect: rectOfNode(targetNode),
           obstacles: nodes.filter((n) => n.id !== source && n.id !== target).map(rectOfNode),
-          vertices: waypoint ? [waypoint] : [],
+          vertices: waypoints,
           startDirections: [sourceAnchor.side],
           endDirections: [targetAnchor.side],
         }).points;
@@ -323,7 +323,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     target: { x: tx, y: ty },
     sourceSide: sourceAnchor.side,
     targetSide: targetAnchor.side,
-    waypoint,
+    waypoint: waypoints[0] ?? null,
     routed,
   });
   const edgeCenterX = center.x;
@@ -410,14 +410,14 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
             <div
               style={{ position: 'absolute', transform: `translate(-50%, -50%) translate(${edgeCenterX}px, ${edgeCenterY}px)` }}
               className="connector-joint-hit nodrag nopan"
-              title={waypoint ? 'Double-click to reset the route' : undefined}
+              title={waypoints.length > 0 ? 'Double-click to reset the route' : undefined}
               onPointerDown={onWaypointPointerDown}
               // Undoes a dragged bend. The handle sits where a double-click
               // would otherwise start editing the label (or drop a text shape
               // on the pane), so the event stops here either way.
               onDoubleClick={(e) => {
                 e.stopPropagation();
-                if (waypoint) updateEdgeData(id, { waypoint: null });
+                if (waypoints.length > 0) updateEdgeData(id, { waypoints: [] });
               }}
             >
               <div className="connector-joint connector-joint--bend" />
