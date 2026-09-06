@@ -35,6 +35,9 @@ export function TextFormatBar() {
   const italic = isEdge
     ? (editingEdge?.data?.labelItalic ?? false)
     : (editingNode?.data.italic ?? false);
+  const underline = !isEdge && (editingNode?.data.underline ?? false);
+  const strikethrough = !isEdge && (editingNode?.data.strikethrough ?? false);
+  const textColor = isEdge ? undefined : editingNode?.data.textColor;
   const textAlign: TextAlign = isEdge
     ? 'center'
     : (editingNode?.data.textAlign ?? (editingNode?.data.shape === 'text' ? 'left' : 'center'));
@@ -92,9 +95,9 @@ export function TextFormatBar() {
         onMouseDown={(e) => { e.preventDefault(); suppressNextBlurCommit(); }}
       >
         <TextFormatControls
-          value={{ fontSize, bold, italic, textAlign, verticalAlign }}
+          value={{ fontSize, bold, italic, underline, strikethrough, textColor, textAlign, verticalAlign }}
           onChange={apply}
-          showAlignment={!isEdge}
+          target={isEdge ? 'connectorLabel' : 'shape'}
         />
       </div>
     </div>

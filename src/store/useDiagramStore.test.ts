@@ -1024,6 +1024,28 @@ describe('updateSelectedNodesData', () => {
     store().undo();
     expect(store().nodes.every((n) => n.data.italic === undefined)).toBe(true);
   });
+
+  it('carries the decorations and an explicit text colour', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesData({ underline: true, strikethrough: true, textColor: '#BE185D' });
+
+    expect(store().nodes.find((n) => n.id === a)!.data).toMatchObject({
+      underline: true,
+      strikethrough: true,
+      textColor: '#BE185D',
+    });
+  });
+
+  it('hands the label back to auto-contrast when the colour is cleared', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesData({ textColor: '#FFFFFF' });
+    store().updateSelectedNodesData({ textColor: undefined });
+
+    // Absent, not empty: ShapeNode reads a missing colour as "pick one for me".
+    expect(store().nodes.find((n) => n.id === a)!.data.textColor).toBeUndefined();
+  });
 });
 
 describe('setNodeSizeTransient', () => {

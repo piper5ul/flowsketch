@@ -176,6 +176,10 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   const verticalAlign: VerticalAlign = data.verticalAlign ?? 'middle';
   const fontSizePx = FONT_SIZE_PX[data.fontSize ?? 'medium'];
   const darkBg = isDarkFill(data.fill);
+  // Both decorations can be worn at once, and CSS spells that as one property.
+  const textDecoration = [data.underline && 'underline', data.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
 
   // A silhouette holds less text than the box it is drawn in — a star is mostly
   // points, an arrow mostly head — so the label is padded away from the edges
@@ -285,7 +289,10 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
               fontSize: fontSizePx,
               fontWeight: data.bold ? 700 : 500,
               fontStyle: data.italic ? 'italic' : 'normal',
-              color: darkBg ? '#fff' : undefined,
+              textDecoration: textDecoration || undefined,
+              // A colour the user picked outranks the automatic one; without
+              // it the label goes white on a dark fill and dark on a light one.
+              color: data.textColor ?? (darkBg ? '#fff' : undefined),
             }}
             className={clsx(
               'relative z-[1] w-full break-words whitespace-pre-wrap leading-snug outline-none',

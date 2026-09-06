@@ -442,6 +442,9 @@ export function FloatingToolbar() {
                 fontSize: styleableNodes[0].data.fontSize ?? 'medium',
                 bold: styleableNodes[0].data.bold ?? false,
                 italic: styleableNodes[0].data.italic ?? false,
+                underline: styleableNodes[0].data.underline ?? false,
+                strikethrough: styleableNodes[0].data.strikethrough ?? false,
+                textColor: styleableNodes[0].data.textColor,
                 textAlign: styleableNodes[0].data.textAlign ?? (styleableNodes[0].data.shape === 'text' ? 'left' : 'center'),
                 verticalAlign: styleableNodes[0].data.verticalAlign ?? 'middle',
               }}

@@ -64,6 +64,14 @@ export interface ShapeData {
   fontSize?: FontSize;
   bold?: boolean;
   italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /**
+   * The label's colour, as a hex string. Absent means "pick one for me": the
+   * label is drawn light or dark to contrast with the fill, which is what every
+   * shape saved before this existed still wants.
+   */
+  textColor?: string;
   textAlign?: TextAlign;
   verticalAlign?: VerticalAlign;
   link?: string;
