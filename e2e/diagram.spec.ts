@@ -977,3 +977,58 @@ test('an invited editor finds the diagram, edits it, and loses that when demoted
   expect(page.url()).toBe(diagramUrl);
   await invitee.close();
 });
+
+test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const node = await drawLabelledShape(page, pane, 'Version one');
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await expect(panel).toBeVisible();
+
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+
+  // Preview fetches the version's body and draws it from that version's own
+  // coordinates — one shape, at this point in the diagram's life.
+  await checkpoint.getByRole('button', { name: 'Preview' }).click();
+  const preview = checkpoint.getByRole('img', { name: 'Version preview' });
+  await expect(preview).toBeVisible();
+  await expect(preview.locator('rect')).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Preview' }).click();
+  await expect(preview).toHaveCount(0);
+
+  // The panel covers the right of the canvas, so it goes away while the board
+  // is edited and comes back to do the restore.
+  await panel.getByRole('button', { name: 'Close history' }).click();
+  await expect(panel).toBeHidden();
+
+  await node.dblclick();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Version two');
+  await page.keyboard.press('Escape');
+  await expect(node).toContainText('Version two');
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  await page.getByRole('button', { name: 'History' }).click();
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+  await expect(panel.getByText('Your current state is saved first')).toBeVisible();
+  await panel.getByRole('button', { name: 'Restore this version' }).click();
+
+  // The board goes back to the snapshot...
+  await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
+  // ...and what it replaced is itself now a version, so the restore is undoable.
+  await expect(panel.getByText('Before restore')).toBeVisible();
+
+  // The restore wrote the row, and the client's conflict guard followed it —
+  // an edit straight afterwards saves rather than colliding with that write.
+  await page.locator('.react-flow__node').first().dblclick();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Version three');
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});

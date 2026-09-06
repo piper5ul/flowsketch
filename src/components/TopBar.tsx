@@ -1,8 +1,9 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, ArrowLeft, Eye, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes, Users } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Eye, History, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes, Users } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
+import { HistoryPanel } from './HistoryPanel';
 import { ShareDialog } from './ShareDialog';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
 import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
@@ -66,6 +67,10 @@ export function TopBar() {
       </div>
 
       <div className="flex items-center gap-2">
+        {/* Reading the history is a viewer's right too: being shown what a
+            board looked like last week is the same permission as being shown
+            what it looks like now. The panel withholds the two writes. */}
+        <HistoryButton />
         {/* Owner-only in substance — every sharing route is — but an editor is
             still offered it, because the dialog is the only place the list of
             collaborators lives and they are allowed to read it. A viewer gets
@@ -76,6 +81,25 @@ export function TopBar() {
     </div>
     <ConflictBanner />
     </>
+  );
+}
+
+function HistoryButton() {
+  const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+
+  return (
+    <div className="pointer-events-auto">
+      <div className="flex items-center gap-2 rounded-2xl bg-white/95 px-2 py-1.5 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-black/[0.04]"
+        >
+          <History size={15} /> History
+        </button>
+      </div>
+      {open && <HistoryPanel onClose={close} />}
+    </div>
   );
 }
 
