@@ -3,11 +3,19 @@ import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramS
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS } from '../lib/nodeKinds';
 import { useToastStore } from './useToastStore';
-import { api } from '../lib/api';
+import { ConflictError, api } from '../lib/api';
 
-vi.mock('../lib/api', () => ({
-  api: { saveDiagram: vi.fn(async () => undefined) },
+// Only `api` itself is a stub: the error classes have to be the real ones, or
+// the `instanceof` checks in `saveDiagram` would never match.
+vi.mock('../lib/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/api')>()),
+  // The literal is repeated rather than shared with `SAVED_AT`: a `vi.mock`
+  // factory runs before the module body, so a const here would still be in TDZ.
+  api: { saveDiagram: vi.fn(async () => ({ updatedAt: '2026-09-05T09:00:00.000Z' })) },
 }));
+
+/** What a successful `PUT` answers with: where the row is now. */
+const SAVED_AT = '2026-09-05T09:00:00.000Z';
 
 const saveDiagram = vi.mocked(api.saveDiagram);
 
@@ -1173,7 +1181,7 @@ describe('the saved viewport', () => {
 describe('saveDiagram', () => {
   beforeEach(() => {
     saveDiagram.mockClear();
-    saveDiagram.mockResolvedValue(undefined);
+    saveDiagram.mockResolvedValue({ updatedAt: SAVED_AT });
     useToastStore.getState().clear();
   });
 
@@ -1244,6 +1252,95 @@ describe('saveDiagram', () => {
     await store().saveDiagram();
     expect(store().saveStatus).toBe('saved');
   });
+});
+
+describe('saveDiagram — the two-tab conflict guard', () => {
+  const LOADED_AT = '2026-09-05T10:00:00.000Z';
+  const OTHER_TAB_AT = '2026-09-05T10:05:00.000Z';
+
+  beforeEach(() => {
+    saveDiagram.mockClear();
+    saveDiagram.mockResolvedValue({ updatedAt: SAVED_AT });
+    useToastStore.getState().clear();
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, LOADED_AT);
+  });
+
+  it('guards the save with the updatedAt it loaded', async () => {
+    await store().saveDiagram();
+    expect(saveDiagram).toHaveBeenCalledWith(
+      'test',
+      expect.objectContaining({ ifUnmodifiedSince: LOADED_AT }),
+      undefined,
+    );
+  });
+
+  it('sends no guard for a diagram whose updatedAt the server never gave us', async () => {
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] });
+    await store().saveDiagram();
+    expect(saveDiagram.mock.calls[0][1]).not.toHaveProperty('ifUnmodifiedSince');
+  });
+
+  it('moves the guard on to what the save returned', async () => {
+    saveDiagram.mockResolvedValue({ updatedAt: OTHER_TAB_AT });
+    await store().saveDiagram();
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('lets this tab\'s other writes — a thumbnail — move the guard on too', () => {
+    // Otherwise the tab would mistake its own thumbnail for another tab's edit.
+    store().noteSaved(OTHER_TAB_AT);
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('never walks the guard backwards when two writes answer out of order', () => {
+    store().noteSaved(OTHER_TAB_AT);
+    store().noteSaved('2026-09-05T10:01:00.000Z');
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
+  it('records the conflict and the server updatedAt when the write is refused', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    const outcome = await store().saveDiagram();
+
+    expect(outcome).toBe('conflict');
+    expect(store().saveStatus).toBe('conflict');
+    expect(store().conflict).toEqual({ updatedAt: OTHER_TAB_AT });
+    // The guard is what the banner's "Overwrite" drops; it is not silently
+    // advanced to the other tab's version behind the user's back.
+    expect(store().loadedAt).toBe(LOADED_AT);
+  });
+
+  it('does not announce a conflict as a failed save — the banner says it instead', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    await store().saveDiagram();
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('drops the guard on an overwrite and clears the conflict once it lands', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    await store().saveDiagram();
+
+    const savedAt = '2026-09-05T10:09:00.000Z';
+    saveDiagram.mockResolvedValue({ updatedAt: savedAt });
+    const outcome = await store().saveDiagram({ overwrite: true });
+
+    expect(outcome).toBe('saved');
+    expect(saveDiagram.mock.calls[1][1]).not.toHaveProperty('ifUnmodifiedSince');
+    expect(store().conflict).toBeNull();
+    expect(store().saveStatus).toBe('saved');
+    expect(store().loadedAt).toBe(savedAt);
+  });
+
+  it('clears the conflict when the diagram is reloaded from the server', async () => {
+    saveDiagram.mockRejectedValue(new ConflictError(OTHER_TAB_AT));
+    await store().saveDiagram();
+
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, OTHER_TAB_AT);
+    expect(store().conflict).toBeNull();
+    expect(store().saveStatus).toBe('idle');
+    expect(store().loadedAt).toBe(OTHER_TAB_AT);
+  });
+
 });
 
 describe('addImageNode', () => {

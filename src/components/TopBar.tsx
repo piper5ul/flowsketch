@@ -1,12 +1,13 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
 import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
 import { buildDiagramExport, diagramFileName } from '../lib/diagramFile';
 import { api } from '../lib/api';
+import { toastError } from '../store/useToastStore';
 
 export function TopBar() {
   const navigate = useNavigate();
@@ -24,6 +25,7 @@ export function TopBar() {
   }, [diagramId, setStarred]);
 
   return (
+    <>
     <div className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-center justify-between">
       <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-white/95 py-1.5 pl-2 pr-2 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
         <Tooltip label="Back to dashboard" side="bottom">
@@ -56,6 +58,72 @@ export function TopBar() {
       </div>
 
       <ExportMenu />
+    </div>
+    <ConflictBanner />
+    </>
+  );
+}
+
+/**
+ * Shown when a save was refused because another tab wrote first. Autosave is
+ * already stood down by then (see `CanvasPage`), so this is the only way
+ * forward: take their version, or keep this one.
+ */
+function ConflictBanner() {
+  const conflict = useDiagramStore((s) => s.conflict);
+  const diagramId = useDiagramStore((s) => s.diagramId);
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!diagramId) return;
+    setBusy(true);
+    try {
+      const diagram = await api.getDiagram(diagramId);
+      // Discards this tab's unsaved edits by design — the user asked for the
+      // other version. `loadDiagram` clears the conflict and resets the guard.
+      useDiagramStore
+        .getState()
+        .loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt);
+    } catch {
+      toastError('Could not reload the diagram. Please try again.');
+    } finally {
+      setBusy(false);
+    }
+  }, [diagramId]);
+
+  const overwrite = useCallback(async () => {
+    setBusy(true);
+    // Resends without the guard. A failure leaves the conflict in place, so the
+    // banner stays up rather than pretending the edit was kept.
+    await useDiagramStore.getState().saveDiagram({ overwrite: true });
+    setBusy(false);
+  }, []);
+
+  if (!conflict || !diagramId) return null;
+
+  return (
+    <div
+      role="alert"
+      className="pointer-events-auto absolute left-1/2 top-16 z-30 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-amber-50 px-3.5 py-2 text-[13px] text-amber-900 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.35)] ring-1 ring-amber-500/30"
+    >
+      <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+      <span>This diagram changed in another tab.</span>
+      <button
+        type="button"
+        onClick={reload}
+        disabled={busy}
+        className="rounded-lg bg-amber-600 px-2.5 py-1 text-[13px] font-semibold text-white transition hover:bg-amber-700 disabled:opacity-60"
+      >
+        Reload
+      </button>
+      <button
+        type="button"
+        onClick={overwrite}
+        disabled={busy}
+        className="rounded-lg px-2.5 py-1 text-[13px] font-medium text-amber-900 underline-offset-2 transition hover:underline disabled:opacity-60"
+      >
+        Overwrite
+      </button>
     </div>
   );
 }

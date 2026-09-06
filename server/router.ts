@@ -76,17 +76,32 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
   validateBody(updateDiagramBody),
   async (req, res) => {
     const userId = authedUser(req).id;
-    const { title, data, starred, thumbnail } = req.body;
+    const { title, data, starred, thumbnail, ifUnmodifiedSince } = req.body;
     // The previous JSON is only needed to spot images the edit drops, so a
     // metadata-only PUT (rename, star, thumbnail) does not read it back.
     const existing = await prisma.diagram.findFirst({
       where: { id: req.params.id, userId },
-      select: { id: true, ...(data !== undefined && { data: true }) },
+      select: { id: true, updatedAt: true, ...(data !== undefined && { data: true }) },
     });
     if (!existing) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
+
+    // Optimistic concurrency. The client sends back the `updatedAt` it loaded
+    // (or last saved); anything else means another tab wrote in between, and
+    // this body is built on a version that no longer exists. Compared as
+    // timestamps rather than strings: the client round-trips an ISO string,
+    // which carries the column's millisecond precision but not its formatting.
+    // A save with no guard at all is a deliberate overwrite and still writes.
+    if (
+      ifUnmodifiedSince !== undefined &&
+      existing.updatedAt.getTime() !== new Date(ifUnmodifiedSince).getTime()
+    ) {
+      res.status(409).json({ error: 'Conflict', updatedAt: existing.updatedAt });
+      return;
+    }
+
     const droppedImageIds = data === undefined ? [] : droppedImages(existing.data, data);
 
     const updated = await prisma.diagram.update({

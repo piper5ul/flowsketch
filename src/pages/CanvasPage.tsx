@@ -33,7 +33,8 @@ export function CanvasPage() {
         if (cancelled) return;
         // Throws when the row was written by a newer build of the app; that is
         // worth telling the user about rather than bouncing them silently.
-        loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data);
+        // `updatedAt` is the version every save from here on is guarded by.
+        loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -54,12 +55,19 @@ export function CanvasPage() {
 
     const autosaver = createAutosaver({
       save: async () => {
-        await useDiagramStore.getState().saveDiagram();
+        const outcome = await useDiagramStore.getState().saveDiagram();
+        // A conflict is not transient: another attempt would be refused in
+        // exactly the same way, so the autosaver stands down and the banner
+        // takes over. It is rearmed by the next edit once the conflict is gone.
+        if (outcome === 'conflict') {
+          autosaver.cancel();
+          return;
+        }
         // `saveDiagram` reports a failure through `saveStatus` rather than by
         // rejecting — its other callers `void` it, where a rejection would be
-        // unhandled. The autosaver retries on a rejection, so the status is
+        // unhandled. The autosaver retries on a rejection, so the outcome is
         // translated back into one here.
-        if (useDiagramStore.getState().saveStatus === 'error') throw new Error('Save failed');
+        if (outcome === 'error') throw new Error('Save failed');
       },
       delayMs: AUTOSAVE_DELAY_MS,
       // `idle` / `pending` / `saving` are already reflected by `saveDiagram`;
@@ -82,7 +90,15 @@ export function CanvasPage() {
         isCurrent()
           ? renderDiagramPng({ pixelRatio: 1, maxSide: THUMBNAIL_MAX_SIDE, preserveSelection: true })
           : Promise.resolve(null),
-      save: (thumbnail) => (isCurrent() ? api.saveDiagram(id, { thumbnail }) : Promise.resolve()),
+      save: async (thumbnail) => {
+        if (!isCurrent()) return;
+        const saved = await api.saveDiagram(id, { thumbnail });
+        // A thumbnail is written through the same `PUT`, so it bumps the row's
+        // `updatedAt` like any edit. The conflict guard has to follow it, or
+        // the next real save would be refused as stale by this tab's own
+        // decoration.
+        if (isCurrent() && saved?.updatedAt) useDiagramStore.getState().noteSaved(saved.updatedAt);
+      },
     });
 
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
@@ -96,7 +112,9 @@ export function CanvasPage() {
       ) {
         return;
       }
-      autosaver.schedule();
+      // Autosave stays down until the conflict is resolved; scheduling here
+      // would only queue a save the server is going to refuse.
+      if (state.saveStatus !== 'conflict') autosaver.schedule();
       // Neither a retitle nor a pan changes the picture, so only shape edits
       // mark the thumbnail stale.
       if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
