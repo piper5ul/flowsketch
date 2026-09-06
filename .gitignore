@@ -14,6 +14,9 @@ dist-ssr
 *.local
 .env
 
+# Uploaded images (UPLOAD_DIR)
+uploads
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

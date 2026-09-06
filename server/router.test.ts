@@ -1,6 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-router-uploads-'));
+process.env.UPLOAD_DIR = uploadDir;
 
 const { prismaMock, authState } = vi.hoisted(() => ({
   prismaMock: {
@@ -10,6 +16,10 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+    },
+    image: {
+      findMany: vi.fn(),
+      deleteMany: vi.fn(),
     },
   },
   authState: { user: null as { id: string } | null },
@@ -29,12 +39,17 @@ vi.mock('./middleware.js', () => ({
 }));
 
 const { apiRouter } = await import('./router.js');
+const { imagePath } = await import('./storage.js');
 
 const app = express();
 app.use('/api', express.json());
 app.use('/api', apiRouter);
 
 const owned = { id: 'd1', userId: 'u1', title: 'Mine', starred: false, data: { nodes: [], edges: [] } };
+
+afterAll(() => {
+  fs.rmSync(uploadDir, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -122,6 +137,100 @@ describe('DELETE /api/diagrams/:id', () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
     await request(app).delete('/api/diagrams/d1').expect(404);
     expect(prismaMock.diagram.delete).not.toHaveBeenCalled();
+  });
+
+  it('does not touch the image tables when the diagram references no images', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', data: { nodes: [], edges: [] } });
+    prismaMock.diagram.delete.mockResolvedValue(owned);
+    await request(app).delete('/api/diagrams/d1').expect(204);
+    expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
+  function nodeWithImage(id: string, imageId: string) {
+    return { id, type: 'shape', position: { x: 0, y: 0 }, data: { imageSrc: `/api/images/${imageId}` } };
+  }
+
+  it('deletes images the diagram owned alone and keeps ones another diagram still uses', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({
+      id: 'd1',
+      data: { nodes: [nodeWithImage('n1', 'lonely'), nodeWithImage('n2', 'shared')], edges: [] },
+    });
+    prismaMock.diagram.delete.mockResolvedValue(owned);
+    // What is left after d1 is gone: d2 still references `shared`.
+    prismaMock.diagram.findMany.mockResolvedValue([
+      { data: { nodes: [nodeWithImage('n9', 'shared')], edges: [] } },
+    ]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'lonely', mime: 'image/png' }]);
+    prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const lonelyFile = imagePath('u1', 'lonely', 'png');
+    const sharedFile = imagePath('u1', 'shared', 'png');
+    fs.writeFileSync(lonelyFile, 'x');
+    fs.writeFileSync(sharedFile, 'x');
+
+    await request(app).delete('/api/diagrams/d1').expect(204);
+
+    expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['lonely'] }, userId: 'u1' },
+    });
+    expect(fs.existsSync(lonelyFile)).toBe(false);
+    expect(fs.existsSync(sharedFile)).toBe(true);
+  });
+
+  it('scans the survivors only after the diagram row is gone', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({
+      id: 'd1',
+      data: { nodes: [nodeWithImage('n1', 'lonely')], edges: [] },
+    });
+    prismaMock.diagram.delete.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockResolvedValue([]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'lonely', mime: 'image/png' }]);
+    prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
+
+    await request(app).delete('/api/diagrams/d1').expect(204);
+
+    // Otherwise the diagram being deleted would count as a live reference to its own images.
+    const deletedAt = prismaMock.diagram.delete.mock.invocationCallOrder[0];
+    const scannedAt = prismaMock.diagram.findMany.mock.invocationCallOrder[0];
+    expect(deletedAt).toBeLessThan(scannedAt);
+    expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      select: { data: true },
+    });
+  });
+
+  it('never deletes an image row belonging to another user', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({
+      id: 'd1',
+      data: { nodes: [nodeWithImage('n1', 'not-mine')], edges: [] },
+    });
+    prismaMock.diagram.delete.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockResolvedValue([]);
+    // Ownership filter matches nothing: the id was in the JSON but the row is someone else's.
+    prismaMock.image.findMany.mockResolvedValue([]);
+
+    await request(app).delete('/api/diagrams/d1').expect(204);
+
+    expect(prismaMock.image.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['not-mine'] }, userId: 'u1' },
+      select: { id: true, mime: true },
+    });
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('still returns 204 when cleanup fails, because the diagram is already gone', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({
+      id: 'd1',
+      data: { nodes: [nodeWithImage('n1', 'boom')], edges: [] },
+    });
+    prismaMock.diagram.delete.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
+
+    await request(app).delete('/api/diagrams/d1').expect(204);
   });
 });
 

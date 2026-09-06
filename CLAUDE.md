@@ -23,7 +23,7 @@ Whimsical-style diagramming app. Single-user today; sharing and realtime are on 
 - `server/` — Express 5. `router.ts` is the diagram CRUD (all routes scoped by `userId`); `auth.ts` is BetterAuth with Prisma adapter; `middleware.ts` puts `req.user` on the request (typed as `any`). `GET /api/health` is DB-free.
 - `prisma/schema.prisma` — BetterAuth tables + `Diagram { data: Json, thumbnail (never written), starred }`. Schema is applied with `prisma db push`; no migrations yet.
 - Persistence: `CanvasPage.tsx` subscribes to the store and autosaves with a 2 s debounce. **The debounce timer is cleared on unmount without flushing** (roadmap `flush-save`).
-- Images are pasted as base64 into `data.imageSrc`; API body limit is 5 MB (roadmap `img-upload`).
+- Images: the server side is done — `server/images.ts` (`/api/images`, raw `image/*` up to 10 MB) writes bytes to `UPLOAD_DIR/<userId>/<id>.<ext>` and rows the metadata in `Image`; `server/imageTypes.ts` sniffs magic bytes (never the Content-Type); deleting a diagram drops the images only it referenced (`server/imageRefs.ts`). **The client still pastes base64 into `data.imageSrc`** — wiring `Canvas.tsx` to POST and store the returned URL is still open. JSON body limit is 5 MB.
 
 ## Conventions
 

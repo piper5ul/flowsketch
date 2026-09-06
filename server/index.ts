@@ -5,6 +5,7 @@ import path from 'node:path';
 import { toNodeHandler } from 'better-auth/node';
 import { auth } from './auth.js';
 import { apiRouter } from './router.js';
+import { imagesRouter } from './images.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -24,7 +25,10 @@ app.get('/api/health', (_req, res) => {
 
 app.all('/api/auth/*splat', toNodeHandler(auth));
 
+// Diagram JSON stays at 5 MB. Image bodies are `image/*`, which express.json
+// leaves alone; the images router applies its own, larger raw-body limit.
 app.use('/api', express.json({ limit: '5mb' }));
+app.use('/api/images', imagesRouter);
 app.use('/api', apiRouter);
 
 if (process.env.NODE_ENV === 'production') {

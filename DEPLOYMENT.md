@@ -42,6 +42,8 @@ curl -s http://localhost:3001/api/health   # {"ok":true}
 
 `BETTER_AUTH_URL` must be the public origin users hit (it is also the trusted CORS/CSRF origin). The unit file reads `/opt/whimsy/.env`; never commit that file.
 
+Uploaded images are written to `UPLOAD_DIR` (default `./uploads`, so `/opt/whimsy/uploads`), resolved from the service's working directory. It is gitignored, so a deploy leaves it in place — but it is *not* in the database, so back it up alongside Postgres.
+
 ## Releasing
 
 From a developer machine with SSH access, [`deploy/deploy.sh`](deploy/deploy.sh) pulls `main` on the server, installs, builds, applies the schema, and restarts the service:

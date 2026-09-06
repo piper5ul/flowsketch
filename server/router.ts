@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { prisma } from './db.js';
 import { requireAuth } from './middleware.js';
+import { deleteOrphanImages } from './images.js';
+import { imageIdsInDiagram } from './imageRefs.js';
 
 export const apiRouter = Router();
 
@@ -67,13 +69,23 @@ apiRouter.delete('/diagrams/:id', async (req, res) => {
   const userId = (req as any).user.id;
   const existing = await prisma.diagram.findFirst({
     where: { id: req.params.id, userId },
-    select: { id: true },
+    select: { id: true, data: true },
   });
   if (!existing) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
+  const referencedImageIds = imageIdsInDiagram(existing.data);
   await prisma.diagram.delete({ where: { id: req.params.id } });
+
+  // Only after the row is gone, or the diagram would count as a live reference
+  // to its own images. A cleanup failure leaves orphaned files, not a failed
+  // delete: the diagram the caller asked to remove is already gone.
+  try {
+    await deleteOrphanImages(userId, referencedImageIds);
+  } catch (err) {
+    console.error(`Orphan image cleanup failed for diagram ${req.params.id}:`, err);
+  }
   res.status(204).end();
 });
 

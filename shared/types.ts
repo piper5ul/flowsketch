@@ -25,6 +25,16 @@ export interface SerializedEdge {
   data?: Record<string, unknown>;
 }
 
+/** Response of `POST /api/images`. `url` is what a node's `data.imageSrc` stores. */
+export interface ImageMeta {
+  id: string;
+  url: string;
+  mime: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+}
+
 export interface DiagramMeta {
   id: string;
   title: string;
