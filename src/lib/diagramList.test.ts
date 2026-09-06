@@ -16,6 +16,7 @@ function meta(id: string, overrides: Partial<DiagramMeta> = {}): DiagramMeta {
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     thumbnail: null,
+    role: 'owner',
     ...overrides,
   };
 }

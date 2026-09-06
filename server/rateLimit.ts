@@ -15,6 +15,13 @@ const FIFTEEN_MINUTES = 15 * 60 * 1000;
 const API_LIMIT = 600;
 /** Uploads are 10 MB each and hit the disk, so they get a tighter budget. */
 const IMAGE_UPLOAD_LIMIT = 60;
+/**
+ * `/api/shared/*` is the only unauthenticated surface, so it gets a budget of
+ * its own. Generous next to the upload one because opening a single shared
+ * board spends one request for the diagram and another for every image it
+ * draws — a handful of page loads must not exhaust it.
+ */
+const SHARED_LINK_LIMIT = 300;
 
 /**
  * Only production is limited. Unit tests fire dozens of requests from one
@@ -46,4 +53,9 @@ export function createApiLimiter(overrides: Partial<Options> = {}) {
 /** `60 / 15 min` per IP for `POST /api/images`, on top of the general limiter. */
 export function createImageUploadLimiter(overrides: Partial<Options> = {}) {
   return limiter(IMAGE_UPLOAD_LIMIT, overrides);
+}
+
+/** `300 / 15 min` per IP for `/api/shared/*`, the routes that need no session. */
+export function createSharedLinkLimiter(overrides: Partial<Options> = {}) {
+  return limiter(SHARED_LINK_LIMIT, overrides);
 }

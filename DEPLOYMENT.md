@@ -63,7 +63,14 @@ The schema is versioned in `prisma/migrations/`. Every deploy — including `dep
 npm run db:migrate:deploy      # or: npx prisma migrate deploy
 ```
 
-**A new, empty database needs nothing else**: `migrate deploy` applies `20260906065812_init` and records it in `_prisma_migrations`.
+**A new, empty database needs nothing else**: `migrate deploy` applies every migration in order and records each in `_prisma_migrations`.
+
+| Migration | What it does |
+|---|---|
+| `20260906065812_init` | The whole schema as it stood before migrations existed |
+| `20260906094058_sharing` | Adds `Diagram.shareToken` (nullable, unique) and the `DiagramMember` table, with cascading foreign keys to `Diagram` and `User` |
+
+`20260906094058_sharing` is additive — a new nullable column and a new table — so it applies to a populated database without a backfill and without downtime. Existing diagrams come out unshared (`shareToken IS NULL`) and with no members, which is exactly what they were.
 
 ### Baselining a database created with `db push` (one-time, required)
 
@@ -124,9 +131,11 @@ cloudflared service install && systemctl enable --now cloudflared
 
 Point uptime monitoring at the deep probe: the shallow one stays green while the app is unusable because Postgres is down.
 
-**Rate limits.** `/api` allows 600 requests per 15 minutes per IP, and `POST /api/images` a further 60 per 15 minutes; over budget is `429 {"error":"Too many requests"}`. Counting is per process and in memory, so it resets on restart. For that counting to be per client rather than per proxy, `server/index.ts` sets `app.set('trust proxy', 1)`: the app only ever sees the tunnel's (or Nginx's) address on the socket, so it trusts exactly one hop of `X-Forwarded-For`. Raise that number only if you add another proxy in front — trusting more hops than you actually run lets a client forge its own IP and dodge the limits.
+**Rate limits.** `/api` allows 600 requests per 15 minutes per IP, `POST /api/images` a further 60 per 15 minutes, and `/api/shared/*` — the share-link routes, the only ones that need no session — 300 per 15 minutes; over budget is `429 {"error":"Too many requests"}`. Counting is per process and in memory, so it resets on restart. For that counting to be per client rather than per proxy, `server/index.ts` sets `app.set('trust proxy', 1)`: the app only ever sees the tunnel's (or Nginx's) address on the socket, so it trusts exactly one hop of `X-Forwarded-For`. Raise that number only if you add another proxy in front — trusting more hops than you actually run lets a client forge its own IP and dodge the limits.
 
 Backups: the state is the PostgreSQL database (diagrams are JSON in the `Diagram` table) — `pg_dump` it — **and `UPLOAD_DIR`**, where uploaded image bytes live. Back up both, or a restored database points at images that are no longer there.
+
+**Share links are bearer credentials.** `Diagram.shareToken` is 144 bits of `crypto.randomBytes`, and anyone holding one can read that diagram — and the images it draws — at `/api/shared/<token>` with no account. Revoking is `DELETE /api/diagrams/:id/share`, which nulls the column; a later re-share mints a *different* token, so the old URL stays dead. Nothing else is reachable with a token: an image id the diagram does not reference is a 404, and the response carries no owner, no members and never the token itself. Treat a database dump as containing live credentials.
 
 **First open of a pre-upload diagram uploads its images.** Diagrams saved before `/api/images` existed carry their pictures inline as base64; opening one now uploads each of them in the background and rewrites the nodes to `/api/images/<id>` URLs, which the next autosave persists. Expect a burst of `POST /api/images` and some growth in `UPLOAD_DIR` the first time old diagrams are opened after a release — a diagram with more than 60 inlined images will hit the image rate limit and finish the rest on its next open.
 

@@ -6,6 +6,7 @@ import { toNodeHandler } from 'better-auth/node';
 import { auth } from './auth.js';
 import { apiRouter } from './router.js';
 import { imagesRouter } from './images.js';
+import { sharedRouter } from './sharing.js';
 import { healthRouter } from './health.js';
 import { createApiLimiter } from './rateLimit.js';
 
@@ -36,6 +37,9 @@ app.all('/api/auth/*splat', toNodeHandler(auth));
 // leaves alone; the images router applies its own, larger raw-body limit.
 app.use('/api', express.json({ limit: '5mb' }));
 app.use('/api/images', imagesRouter);
+// Before `apiRouter`, which guards everything under it with `requireAuth`: a
+// share token is the whole credential these routes need.
+app.use('/api/shared', sharedRouter);
 app.use('/api', apiRouter);
 
 if (process.env.NODE_ENV === 'production') {

@@ -101,6 +101,24 @@ export const updateDiagramBody = z
     error: 'Expected at least one of title, data, starred or thumbnail',
   });
 
+/** Ceiling on an invited address. Comfortably past RFC 5321's 254. */
+export const MAX_EMAIL_CHARS = 254;
+
+/**
+ * `POST /api/diagrams/:id/members`.
+ *
+ * The address is lower-cased before it is looked up, because that is how
+ * BetterAuth stores it and an invitation typed with a capital should still
+ * find the account. `role` is an enum here rather than in the database: the
+ * column is a String so that adding a role is a deploy, not a migration.
+ */
+export const addMemberBody = z.strictObject({
+  email: z.string().trim().toLowerCase().pipe(z.email().max(MAX_EMAIL_CHARS)),
+  role: z.enum(['editor', 'viewer']),
+});
+
+export type AddMemberBody = z.infer<typeof addMemberBody>;
+
 /** Appended by `POST /api/diagrams/:id/duplicate`. */
 export const COPY_SUFFIX = ' (copy)';
 
