@@ -12,8 +12,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { docToDiagramData } from '../../../server/collab/render';
 import { edgeEntries, nodeEntries } from '../../../shared/collabDoc';
-import { serializeDiagram, useDiagramStore } from '../../store/useDiagramStore';
+import { serializeDiagram, setDocumentFlush, useDiagramStore } from '../../store/useDiagramStore';
+import { api } from '../api';
 import { bindDocToStore, pushDiagramToDoc, TRANSIENT_COMMIT_MS, type DocBinding } from './binding';
+
+// Only `api` itself is a stub — the error classes have to be the real ones, or
+// `saveDiagram`'s `instanceof` checks would never match.
+vi.mock('../api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api')>()),
+  api: { saveDiagram: vi.fn(async () => ({ updatedAt: '2026-09-06T09:00:00.000Z' })) },
+}));
+
+const saveDiagram = vi.mocked(api.saveDiagram);
 
 const store = () => useDiagramStore.getState();
 
@@ -49,6 +59,8 @@ beforeEach(() => {
 afterEach(() => {
   binding?.destroy();
   binding = null;
+  setDocumentFlush(null);
+  saveDiagram.mockClear();
   vi.useRealTimers();
 });
 
@@ -417,5 +429,71 @@ describe('merging', () => {
     expect(docToDiagramData(a)).toEqual(docToDiagramData(b));
     expect(docToDiagramData(a).nodes.map((n) => n.id)).toEqual(['n2']);
     expect(edgeEntries(a).size).toBe(0);
+  });
+});
+
+describe('the invariant: a bound diagram is never saved as a whole copy', () => {
+  /** Everything on the board a mutating action can be run against. */
+  function busyDiagram() {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('ellipse', { x: 300, y: 0 });
+    store().onConnect({ source: a, target: b, sourceHandle: null, targetHandle: null });
+    return { a, b };
+  }
+
+  it('sends nothing through the API, however many actions are run', async () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    // What `useCollabStore` registers once the document is bound.
+    setDocumentFlush(async () => true);
+
+    const { a, b } = busyDiagram();
+    store().updateNodeData(a, { label: 'One' });
+    store().updateEdgeData(store().edges[0].id, { connectorType: 'curved' });
+    select(a, b);
+    store().updateSelectedNodesData({ bold: true });
+    store().updateSelectedEdgesStyle({ strokeWidth: 3 });
+    store().alignSelected('left');
+    store().groupSelected();
+    store().duplicateSelection();
+    store().bringToFront();
+    store().toggleLock();
+    store().nudgeSelected(4, 0);
+    store().setSelectedShapeKind('hexagon');
+    store().addFrame({ x: 0, y: 400 });
+    store().reparentByPosition([a]);
+    store().applyImageBackfill([{ id: a, imageSrc: '/api/images/i1', shape: 'image' }]);
+    store().deleteSelection();
+    store().setViewport({ x: 1, y: 2, zoom: 1 });
+
+    // Every one of them reached the document…
+    expect(docToDiagramData(doc)).toEqual(snapshot());
+    // …and none of them reached the JSON column.
+    expect(saveDiagram).not.toHaveBeenCalled();
+
+    // Not even the autosave loop, which still runs and still says "Saved".
+    await expect(store().saveDiagram()).resolves.toBe('saved');
+    expect(saveDiagram).not.toHaveBeenCalled();
+    expect(store().saveStatus).toBe('saved');
+  });
+
+  it('reports an edit still stuck in the browser as a failure worth retrying', async () => {
+    setDocumentFlush(async () => false);
+    store().addShape('rectangle', { x: 0, y: 0 });
+
+    await expect(store().saveDiagram()).resolves.toBe('error');
+    expect(store().saveStatus).toBe('error');
+    expect(saveDiagram).not.toHaveBeenCalled();
+  });
+
+  it('still writes the whole board for a diagram with no document behind it', async () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+
+    await expect(store().saveDiagram()).resolves.toBe('saved');
+    expect(saveDiagram).toHaveBeenCalledWith(
+      'test',
+      expect.objectContaining({ data: snapshot() }),
+      undefined,
+    );
   });
 });

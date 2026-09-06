@@ -31,6 +31,11 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    // Whether the diagram is edited live. Only read by a `PUT` that carries
+    // `data`, which is the one thing a collaborative diagram may not take.
+    diagramDoc: {
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(),
     diagramMember: {
       findMany: vi.fn(),
@@ -126,6 +131,10 @@ beforeEach(() => {
   // Nothing is indexed unless a test says so, which is also what the GC's
   // "no live diagram claims this image" case looks like.
   prismaMock.diagramImage.findMany.mockResolvedValue([]);
+  // Not collaborative unless a test says so: the whole-copy `data` write this
+  // route has always taken is still how a diagram nobody has opened over the
+  // socket gets saved.
+  prismaMock.diagramDoc.findUnique.mockResolvedValue(null);
   mockImages({});
 });
 

@@ -37,6 +37,11 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       deleteMany: vi.fn(),
       createMany: vi.fn(),
     },
+    // Read by a `PUT` that carries `data`, to refuse a whole-copy write to a
+    // diagram that is being edited live.
+    diagramDoc: {
+      findUnique: vi.fn(),
+    },
     $transaction: vi.fn(),
     diagramMember: {
       upsert: vi.fn(),
@@ -145,6 +150,9 @@ beforeEach(() => {
   // "no live diagram claims this image" case looks like.
   prismaMock.diagramImage.findMany.mockResolvedValue([]);
   prismaMock.image.findMany.mockResolvedValue([]);
+  // Not a collaborative diagram: the `PUT` recording under test is the one a
+  // diagram nobody has opened over the socket still makes.
+  prismaMock.diagramDoc.findUnique.mockResolvedValue(null);
   nothingToPrune();
 });
 

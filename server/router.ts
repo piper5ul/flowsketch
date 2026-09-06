@@ -210,6 +210,31 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
       return;
     }
 
+    // **The invariant.** Once a diagram has a `DiagramDoc` row it is edited
+    // live, and its JSON is a snapshot the collaboration server renders from
+    // that document (`server/collab.ts`). A whole-copy `data` write here would
+    // put one client's idea of the board over everybody's merged edits — and
+    // the next `store` would render it straight back out again, so the write
+    // would not even stick. The only client that can still send one is a tab
+    // that was open before this build shipped; `409` is what its conflict
+    // banner already knows how to recover from, and "Reload" is the right
+    // answer to it.
+    //
+    // Everything else on this route — a rename, the star, a thumbnail, the
+    // folder — is a column of its own that the document has no opinion about,
+    // and keeps working for a collaborative diagram. That is why the lookup is
+    // only made when `data` is actually being written.
+    if (data !== undefined) {
+      const live = await prisma.diagramDoc.findUnique({
+        where: { diagramId: req.params.id },
+        select: { diagramId: true },
+      });
+      if (live) {
+        res.status(409).json({ error: 'Conflict', updatedAt: existing.updatedAt });
+        return;
+      }
+    }
+
     const droppedImageIds = data === undefined ? [] : droppedImages(existing.data, data);
 
     const updated = await prisma.diagram.update({
