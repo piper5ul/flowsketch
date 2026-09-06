@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { serveForFile } from './testServer.js';
 import {
   MAX_ELEMENTS,
   MAX_EMAIL_CHARS,
@@ -168,21 +169,23 @@ describe('validateBody', () => {
   app.post('/t', validateBody(updateDiagramBody), (req, res) => {
     res.json({ body: req.body });
   });
+  // One port for this suite — see `testServer.ts`.
+  const server = serveForFile(app);
 
   it('passes a valid body through, parsed', async () => {
-    const res = await request(app).post('/t').send({ title: '  Plan  ' }).expect(200);
+    const res = await request(server).post('/t').send({ title: '  Plan  ' }).expect(200);
     expect(res.body).toEqual({ body: { title: 'Plan' } });
   });
 
   it('answers 400 with the offending issues', async () => {
-    const res = await request(app).post('/t').send({ starred: 'yes' }).expect(400);
+    const res = await request(server).post('/t').send({ starred: 'yes' }).expect(400);
     expect(res.body.error).toBe('Invalid body');
     expect(res.body.issues).toEqual([expect.objectContaining({ path: 'starred' })]);
     expect(res.body.issues[0].message).toEqual(expect.any(String));
   });
 
   it('reports the path of a nested issue', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/t')
       .send({ data: { nodes: [{ id: 'n1', position: { x: 'nope', y: 0 } }], edges: [] } })
       .expect(400);

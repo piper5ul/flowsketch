@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthUser } from './types.js';
+import { serveForFile } from './testServer.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -53,6 +54,8 @@ const { imagePath } = await import('./storage.js');
 
 const app = express();
 app.use('/api/images', imagesRouter);
+// One port for the whole file — see `testServer.ts`.
+const server = serveForFile(app);
 
 /** A real, valid 1x1 transparent PNG. */
 const PNG_1X1 = Buffer.from(
@@ -72,9 +75,9 @@ beforeEach(() => {
 describe('auth gate', () => {
   it('rejects every image route without a session', async () => {
     authState.user = null;
-    await request(app).post('/api/images').set('Content-Type', 'image/png').send(PNG_1X1).expect(401);
-    await request(app).get('/api/images/i1').expect(401);
-    await request(app).delete('/api/images/i1').expect(401);
+    await request(server).post('/api/images').set('Content-Type', 'image/png').send(PNG_1X1).expect(401);
+    await request(server).get('/api/images/i1').expect(401);
+    await request(server).delete('/api/images/i1').expect(401);
     expect(prismaMock.image.create).not.toHaveBeenCalled();
     expect(prismaMock.image.findFirst).not.toHaveBeenCalled();
     expect(prismaMock.image.findUnique).not.toHaveBeenCalled();
@@ -85,7 +88,7 @@ describe('POST /api/images', () => {
   it('stores a PNG on disk and returns its metadata', async () => {
     prismaMock.image.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'i1', ...data }));
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/images')
       .set('Content-Type', 'image/png')
       .send(PNG_1X1)
@@ -109,7 +112,7 @@ describe('POST /api/images', () => {
   });
 
   it('415s a body whose bytes are not a supported image, whatever the Content-Type claims', async () => {
-    await request(app)
+    await request(server)
       .post('/api/images')
       .set('Content-Type', 'image/png')
       .send(Buffer.from('this is plain text pretending to be a png', 'utf8'))
@@ -118,17 +121,17 @@ describe('POST /api/images', () => {
   });
 
   it('415s a non-image Content-Type, which the raw parser never reads', async () => {
-    await request(app).post('/api/images').set('Content-Type', 'text/plain').send('hello').expect(415);
+    await request(server).post('/api/images').set('Content-Type', 'text/plain').send('hello').expect(415);
     expect(prismaMock.image.create).not.toHaveBeenCalled();
   });
 
   it('415s an empty body', async () => {
-    await request(app).post('/api/images').set('Content-Type', 'image/png').send(Buffer.alloc(0)).expect(415);
+    await request(server).post('/api/images').set('Content-Type', 'image/png').send(Buffer.alloc(0)).expect(415);
     expect(prismaMock.image.create).not.toHaveBeenCalled();
   });
 
   it('413s an oversized body as JSON, not an HTML error page', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/images')
       .set('Content-Type', 'image/png')
       .send(Buffer.alloc(11 * 1024 * 1024))
@@ -155,7 +158,7 @@ describe('GET /api/images/:id', () => {
       size: PNG_1X1.length,
     });
 
-    const res = await request(app).get('/api/images/get1').expect(200);
+    const res = await request(server).get('/api/images/get1').expect(200);
     expect(res.headers['content-type']).toBe('image/png');
     expect(res.headers['cache-control']).toBe('private, max-age=31536000, immutable');
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
@@ -166,7 +169,7 @@ describe('GET /api/images/:id', () => {
 
   it('404s an image that does not exist', async () => {
     prismaMock.image.findUnique.mockResolvedValue(null);
-    await request(app).get('/api/images/nope').expect(404);
+    await request(server).get('/api/images/nope').expect(404);
   });
 
   it('404s another user\'s image when no diagram shared with the caller draws it', async () => {
@@ -181,7 +184,7 @@ describe('GET /api/images/:id', () => {
     // Shared with the caller, but drawing something else.
     prismaMock.diagram.findMany.mockResolvedValue([{ data: { nodes: [nodeWithImage('unrelated')], edges: [] } }]);
 
-    await request(app).get('/api/images/theirs').expect(404);
+    await request(server).get('/api/images/theirs').expect(404);
 
     expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
       where: { members: { some: { userId: 'u1' } } },
@@ -200,7 +203,7 @@ describe('GET /api/images/:id', () => {
     });
     prismaMock.diagram.findMany.mockResolvedValue([{ data: { nodes: [nodeWithImage('shared-pic')], edges: [] } }]);
 
-    const res = await request(app).get('/api/images/shared-pic').expect(200);
+    const res = await request(server).get('/api/images/shared-pic').expect(200);
     // Read from the owner's directory, not the viewer's.
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
   });
@@ -212,7 +215,7 @@ describe('GET /api/images/:id', () => {
       mime: 'image/png',
       size: 10,
     });
-    await request(app).get('/api/images/ghost').expect(404);
+    await request(server).get('/api/images/ghost').expect(404);
   });
 });
 
@@ -224,14 +227,14 @@ describe('DELETE /api/images/:id', () => {
     prismaMock.image.findFirst.mockResolvedValue({ id: 'del1', userId: 'u1', mime: 'image/png' });
     prismaMock.image.delete.mockResolvedValue({ id: 'del1' });
 
-    await request(app).delete('/api/images/del1').expect(204);
+    await request(server).delete('/api/images/del1').expect(204);
     expect(prismaMock.image.delete).toHaveBeenCalledWith({ where: { id: 'del1' } });
     expect(fs.existsSync(stored)).toBe(false);
   });
 
   it('refuses to delete an image the caller does not own', async () => {
     prismaMock.image.findFirst.mockResolvedValue(null);
-    await request(app).delete('/api/images/someone-elses').expect(404);
+    await request(server).delete('/api/images/someone-elses').expect(404);
     expect(prismaMock.image.delete).not.toHaveBeenCalled();
   });
 });
