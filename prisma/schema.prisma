@@ -28,6 +28,11 @@ model User {
   /// Version snapshots this user's edits produced. Kept (with a null author)
   /// when the account goes away, because they belong to someone else's diagram.
   versions DiagramVersion[]
+  /// Comment threads this user started, and the individual comments they wrote.
+  /// Both cascade with the account: a comment is a person speaking, and an
+  /// authorless one on someone else's board is worse than none at all.
+  commentThreads CommentThread[]
+  comments       Comment[]
 }
 
 model Session {
@@ -92,8 +97,64 @@ model Diagram {
   user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   members  DiagramMember[]
   versions DiagramVersion[]
+  threads  CommentThread[]
 
   @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// A conversation pinned to a diagram — one thread, one or more comments.
+///
+/// A thread is anchored either to a shape (`nodeId`, the node's id inside
+/// `Diagram.data`) or to a bare canvas position (`x`+`y`); exactly one of the
+/// two is set, which the API enforces because there is no database constraint
+/// that can express it across three nullable columns. `nodeId` is a plain
+/// String and *not* a foreign key: nodes live inside a JSON column, so a thread
+/// can outlive the shape it was pinned to — the canvas decides whether to draw
+/// an orphaned pin or park it, and nothing here deletes the conversation.
+///
+/// A thread always has at least one comment (the one that created it). Deleting
+/// the last comment deletes the thread, so an empty thread is never stored.
+model CommentThread {
+  id          String   @id @default(cuid())
+  diagramId   String
+  /// The shape this thread is pinned to, or `null` for a canvas-position one.
+  nodeId      String?
+  /// Diagram coordinates, set only on a thread that is not anchored to a shape.
+  x           Float?
+  y           Float?
+  resolved    Boolean  @default(false)
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  diagram   Diagram   @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  createdBy User      @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  comments  Comment[]
+
+  /// The listing is "this diagram's open threads" or "…its resolved ones".
+  @@index([diagramId, resolved])
+  @@index([createdById])
+}
+
+/// One message in a `CommentThread`, oldest first as the thread reads.
+///
+/// `editedAt` is `null` until the author changes the text, which is what lets
+/// the UI mark a comment as edited without keeping a revision history: a
+/// comment is a remark, not a document, so the previous wording is not kept.
+model Comment {
+  id        String    @id @default(cuid())
+  threadId  String
+  authorId  String
+  body      String
+  createdAt DateTime  @default(now())
+  /// Set the first time the author rewrites the body; `null` on an untouched one.
+  editedAt  DateTime?
+
+  thread CommentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+  @@index([authorId])
 }
 
 /// A point-in-time copy of a diagram's `data` and `title`.

@@ -9,7 +9,12 @@
  */
 import { z } from 'zod';
 import type { NextFunction, Request, Response } from 'express';
-import { MAX_THUMBNAIL_CHARS, THUMBNAIL_DATA_URL_PREFIX } from '../shared/types.js';
+import {
+  MAX_COMMENT_CHARS,
+  MAX_THUMBNAIL_CHARS,
+  THUMBNAIL_DATA_URL_PREFIX,
+  type CommentThreadFilter,
+} from '../shared/types.js';
 
 /** Ceiling on `nodes` and `edges` per diagram. Well past any hand-drawn board. */
 export const MAX_ELEMENTS = 5000;
@@ -137,6 +142,60 @@ export const createVersionBody = z
   .transform((body) => body ?? {});
 
 export type CreateVersionBody = z.infer<typeof createVersionBody>;
+
+// ---------------------------------------------------------------------------
+// Comments
+// ---------------------------------------------------------------------------
+
+/**
+ * A comment body. Trimmed and non-empty, because a comment made of spaces is
+ * a pin nobody can read; capped at `MAX_COMMENT_CHARS`, which the client counts
+ * against too so a long remark is refused before it is sent.
+ */
+const commentBody = z.string().trim().min(1).max(MAX_COMMENT_CHARS);
+
+/**
+ * `POST /api/diagrams/:id/threads`.
+ *
+ * A thread is pinned **either** to a shape or to a bare canvas position, and
+ * the `refine` is where that is decided: three nullable columns cannot express
+ * "exactly one of these" in the database, so this is the only place it holds.
+ * A position needs both coordinates — half of one is not a point.
+ */
+export const createThreadBody = z
+  .strictObject({
+    nodeId: z.string().trim().min(1).max(MAX_ID_CHARS).optional(),
+    x: z.number().finite().optional(),
+    y: z.number().finite().optional(),
+    body: commentBody,
+  })
+  .refine((b) => (b.nodeId !== undefined) !== (b.x !== undefined && b.y !== undefined), {
+    error: 'Expected either nodeId or both x and y, not both and not neither',
+  });
+
+export type CreateThreadBody = z.infer<typeof createThreadBody>;
+
+/** `POST …/threads/:threadId/comments` and `PATCH …/comments/:commentId`. */
+export const commentBodyOnly = z.strictObject({ body: commentBody });
+
+export type CommentBodyOnly = z.infer<typeof commentBodyOnly>;
+
+/**
+ * `PATCH …/threads/:threadId`. `resolved` is required rather than defaulted:
+ * "resolve" and "reopen" are the same route, and a request that forgot to say
+ * which is a mistake, not a resolve.
+ */
+export const setThreadResolvedBody = z.strictObject({ resolved: z.boolean() });
+
+export type SetThreadResolvedBody = z.infer<typeof setThreadResolvedBody>;
+
+/**
+ * `?resolved=` on the thread listing. Anything unrecognised — including the
+ * parameter being absent — reads as `open`, which is what a canvas shows.
+ */
+export function threadFilter(raw: unknown): CommentThreadFilter {
+  return raw === 'all' || raw === 'resolved' ? raw : 'open';
+}
 
 /** Appended by `POST /api/diagrams/:id/duplicate`. */
 export const COPY_SUFFIX = ' (copy)';

@@ -114,6 +114,58 @@ export interface DiagramVersion extends DiagramVersionMeta {
   data: unknown;
 }
 
+/**
+ * The person a comment or thread is attributed to. Deliberately not the
+ * member shape: an address is what you type to *invite* somebody, and there is
+ * no reason for a viewer reading a discussion to be handed everyone's email.
+ */
+export interface CommentAuthor {
+  id: string;
+  name: string;
+}
+
+/** One message in a thread, as the API returns it. */
+export interface CommentInfo {
+  id: string;
+  body: string;
+  /** ISO 8601. */
+  createdAt: string;
+  /** `null` until the author rewrites it; the UI shows "edited" when set. */
+  editedAt: string | null;
+  author: CommentAuthor;
+}
+
+/**
+ * One conversation pinned to a diagram, with every comment in it.
+ *
+ * A thread is anchored either to a shape (`nodeId`) or to a canvas position
+ * (`x`+`y`) — never both, never neither. The other pair is `null`, so a client
+ * decides how to draw the pin by asking which one is set.
+ *
+ * `comments` is never empty: creating a thread posts its first comment, and
+ * deleting the last comment deletes the thread with it.
+ */
+export interface CommentThreadInfo {
+  id: string;
+  /** The node the pin is attached to, or `null` on a positioned thread. */
+  nodeId: string | null;
+  /** Diagram coordinates, or `null` on a node-anchored thread. */
+  x: number | null;
+  y: number | null;
+  resolved: boolean;
+  /** ISO 8601. */
+  createdAt: string;
+  createdBy: CommentAuthor;
+  /** Oldest first, as the conversation reads. */
+  comments: CommentInfo[];
+}
+
+/** What `GET /api/diagrams/:id/threads` may be asked for. Default `open`. */
+export type CommentThreadFilter = 'all' | 'open' | 'resolved';
+
+/** Ceiling on a comment body, in characters. Shared so the client can count too. */
+export const MAX_COMMENT_CHARS = 4000;
+
 export interface DiagramMeta {
   id: string;
   title: string;

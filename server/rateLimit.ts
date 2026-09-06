@@ -22,6 +22,13 @@ const IMAGE_UPLOAD_LIMIT = 60;
  * draws — a handful of page loads must not exhaust it.
  */
 const SHARED_LINK_LIMIT = 300;
+/**
+ * Posting a comment is a human typing, so a budget well past any review
+ * session but far below what a script could spend filling a board with pins.
+ * Only the *writes* are counted: reading the threads happens on every canvas
+ * load and is left to the general `/api` budget.
+ */
+const COMMENT_WRITE_LIMIT = 120;
 
 /**
  * Only production is limited. Unit tests fire dozens of requests from one
@@ -58,4 +65,9 @@ export function createImageUploadLimiter(overrides: Partial<Options> = {}) {
 /** `300 / 15 min` per IP for `/api/shared/*`, the routes that need no session. */
 export function createSharedLinkLimiter(overrides: Partial<Options> = {}) {
   return limiter(SHARED_LINK_LIMIT, overrides);
+}
+
+/** `120 / 15 min` per IP for the routes that create a thread or a comment. */
+export function createCommentLimiter(overrides: Partial<Options> = {}) {
+  return limiter(COMMENT_WRITE_LIMIT, overrides);
 }
