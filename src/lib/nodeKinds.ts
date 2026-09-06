@@ -1,0 +1,19 @@
+import type { ShapeData } from '../types';
+
+/**
+ * True for the invisible 1×1 rectangles a floating arrow hangs off.
+ *
+ * A floating arrow — a connector drawn on empty canvas, belonging to no shape —
+ * is modelled as an edge between two anchor nodes with a transparent fill and
+ * stroke. Several places need to tell those apart from real content: the node
+ * renderer skips their chrome, the connector tool refuses them as endpoints,
+ * and the edge renderer draws them without endpoint handles.
+ *
+ * Transparency alone is not enough. Text shapes are transparent by design, and
+ * so are image nodes, so the shape kind has to be part of the test — hence one
+ * predicate rather than the expression repeated at each call site.
+ */
+export function isAnchorNode(data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>): boolean {
+  if (data.shape === 'text' || data.shape === 'image') return false;
+  return data.fill === 'transparent' && data.stroke === 'transparent';
+}

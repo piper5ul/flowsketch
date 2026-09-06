@@ -11,6 +11,7 @@ import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { makeEdgeData } from '../lib/defaults';
 import { renderDiagramPng } from '../lib/exportImage';
+import { isAnchorNode } from '../lib/nodeKinds';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { LeftRail } from './LeftRail';
@@ -82,8 +83,8 @@ export function Canvas() {
   const onNodeClick = useCallback(
     (_event: React.MouseEvent, node: ShapeNode) => {
       if (tool !== 'connector') return;
-      const isAnchor = node.data.fill === 'transparent' && node.data.stroke === 'transparent';
-      if (isAnchor) return;
+      // A floating arrow's endpoints are not shapes the user can connect to.
+      if (isAnchorNode(node.data)) return;
 
       if (!connectorSourceRef.current) {
         connectorSourceRef.current = node.id;

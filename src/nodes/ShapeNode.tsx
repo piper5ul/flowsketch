@@ -5,6 +5,7 @@ import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { Direction, FontSize, VerticalAlign } from '../types';
 import { isDarkFill } from '../lib/palette';
+import { isAnchorNode } from '../lib/nodeKinds';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
 
@@ -128,12 +129,9 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
     );
   }
 
-  // Floating arrows hang off 1×1 rectangles with transparent fill and stroke.
-  // Text shapes are transparent too, so they must be excluded explicitly or
-  // they render as an empty anchor box with no editable text at all.
-  const isAnchor =
-    data.shape !== 'text' && data.fill === 'transparent' && data.stroke === 'transparent';
-  if (isAnchor) {
+  // Floating arrows hang off 1×1 rectangles with transparent fill and stroke;
+  // those render as bare handles, with no shape chrome around them.
+  if (isAnchorNode(data)) {
     return (
       <div className="relative h-full w-full">
         {HANDLES.map((h) => (
