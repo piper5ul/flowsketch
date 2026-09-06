@@ -202,8 +202,11 @@ export function FloatingToolbar() {
 
   const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
   const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);
-  // Images have no label, so a selection of nothing but images gets no text controls.
-  const textNodes = useMemo(() => selectedNodes.filter((n) => n.data.shape !== 'image'), [selectedNodes]);
+  // An image carries no label, fill or stroke of its own — `updateSelectedNodesData`
+  // and `updateSelectedNodesStyle` both skip it. So a selection of nothing but
+  // images gets neither the text controls nor the colour palette; one that also
+  // holds a real shape gets both, and they apply to that shape.
+  const styleableNodes = useMemo(() => selectedNodes.filter((n) => n.data.shape !== 'image'), [selectedNodes]);
 
   // An elbow connector can route (and its drag handles can sit) well above/below
   // its endpoints, so measure the actual rendered path rather than assuming it
@@ -259,7 +262,7 @@ export function FloatingToolbar() {
   const isEdgeMode = selectedNodes.length === 0 && selectedEdges.length > 0;
   const activeStroke = isEdgeMode
     ? selectedEdges[0]?.data?.stroke ?? DEFAULT_EDGE_STROKE
-    : selectedNodes[0]?.data?.stroke ?? DEFAULT_SWATCH.stroke;
+    : styleableNodes[0]?.data?.stroke ?? DEFAULT_SWATCH.stroke;
   const connectorType = selectedEdges[0]?.data?.connectorType ?? 'elbow';
   const strokeStyle = selectedEdges[0]?.data?.strokeStyle ?? 'solid';
   const strokeWidth = selectedEdges[0]?.data?.strokeWidth ?? DEFAULT_STROKE_WIDTH;
@@ -274,16 +277,18 @@ export function FloatingToolbar() {
       style={{ left: screenX, top: screenY, transform: 'translate(-50%, calc(-100% - 20px))' }}
     >
       <div className="panel-in pointer-events-auto flex items-center gap-1 rounded-2xl bg-ink-950/95 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
-        <ColorPalette
-          activeStroke={activeStroke}
-          onSelect={(swatch) => {
-            if (isEdgeMode) {
-              updateSelectedEdgesStyle({ stroke: swatch.stroke });
-            } else {
-              updateSelectedNodesStyle({ fill: swatch.fill, stroke: swatch.stroke });
-            }
-          }}
-        />
+        {(isEdgeMode || styleableNodes.length > 0) && (
+          <ColorPalette
+            activeStroke={activeStroke}
+            onSelect={(swatch) => {
+              if (isEdgeMode) {
+                updateSelectedEdgesStyle({ stroke: swatch.stroke });
+              } else {
+                updateSelectedNodesStyle({ fill: swatch.fill, stroke: swatch.stroke });
+              }
+            }}
+          />
+        )}
 
         {isEdgeMode && (
           <>
@@ -357,16 +362,16 @@ export function FloatingToolbar() {
           </>
         )}
 
-        {textNodes.length > 0 && (
+        {styleableNodes.length > 0 && (
           <>
             <div className="mx-0.5 h-6 w-px bg-white/10" />
             <TextFormatControls
               value={{
-                fontSize: textNodes[0].data.fontSize ?? 'medium',
-                bold: textNodes[0].data.bold ?? false,
-                italic: textNodes[0].data.italic ?? false,
-                textAlign: textNodes[0].data.textAlign ?? (textNodes[0].data.shape === 'text' ? 'left' : 'center'),
-                verticalAlign: textNodes[0].data.verticalAlign ?? 'middle',
+                fontSize: styleableNodes[0].data.fontSize ?? 'medium',
+                bold: styleableNodes[0].data.bold ?? false,
+                italic: styleableNodes[0].data.italic ?? false,
+                textAlign: styleableNodes[0].data.textAlign ?? (styleableNodes[0].data.shape === 'text' ? 'left' : 'center'),
+                verticalAlign: styleableNodes[0].data.verticalAlign ?? 'middle',
               }}
               onChange={updateSelectedNodesData}
             />

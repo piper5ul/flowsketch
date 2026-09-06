@@ -655,3 +655,39 @@ test('the toolbar swaps a connector\'s end arrowhead for a circle', async ({ pag
   await expect(edgePath).toHaveAttribute('marker-end', /circle/);
   await expect(page.locator('marker[id*="circle"]')).toHaveCount(1);
 });
+
+test('the colour palette hides for an image-only selection and comes back for a mixed one', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  // A shape first: an empty diagram frames itself when its first node appears,
+  // which would move the image out from under the assertions below.
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 240, y: 180 } });
+  const rect = page.locator('.react-flow__node').first();
+  await expect(rect).toBeVisible();
+
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.getByRole('button', { name: 'Insert image' }).click(),
+  ]);
+  await chooser.setFiles({
+    name: 'tile.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(TINY_PNG_BASE64, 'base64'),
+  });
+  const image = page.locator('.react-flow__node img[src^="/api/images/"]');
+  await expect(image).toHaveCount(1);
+
+  // An image has no fill or stroke of its own, so selecting one alone offers
+  // no colours — but the rest of the toolbar is still there.
+  await image.click();
+  await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Color' })).toHaveCount(0);
+
+  // Add the shape to the selection and the palette returns: it has something
+  // to colour again. Select-all rather than a shift-click, because the inserted
+  // image lands in the middle of the viewport and can sit over the rectangle.
+  await page.keyboard.press('ControlOrMeta+a');
+  await expect(page.getByRole('button', { name: 'Color' })).toBeVisible();
+});
