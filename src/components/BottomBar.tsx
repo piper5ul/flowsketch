@@ -1,8 +1,14 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useReactFlow, useStore } from '@xyflow/react';
-import { Undo2, Redo2, Minus, Plus } from 'lucide-react';
+import { useStore } from '@xyflow/react';
+import { Undo2, Redo2, Minus, Plus, Maximize2 } from 'lucide-react';
 import { useDiagramStore } from '../store/useDiagramStore';
+import { formatShortcut, registry } from '../commands/commands';
 import { Tooltip } from './Tooltip';
+
+/** A command's own keystroke, so a tooltip can never drift from the binding. */
+function shortcutOf(id: string): string | undefined {
+  return formatShortcut(registry.find(id)?.shortcut) || undefined;
+}
 
 function IconButton({
   onClick,
@@ -30,8 +36,7 @@ function IconButton({
   );
 }
 
-export function BottomBar() {
-  const { zoomIn, zoomOut, setViewport, getViewport } = useReactFlow();
+export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void }) {
   const undo = useDiagramStore((s) => s.undo);
   const redo = useDiagramStore((s) => s.redo);
   const canUndo = useDiagramStore((s) => s.canUndo);
@@ -43,35 +48,40 @@ export function BottomBar() {
     setPercent(Math.round(zoom * 100));
   }, [zoom]);
 
-  const resetZoom = useCallback(() => {
-    const vp = getViewport();
-    setViewport({ ...vp, zoom: 1 }, { duration: 200 });
-  }, [getViewport, setViewport]);
+  const run = useCallback((id: string) => () => onRunCommand(id), [onRunCommand]);
 
   return (
     <div className="pointer-events-none absolute bottom-5 right-5 z-20 flex items-center gap-2">
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
-        <IconButton onClick={undo} disabled={!canUndo} label="Undo" shortcut="⌘Z">
+        <IconButton onClick={undo} disabled={!canUndo} label="Undo" shortcut={shortcutOf('history.undo')}>
           <Undo2 size={17} />
         </IconButton>
-        <IconButton onClick={redo} disabled={!canRedo} label="Redo" shortcut="⌘⇧Z">
+        <IconButton onClick={redo} disabled={!canRedo} label="Redo" shortcut={shortcutOf('history.redo')}>
           <Redo2 size={17} />
         </IconButton>
       </div>
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
-        <IconButton onClick={() => zoomOut({ duration: 150 })} label="Zoom out" shortcut="-">
+        <IconButton onClick={run('view.zoomOut')} label="Zoom out" shortcut={shortcutOf('view.zoomOut')}>
           <Minus size={16} />
         </IconButton>
-        <Tooltip label="Reset zoom" side="top">
+        <Tooltip label="Reset zoom" shortcut={shortcutOf('view.zoomReset')} side="top">
           <button
-            onClick={resetZoom}
+            onClick={run('view.zoomReset')}
             className="w-12 rounded-lg py-1.5 text-center text-[13px] font-medium text-ink-700 tabular-nums transition hover:bg-black/[0.04]"
           >
             {percent}%
           </button>
         </Tooltip>
-        <IconButton onClick={() => zoomIn({ duration: 150 })} label="Zoom in" shortcut="+">
+        <IconButton onClick={run('view.zoomIn')} label="Zoom in" shortcut={shortcutOf('view.zoomIn')}>
           <Plus size={16} />
+        </IconButton>
+        <IconButton onClick={run('view.fitView')} label="Fit to view" shortcut={shortcutOf('view.fitView')}>
+          <Maximize2 size={15} />
+        </IconButton>
+      </div>
+      <div className="pointer-events-auto flex items-center rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
+        <IconButton onClick={run('view.shortcuts')} label="Keyboard shortcuts">
+          <span aria-hidden className="text-[15px] font-semibold leading-none">?</span>
         </IconButton>
       </div>
     </div>

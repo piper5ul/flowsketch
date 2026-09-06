@@ -62,7 +62,7 @@ const SHAPE_TOOLS: { tool: Tool; label: string; shortcut: string; icon: React.Re
   { tool: 'diamond', label: 'Diamond', shortcut: 'D', icon: <Diamond size={18} /> },
   { tool: 'pill', label: 'Pill', shortcut: 'U', icon: <PillIcon /> },
   { tool: 'triangle', label: 'Triangle', shortcut: 'G', icon: <Triangle size={18} /> },
-  { tool: 'hexagon', label: 'Hexagon', shortcut: '', icon: <Hexagon size={18} /> },
+  { tool: 'hexagon', label: 'Hexagon', shortcut: 'X', icon: <Hexagon size={18} /> },
   { tool: 'cylinder', label: 'Cylinder', shortcut: 'Y', icon: <Database size={18} /> },
   { tool: 'sticky', label: 'Sticky note', shortcut: 'S', icon: <StickyNote size={18} /> },
 ];

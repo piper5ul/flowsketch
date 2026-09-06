@@ -194,6 +194,7 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
 
   return (
     <div
+      data-shape={data.shape}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}
     >
