@@ -19,7 +19,6 @@ export type ShapeKind =
   | 'star'
   | 'callout'
   | 'arrow';
->>>>>>> 33147a6 (feat(shapes): add parallelogram, document, cloud, star, callout and arrow)
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */

@@ -571,7 +571,6 @@ function distributeCommands(): Command[] {
  * Not all of them have a keystroke — the ones behind the rail's "More shapes"
  * menu are chosen there and placed the same way.
  */
->>>>>>> 33147a6 (feat(shapes): add parallelogram, document, cloud, star, callout and arrow)
 export const SHAPE_TOOL_KINDS: ShapeKind[] = [
   'rectangle',
   'ellipse',
