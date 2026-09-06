@@ -1,0 +1,27 @@
+# systemd unit for FlowSketch. Install with:
+#   install -m 644 deploy/whimsy.service /etc/systemd/system/whimsy.service
+#   systemctl daemon-reload && systemctl enable --now whimsy
+# Expects a git checkout at /opt/whimsy that has been built
+# (`npm run build && npm run build:server`) and a /opt/whimsy/.env.
+
+[Unit]
+Description=FlowSketch diagramming app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/whimsy
+EnvironmentFile=/opt/whimsy/.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist-server/server/index.js
+Restart=on-failure
+RestartSec=5
+
+# Hardening: the app only needs to read its checkout and talk to the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
