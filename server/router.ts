@@ -13,6 +13,12 @@ import {
   type UpdateDiagramBody,
 } from './validation.js';
 
+/** Image ids `before` referenced that `after` no longer does. */
+function droppedImages(before: unknown, after: unknown): string[] {
+  const kept = new Set(imageIdsInDiagram(after));
+  return imageIdsInDiagram(before).filter((id) => !kept.has(id));
+}
+
 export const apiRouter = Router();
 
 apiRouter.use(requireAuth);
@@ -70,15 +76,19 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
   validateBody(updateDiagramBody),
   async (req, res) => {
     const userId = authedUser(req).id;
+    const { title, data, starred, thumbnail } = req.body;
+    // The previous JSON is only needed to spot images the edit drops, so a
+    // metadata-only PUT (rename, star, thumbnail) does not read it back.
     const existing = await prisma.diagram.findFirst({
       where: { id: req.params.id, userId },
-      select: { id: true },
+      select: { id: true, ...(data !== undefined && { data: true }) },
     });
     if (!existing) {
       res.status(404).json({ error: 'Not found' });
       return;
     }
-    const { title, data, starred, thumbnail } = req.body;
+    const droppedImageIds = data === undefined ? [] : droppedImages(existing.data, data);
+
     const updated = await prisma.diagram.update({
       where: { id: req.params.id },
       data: {
@@ -88,6 +98,17 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
         ...(thumbnail !== undefined && { thumbnail }),
       },
     });
+
+    // Only after the row is written, or the pre-edit JSON would still count as
+    // a live reference to the images the edit just removed. A cleanup failure
+    // leaves orphaned files, not a failed PUT: the edit is already saved.
+    if (droppedImageIds.length > 0) {
+      try {
+        await deleteOrphanImages(userId, droppedImageIds);
+      } catch (err) {
+        console.error(`Orphan image cleanup failed for diagram ${req.params.id}:`, err);
+      }
+    }
     res.json(updated);
   },
 );
