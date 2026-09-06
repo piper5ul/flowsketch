@@ -15,6 +15,7 @@ import type { ConnectorData, ConnectorKind, Direction, EdgeAnchor, ShapeData, Sh
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
+import { canSwapShapeKind } from '../lib/nodeKinds';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import {
   alignNodes,
@@ -266,6 +267,8 @@ interface DiagramState {
   sendBackward: () => void;
   toggleLock: () => void;
   updateSelectedNodesData: (patch: Partial<ShapeData>) => void;
+  /** Redraws the selection as another kind of shape, keeping everything else. */
+  setSelectedShapeKind: (kind: ShapeKind) => void;
 
   /** Lines the selection up on its own bounding box. Needs two nodes to mean anything. */
   alignSelected: (mode: AlignMode) => void;
@@ -622,6 +625,12 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       triangle: { width: 140, height: 120 },
       hexagon: { width: 160, height: 100 },
       cylinder: { width: 120, height: 130 },
+      parallelogram: { width: 190, height: 100 },
+      document: { width: 170, height: 120 },
+      cloud: { width: 190, height: 130 },
+      star: { width: 140, height: 140 },
+      callout: { width: 180, height: 120 },
+      arrow: { width: 170, height: 90 },
       // Never used in practice: images are inserted through `addImageNode`,
       // which always knows the real pixel size. Present so the table stays
       // exhaustive over ShapeKind.
@@ -946,6 +955,24 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       nodes: s.nodes.map((n) =>
         n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
       ),
+    }));
+  },
+
+  // Swapping the outline under a shape, not replacing the shape: the label,
+  // the box it was drawn at and its colours all survive, so a flowchart can be
+  // re-drawn as one without retyping it. Nodes that have no outline to swap
+  // (images, text) or that are locked sit it out, and a swap that would change
+  // nothing costs no history entry.
+  setSelectedShapeKind: (kind) => {
+    const willChange = (n: ShapeNode) =>
+      n.selected && canSwapShapeKind(n.data) && n.data.shape !== kind;
+
+    const state = get();
+    if (!state.nodes.some(willChange)) return;
+
+    pushHistory(state);
+    set((s) => ({
+      nodes: s.nodes.map((n) => (willChange(n) ? { ...n, data: { ...n.data, shape: kind } } : n)),
     }));
   },
 

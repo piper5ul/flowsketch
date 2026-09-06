@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isAnchorNode } from './nodeKinds';
+import { canSwapShapeKind, isAnchorNode } from './nodeKinds';
 import type { ShapeData } from '../types';
 
 const data = (patch: Partial<ShapeData>): ShapeData => ({
@@ -34,5 +34,21 @@ describe('isAnchorNode', () => {
   it('needs both fill and stroke to be transparent', () => {
     expect(isAnchorNode(data({ fill: 'transparent' }))).toBe(false);
     expect(isAnchorNode(data({ stroke: 'transparent' }))).toBe(false);
+  });
+});
+
+describe('canSwapShapeKind', () => {
+  it('accepts an ordinary drawn shape', () => {
+    expect(canSwapShapeKind(data({ shape: 'rectangle' }))).toBe(true);
+    expect(canSwapShapeKind(data({ shape: 'sticky' }))).toBe(true);
+  });
+
+  it('refuses images and text, which are not outlines to swap', () => {
+    expect(canSwapShapeKind(data({ shape: 'image' }))).toBe(false);
+    expect(canSwapShapeKind(data({ shape: 'text' }))).toBe(false);
+  });
+
+  it('refuses a locked shape', () => {
+    expect(canSwapShapeKind(data({ locked: true }))).toBe(false);
   });
 });

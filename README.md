@@ -7,8 +7,9 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 ## Features
 
 ### Shapes
-- **9 shape types** — Rectangle, Pill, Diamond, Hexagon, Cylinder, Ellipse, Triangle, Sticky Note, Text
-- Drag-and-drop from the left toolbar to add shapes
+- **15 shape types** — Rectangle, Pill, Diamond, Hexagon, Cylinder, Ellipse, Triangle, Parallelogram, Document, Cloud, Star, Callout, Arrow, Sticky Note, Text
+- Drag-and-drop from the left toolbar to add shapes; the ones without a keystroke live behind its **More shapes** menu
+- Change a shape into another kind from the floating toolbar's **Shape** button — the label, size and colors stay put
 - Resize any shape by dragging selection handles
 - Smart alignment guides that snap to neighboring shapes while dragging
 
@@ -75,6 +76,7 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `O` | Ellipse |
 | `D` | Diamond |
 | `U` | Pill |
+| `P` | Parallelogram |
 | `G` | Triangle |
 | `X` | Hexagon |
 | `Y` | Cylinder |
@@ -232,8 +234,8 @@ flowsketch/
 ├── src/
 │   ├── components/      # Canvas, toolbars, color palette, alignment guides
 │   ├── edges/           # Custom connector edge + its arrowhead marker defs
-│   ├── lib/             # Edge geometry, Manhattan router, color utilities
-│   ├── nodes/           # Custom shape node with 9 shape types
+│   ├── lib/             # Edge geometry, Manhattan router, shape outlines, color utilities
+│   ├── nodes/           # Custom shape node with 15 shape types
 │   ├── pages/           # Dashboard, canvas, login, signup pages
 │   ├── store/           # Zustand diagram store
 │   └── types.ts         # Shared TypeScript types

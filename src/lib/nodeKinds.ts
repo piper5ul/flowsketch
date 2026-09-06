@@ -1,4 +1,30 @@
-import type { ShapeData } from '../types';
+import type { ShapeData, ShapeKind } from '../types';
+
+/**
+ * Every shape kind, at runtime. Built from an exhaustive record rather than
+ * written out as an array, so adding a kind to `ShapeKind` and forgetting it
+ * here is a type error rather than a table that silently misses a shape.
+ */
+const ALL_SHAPE_KINDS: Record<ShapeKind, true> = {
+  rectangle: true,
+  ellipse: true,
+  diamond: true,
+  sticky: true,
+  text: true,
+  pill: true,
+  triangle: true,
+  hexagon: true,
+  cylinder: true,
+  image: true,
+  parallelogram: true,
+  document: true,
+  cloud: true,
+  star: true,
+  callout: true,
+  arrow: true,
+};
+
+export const SHAPE_KINDS = Object.keys(ALL_SHAPE_KINDS) as ShapeKind[];
 
 /**
  * True for the invisible 1×1 rectangles a floating arrow hangs off.
@@ -16,4 +42,17 @@ import type { ShapeData } from '../types';
 export function isAnchorNode(data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>): boolean {
   if (data.shape === 'text' || data.shape === 'image') return false;
   return data.fill === 'transparent' && data.stroke === 'transparent';
+}
+
+/**
+ * True for the shapes whose kind the toolbar can swap.
+ *
+ * An image *is* its bytes and a text shape draws no outline at all while sizing
+ * itself to what is typed — turning either into a diamond would throw away the
+ * thing that makes it what it is. A locked shape sits the edit out, as it sits
+ * out every other one. The floating toolbar and the store share this predicate
+ * so the button is offered exactly when pressing it would do something.
+ */
+export function canSwapShapeKind(data: Pick<ShapeData, 'shape' | 'locked'>): boolean {
+  return data.shape !== 'image' && data.shape !== 'text' && !data.locked;
 }

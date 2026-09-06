@@ -4,44 +4,36 @@ import clsx from 'clsx';
 import {
   MousePointer2,
   Hand,
-  Square,
-  Circle,
-  Diamond,
-  StickyNote,
-  Type,
   ArrowRight,
   CornerDownRight,
   ChevronRight,
-  Triangle,
-  Hexagon,
-  Database,
-  Image as ImageIcon,
+  Shapes,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { useImageInsert } from '../lib/useImageInsert';
-import type { Tool } from '../types';
+import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
+import type { ShapeKind, Tool } from '../types';
 
-function RailButton({
-  active,
-  label,
-  shortcut,
-  onClick,
-  children,
-}: {
+const ImageIcon = SHAPE_ICONS.image;
+
+// Props are forwarded to the button so a Radix `asChild` trigger can wrap this
+// the way it wraps a plain one.
+type RailButtonProps = React.ComponentPropsWithRef<'button'> & {
   active?: boolean;
   label: string;
   shortcut?: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+};
+
+function RailButton({ active, label, shortcut, className, children, ...rest }: RailButtonProps) {
   return (
     <Tooltip label={label} shortcut={shortcut}>
       <button
-        onClick={onClick}
+        {...rest}
         className={clsx(
           'flex h-10 w-10 items-center justify-center rounded-xl transition-colors',
           active ? 'bg-accent-500 text-white shadow-[0_4px_14px_-2px_rgba(124,92,255,0.55)]' : 'text-white/70 hover:bg-white/10 hover:text-white',
+          className,
         )}
       >
         {children}
@@ -50,22 +42,95 @@ function RailButton({
   );
 }
 
-const PillIcon = () => (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-    <rect x="2" y="5" width="14" height="8" rx="4" />
-  </svg>
-);
+/** Every tool that draws a shape is named after the kind it draws. */
+type ShapeTool = Tool & ShapeKind;
 
-const SHAPE_TOOLS: { tool: Tool; label: string; shortcut: string; icon: React.ReactNode }[] = [
-  { tool: 'rectangle', label: 'Rectangle', shortcut: 'R', icon: <Square size={18} /> },
-  { tool: 'ellipse', label: 'Ellipse', shortcut: 'O', icon: <Circle size={18} /> },
-  { tool: 'diamond', label: 'Diamond', shortcut: 'D', icon: <Diamond size={18} /> },
-  { tool: 'pill', label: 'Pill', shortcut: 'U', icon: <PillIcon /> },
-  { tool: 'triangle', label: 'Triangle', shortcut: 'G', icon: <Triangle size={18} /> },
-  { tool: 'hexagon', label: 'Hexagon', shortcut: 'X', icon: <Hexagon size={18} /> },
-  { tool: 'cylinder', label: 'Cylinder', shortcut: 'Y', icon: <Database size={18} /> },
-  { tool: 'sticky', label: 'Sticky note', shortcut: 'S', icon: <StickyNote size={18} /> },
+/**
+ * The shapes with a button of their own. The rail is a column beside the
+ * canvas, so it can hold about this many before it stops being a glance and
+ * starts being a list — everything else lives behind "More shapes".
+ */
+const SHAPE_TOOLS: { tool: ShapeTool; shortcut: string }[] = [
+  { tool: 'rectangle', shortcut: 'R' },
+  { tool: 'ellipse', shortcut: 'O' },
+  { tool: 'diamond', shortcut: 'D' },
+  { tool: 'pill', shortcut: 'U' },
 ];
+
+/** The rest, in the "More shapes" grid. The four with a keystroke keep it. */
+const MORE_SHAPE_TOOLS: { tool: ShapeTool; shortcut?: string }[] = [
+  { tool: 'triangle', shortcut: 'G' },
+  { tool: 'hexagon', shortcut: 'X' },
+  { tool: 'cylinder', shortcut: 'Y' },
+  { tool: 'sticky', shortcut: 'S' },
+  { tool: 'parallelogram', shortcut: 'P' },
+  { tool: 'document' },
+  { tool: 'cloud' },
+  { tool: 'star' },
+  { tool: 'callout' },
+  { tool: 'arrow' },
+];
+
+const MORE_SHAPE_SET = new Set<Tool>(MORE_SHAPE_TOOLS.map((s) => s.tool));
+
+function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: string }) {
+  const active = useDiagramStore((s) => s.tool === tool);
+  const setTool = useDiagramStore((s) => s.setTool);
+  const Icon = SHAPE_ICONS[tool];
+  return (
+    <RailButton active={active} label={SHAPE_LABELS[tool]} shortcut={shortcut} onClick={() => setTool(tool)}>
+      <Icon size={18} />
+    </RailButton>
+  );
+}
+
+/** The overflow of the shape rail: one button that opens a grid of the rest. */
+function MoreShapesMenu() {
+  const tool = useDiagramStore((s) => s.tool);
+  const setTool = useDiagramStore((s) => s.setTool);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <RailButton active={MORE_SHAPE_SET.has(tool)} label="More shapes">
+          <Shapes size={18} />
+        </RailButton>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="right"
+          sideOffset={12}
+          aria-label="More shapes"
+          className="panel-in z-50 rounded-2xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          <div className="grid grid-cols-5 gap-0.5">
+            {MORE_SHAPE_TOOLS.map(({ tool: kind, shortcut }) => {
+              const Icon = SHAPE_ICONS[kind];
+              return (
+                <Tooltip key={kind} label={SHAPE_LABELS[kind]} shortcut={shortcut} side="top">
+                  <button
+                    onClick={() => {
+                      setTool(kind);
+                      setOpen(false);
+                    }}
+                    className={clsx(
+                      'flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
+                      tool === kind ? 'bg-accent-500 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white',
+                    )}
+                  >
+                    <Icon size={18} />
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 
 export function LeftRail() {
   const tool = useDiagramStore((s) => s.tool);
@@ -100,20 +165,12 @@ export function LeftRail() {
         <div className="my-1 h-px bg-white/10" />
 
         {SHAPE_TOOLS.map((s) => (
-          <RailButton
-            key={s.tool}
-            active={tool === s.tool}
-            label={s.label}
-            shortcut={s.shortcut}
-            onClick={() => setTool(s.tool)}
-          >
-            {s.icon}
-          </RailButton>
+          <ShapeToolButton key={s.tool} tool={s.tool} shortcut={s.shortcut} />
         ))}
 
-        <RailButton active={tool === 'text'} label="Text" shortcut="T" onClick={() => setTool('text')}>
-          <Type size={18} />
-        </RailButton>
+        <MoreShapesMenu />
+
+        <ShapeToolButton tool="text" shortcut="T" />
 
         {/* An image is inserted, not drawn, so this is a one-shot action
             rather than a tool the canvas stays in. */}

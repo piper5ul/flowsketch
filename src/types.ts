@@ -2,7 +2,23 @@
  * `image` is not a drawing tool: images are inserted (paste, drop, file
  * picker), never drawn, so it has no `Tool` counterpart and no rail shortcut.
  */
-export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'sticky' | 'text' | 'pill' | 'triangle' | 'hexagon' | 'cylinder' | 'image';
+export type ShapeKind =
+  | 'rectangle'
+  | 'ellipse'
+  | 'diamond'
+  | 'sticky'
+  | 'text'
+  | 'pill'
+  | 'triangle'
+  | 'hexagon'
+  | 'cylinder'
+  | 'image'
+  | 'parallelogram'
+  | 'document'
+  | 'cloud'
+  | 'star'
+  | 'callout'
+  | 'arrow';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
@@ -22,7 +38,13 @@ export type Tool =
   | 'pill'
   | 'triangle'
   | 'hexagon'
-  | 'cylinder';
+  | 'cylinder'
+  | 'parallelogram'
+  | 'document'
+  | 'cloud'
+  | 'star'
+  | 'callout'
+  | 'arrow';
 
 export interface SwatchColor {
   id: string;

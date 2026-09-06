@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
+import { SHAPE_KINDS } from '../lib/nodeKinds';
 import { useToastStore } from './useToastStore';
 import { api } from '../lib/api';
 
@@ -48,6 +49,110 @@ describe('addShape', () => {
     const text = store().nodes.find((n) => n.id === textId)!;
     expect(text.data).toMatchObject({ fill: 'transparent', stroke: 'transparent' });
     expect(store().editingNodeId).toBe(textId);
+  });
+
+  it('has a default size for every shape kind', () => {
+    // A kind with no entry would be placed as a zero-sized node the user cannot
+    // find, so the table has to stay exhaustive as kinds are added.
+    for (const kind of SHAPE_KINDS) {
+      const id = store().addShape(kind, { x: 0, y: 0 });
+      const node = store().nodes.find((n) => n.id === id)!;
+      expect(node.width, kind).toBeGreaterThan(0);
+      expect(node.height, kind).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('setSelectedShapeKind', () => {
+  it('swaps the kind of every selected shape, keeping its label, size and colours', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('ellipse', { x: 300, y: 0 });
+    store().updateNodeData(a, { label: 'Start' });
+    select(a, b);
+
+    store().setSelectedShapeKind('diamond');
+
+    const first = store().nodes.find((n) => n.id === a)!;
+    expect(first.data).toMatchObject({
+      shape: 'diamond',
+      label: 'Start',
+      fill: store().defaultFill,
+      stroke: store().defaultStroke,
+    });
+    // The swap is about the outline, not the box: a rectangle keeps the 180×100
+    // it was drawn at rather than snapping to the diamond's default size.
+    expect({ width: first.width, height: first.height }).toEqual({ width: 180, height: 100 });
+    expect(store().nodes.find((n) => n.id === b)!.data.shape).toBe('diamond');
+  });
+
+  it('swaps to a kind drawn as an SVG outline just as readily as to a CSS one', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+
+    store().setSelectedShapeKind('star');
+
+    expect(store().nodes.find((n) => n.id === id)!.data.shape).toBe('star');
+  });
+
+  it('leaves unselected shapes alone', () => {
+    const selected = store().addShape('rectangle', { x: 0, y: 0 });
+    const other = store().addShape('rectangle', { x: 300, y: 0 });
+    select(selected);
+
+    store().setSelectedShapeKind('hexagon');
+
+    expect(store().nodes.find((n) => n.id === selected)!.data.shape).toBe('hexagon');
+    expect(store().nodes.find((n) => n.id === other)!.data.shape).toBe('rectangle');
+  });
+
+  it('skips image, text and locked nodes', () => {
+    const image = store().addImageNode({ src: '/api/images/x', width: 40, height: 40, position: { x: 0, y: 0 } });
+    const text = store().addShape('text', { x: 100, y: 0 });
+    const locked = store().addShape('rectangle', { x: 200, y: 0 });
+    select(locked);
+    store().toggleLock();
+
+    const free = store().addShape('rectangle', { x: 300, y: 0 });
+    select(image, text, locked, free);
+    store().setSelectedShapeKind('pill');
+
+    expect(store().nodes.find((n) => n.id === image)!.data.shape).toBe('image');
+    expect(store().nodes.find((n) => n.id === text)!.data.shape).toBe('text');
+    expect(store().nodes.find((n) => n.id === locked)!.data.shape).toBe('rectangle');
+    expect(store().nodes.find((n) => n.id === free)!.data.shape).toBe('pill');
+  });
+
+  it('is undoable in one step', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 300, y: 0 });
+    select(a, b);
+
+    store().setSelectedShapeKind('sticky');
+    store().undo();
+
+    expect(store().nodes.map((n) => n.data.shape)).toEqual(['rectangle', 'rectangle']);
+  });
+
+  it('records no history entry when nothing would change', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+
+    store().setSelectedShapeKind('rectangle');
+    store().undo();
+
+    // addShape pushed the last entry, so the single undo has to remove the node
+    // rather than spend itself on a swap that changed nothing.
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('records no history entry when only skipped nodes are selected', () => {
+    const text = store().addShape('text', { x: 0, y: 0 });
+    select(text);
+
+    store().setSelectedShapeKind('diamond');
+    store().undo();
+
+    expect(store().nodes).toHaveLength(0);
   });
 });
 
