@@ -1040,3 +1040,59 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await expect(page.getByText('Saved')).toBeVisible();
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+/** The light canvas token. Nothing in dark mode may still be wearing it. */
+const LIGHT_CANVAS = 'rgb(246, 247, 251)';
+/** `--canvas` and `--canvas-dot` in the dark theme, and the default shape fill. */
+const DARK_CANVAS = 'rgb(13, 14, 19)';
+const DARK_CANVAS_DOT = 'rgb(48, 52, 70)';
+const DEFAULT_SHAPE_FILL = 'rgb(219, 234, 254)';
+
+test('dark mode follows the system, can be pinned, and never repaints the diagram itself', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await signUp(page);
+
+  const html = page.locator('html');
+  const body = page.locator('body');
+
+  // "System" is the absence of an attribute, not a third value written out —
+  // that is what leaves the media query in charge.
+  await expect(html).not.toHaveAttribute('data-theme', /.*/);
+  await expect(body).toHaveCSS('background-color', DARK_CANVAS);
+  await expect(body).not.toHaveCSS('background-color', LIGHT_CANVAS);
+
+  const pane = await newDiagram(page);
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  const shape = page.locator('.react-flow__node div[data-shape="rectangle"] > div').first();
+  await expect(shape).toBeVisible();
+
+  // A shape's fill is the user's, not the theme's: it is the same colour on a
+  // dark board as on a light one.
+  await expect(shape).toHaveCSS('background-color', DEFAULT_SHAPE_FILL);
+  // The canvas underneath it is not — dots included, which are painted from
+  // the token through React Flow's own custom property.
+  await expect(page.locator('.react-flow__background-pattern.dots')).toHaveCSS('fill', DARK_CANVAS_DOT);
+
+  // system → light → dark. The tooltip on each press names where it goes next.
+  await page.getByRole('button', { name: 'Switch to light theme' }).click();
+  await expect(html).toHaveAttribute('data-theme', 'light');
+  await expect(body).toHaveCSS('background-color', LIGHT_CANVAS);
+
+  await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(body).toHaveCSS('background-color', DARK_CANVAS);
+
+  await page.reload();
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('.react-flow__node div[data-shape="rectangle"] > div').first()).toHaveCSS(
+    'background-color',
+    DEFAULT_SHAPE_FILL,
+  );
+
+  // And the choice outranks the OS: still dark with a light machine underneath.
+  await page.emulateMedia({ colorScheme: 'light' });
+  await expect(html).toHaveAttribute('data-theme', 'dark');
+  await expect(body).toHaveCSS('background-color', DARK_CANVAS);
+});

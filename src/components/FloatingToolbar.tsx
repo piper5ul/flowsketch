@@ -492,7 +492,7 @@ export function FloatingToolbar() {
       className="pointer-events-none absolute z-30"
       style={{ left: screenX, top: screenY, transform: 'translate(-50%, calc(-100% - 20px))' }}
     >
-      <div className="panel-in pointer-events-auto flex items-center gap-1 rounded-2xl bg-ink-950/95 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
+      <div className="panel-in pointer-events-auto flex items-center gap-1 rounded-2xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
         {(isEdgeMode || styleableNodes.length > 0) && (
           <ColorPalette
             activeStroke={activeStroke}
@@ -693,7 +693,7 @@ export function FloatingToolbar() {
         </Tooltip>
       </div>
       {linkOpen && selectedNodes.length === 1 && (
-        <div className="panel-in mt-1.5 flex items-center gap-1 rounded-xl bg-ink-950/95 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
+        <div className="panel-in mt-1.5 flex items-center gap-1 rounded-xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
           <input
             ref={linkInputRef}
             type="url"

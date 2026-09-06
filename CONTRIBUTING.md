@@ -51,6 +51,7 @@ Some things no assertion captures. Before merging a change to the canvas, toolba
 - Floating toolbar position above the selection; it must never cover the connector handles
 - Alignment guides while dragging
 - Keyboard shortcuts still work (V, H, R, O, D, S, T, A, X, ⌘Z, ⌘D, arrows), and `?` lists them all
+- The same screen in dark mode (bottom-bar theme button, or `prefers-color-scheme`): no light-on-light or dark-on-dark text, and the shapes themselves look exactly as they do in light mode
 
 ## Code conventions
 
@@ -59,7 +60,7 @@ Some things no assertion captures. Before merging a change to the canvas, toolba
 - Store actions that change nodes or edges must call `pushHistory` so they are undoable.
 - Edge arrowheads live on the top-level `markerStart` / `markerEnd`, not in `data` — always go through `computeMarkers`.
 - A new keyboard shortcut, menu item or toolbar action is a `Command` in `src/commands/commands.ts`. The keyboard handler, the `?` cheat sheet and the right-click menus all read from that list; nothing else should hard-code a keystroke. Update the README's shortcut tables in the same commit.
-- Tailwind for styling; palette tokens are in `src/index.css`.
+- Tailwind for styling; palette tokens are in `src/index.css`. **Chrome takes its colours from a theme token** (`bg-panel`, `text-ink-700`, `ring-line`, `hover:bg-hover`, …), never from a raw `bg-white` / `ring-black/[0.04]` / hex — those only look right in one theme. A colour that belongs to the *diagram* (a fill, a stroke, a shape's label) is user data and stays fixed; see the theming note in CLAUDE.md for which side a token is on.
 
 ## Roadmap
 

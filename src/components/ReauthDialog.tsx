@@ -47,15 +47,15 @@ export function ReauthDialog({
         role="dialog"
         aria-modal="true"
         aria-label="Session expired"
-        className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-[0_10px_40px_-10px_rgba(20,20,50,0.35)] ring-1 ring-black/[0.06]"
+        className="w-full max-w-sm rounded-2xl bg-panel p-6 shadow-[0_10px_40px_-10px_rgba(20,20,50,0.35)] ring-1 ring-line"
       >
-        <h2 className="text-[15px] font-semibold text-ink-950">Your session expired</h2>
+        <h2 className="text-[15px] font-semibold text-ink-900">Your session expired</h2>
         <p className="mb-4 mt-1 text-sm text-ink-600">
           Sign in to save your changes. Nothing on the canvas has been lost.
         </p>
 
         {error && (
-          <div className="mb-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
+          <div className="mb-4 rounded-lg bg-danger-wash px-3 py-2 text-sm text-danger-ink">{error}</div>
         )}
 
         <label className="mb-4 block">
@@ -65,7 +65,7 @@ export function ReauthDialog({
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="w-full rounded-lg border border-black/10 bg-canvas px-3 py-2 text-sm text-ink-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
+            className="w-full rounded-lg border border-line-strong bg-field px-3 py-2 text-sm text-ink-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
           />
         </label>
 
@@ -77,7 +77,7 @@ export function ReauthDialog({
             onChange={(e) => setPassword(e.target.value)}
             required
             autoFocus
-            className="w-full rounded-lg border border-black/10 bg-canvas px-3 py-2 text-sm text-ink-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
+            className="w-full rounded-lg border border-line-strong bg-field px-3 py-2 text-sm text-ink-900 outline-none transition focus:border-accent-500 focus:ring-2 focus:ring-accent-500/20"
           />
         </label>
 

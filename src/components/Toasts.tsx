@@ -22,7 +22,7 @@ export function Toasts() {
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className="panel-in pointer-events-auto flex max-w-[min(28rem,calc(100vw-2rem))] items-start gap-3 rounded-xl bg-ink-950/95 py-2.5 pl-3.5 pr-2 text-[13px] font-medium text-white/90 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur"
+          className="panel-in pointer-events-auto flex max-w-[min(28rem,calc(100vw-2rem))] items-start gap-3 rounded-xl bg-ink-950/95 ring-1 ring-white/[0.07] py-2.5 pl-3.5 pr-2 text-[13px] font-medium text-white/90 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur"
         >
           <span
             aria-hidden="true"

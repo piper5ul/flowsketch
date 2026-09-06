@@ -169,7 +169,7 @@ export function LeftRail() {
 
   return (
     <div className="pointer-events-none absolute left-4 top-1/2 z-20 -translate-y-1/2">
-      <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl bg-ink-950/95 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
+      <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
         <RailButton active={tool === 'select'} label="Select" shortcut="V" onClick={() => setTool('select')}>
           <MousePointer2 size={18} />
         </RailButton>
@@ -219,7 +219,10 @@ export function LeftRail() {
                   e.stopPropagation();
                   setConnectorMenuOpen((v) => !v);
                 }}
-                className="absolute -right-0.5 -bottom-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-ink-700 text-white/70"
+                // A lifted disc on the dark rail, so its ground is spelled out
+                // rather than taken from the themed ink scale — `ink-700`
+                // inverts with the theme and would turn this white-on-white.
+                className="absolute -right-0.5 -bottom-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white/15 text-white/70"
               >
                 <ChevronRight size={9} />
               </button>

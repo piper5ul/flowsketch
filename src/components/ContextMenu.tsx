@@ -69,7 +69,7 @@ export function ContextMenu({
       ref={ref}
       role="menu"
       aria-label="Canvas actions"
-      className="panel-in fixed z-50 flex flex-col gap-0.5 rounded-xl bg-white p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.35)] ring-1 ring-black/[0.06]"
+      className="panel-in fixed z-50 flex flex-col gap-0.5 rounded-xl bg-panel p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.35)] ring-1 ring-line"
       style={{ left: Math.max(8, left), top: Math.max(8, top), width: MENU_WIDTH }}
     >
       {items.map((command) => (
@@ -80,7 +80,7 @@ export function ContextMenu({
             command.run(ctx);
             onClose();
           }}
-          className="flex items-center justify-between gap-4 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium text-ink-800 transition hover:bg-black/[0.05]"
+          className="flex items-center justify-between gap-4 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium text-ink-800 transition hover:bg-hover-strong"
         >
           <span>{command.title}</span>
           <span className="text-[11px] font-semibold text-ink-600/60">

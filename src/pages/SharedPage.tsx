@@ -86,10 +86,10 @@ export function SharedPage() {
     <TooltipProvider>
       <ReactFlowProvider>
         <div className="flex h-screen w-screen flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-black/[0.06] bg-white/90 px-4 py-2.5 backdrop-blur">
+          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line bg-panel/90 px-4 py-2.5 backdrop-blur">
             <div className="flex min-w-0 items-center gap-3">
-              <h1 className="truncate text-[14px] font-semibold text-ink-950">{title}</h1>
-              <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-ink-950/[0.06] px-2 py-0.5 text-xs font-medium text-ink-700">
+              <h1 className="truncate text-[14px] font-semibold text-ink-900">{title}</h1>
+              <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
                 <Eye size={12} /> View only · Shared with you
               </span>
             </div>

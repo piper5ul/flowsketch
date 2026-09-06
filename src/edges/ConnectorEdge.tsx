@@ -526,7 +526,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
                     : 'border-transparent'
               }`}
               style={{
-                backgroundColor: 'var(--color-canvas)',
+                backgroundColor: 'var(--canvas)',
                 fontSize: FONT_SIZE_PX[data?.labelFontSize ?? 'medium'],
                 fontWeight: data?.labelBold ? 700 : 500,
                 fontStyle: data?.labelItalic ? 'italic' : 'normal',

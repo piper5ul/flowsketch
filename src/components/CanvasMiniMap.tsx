@@ -31,8 +31,10 @@ export function CanvasMiniMap() {
       nodeColor={nodeColor}
       nodeStrokeWidth={0}
       nodeBorderRadius={3}
-      maskColor="rgba(24, 26, 36, 0.08)"
-      maskStrokeColor="rgba(24, 26, 36, 0.18)"
+      // The mask is chrome, so it follows the theme; the node colours below do
+      // not — they are the shapes' own fills, which a theme never touches.
+      maskColor="var(--minimap-mask)"
+      maskStrokeColor="var(--minimap-mask-stroke)"
       offsetScale={2}
     />
   );
