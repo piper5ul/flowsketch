@@ -226,6 +226,33 @@ describe('nudgeSelected', () => {
     store().undo();
     expect(store().nodes).toHaveLength(0);
   });
+
+  it('leaves a locked node where it is', () => {
+    const locked = store().addShape('rectangle', { x: 0, y: 0 });
+    const free = store().addShape('rectangle', { x: 100, y: 100 });
+    select(locked);
+    store().toggleLock();
+
+    select(locked, free);
+    store().nudgeSelected(5, 5);
+
+    expect(store().nodes.find((n) => n.id === locked)!.position).toEqual({ x: 0, y: 0 });
+    expect(store().nodes.find((n) => n.id === free)!.position).toEqual({ x: 105, y: 105 });
+  });
+
+  it('records no history entry when every selected node is locked', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    store().toggleLock();
+
+    store().nudgeSelected(1, 0);
+    expect(store().nodes[0].position).toEqual({ x: 0, y: 0 });
+
+    // toggleLock pushed the last entry, so one undo must unlock the node
+    // rather than spend itself on a nudge that moved nothing.
+    store().undo();
+    expect(store().nodes[0].data.locked).toBeFalsy();
+  });
 });
 
 describe('duplicateSelection', () => {

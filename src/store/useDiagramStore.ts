@@ -752,10 +752,14 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is
-  // concerned, so entries coalesce until the keyboard goes quiet.
+  // concerned, so entries coalesce until the keyboard goes quiet. Locked nodes
+  // sit it out, the same way `onNodesChange` drops their drag positions.
   nudgeSelected: (dx, dy) => {
     const state = get();
-    const selectedIds = new Set(state.nodes.filter((n) => n.selected).map((n) => n.id));
+    const selectedIds = new Set(
+      state.nodes.filter((n) => n.selected && !n.data.locked).map((n) => n.id),
+    );
+    // Nothing will move, so this must not cost the user a ⌘Z.
     if (selectedIds.size === 0) return;
 
     const now = Date.now();
