@@ -3,13 +3,12 @@ import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
-import type { Direction, FontSize, VerticalAlign } from '../types';
+import type { Direction, VerticalAlign } from '../types';
+import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
 import { useShiftKey } from '../lib/useShiftKey';
-
-const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
 
 /** Text shapes never shrink below the height they are created at. */
 const TEXT_MIN_HEIGHT = 40;
@@ -174,7 +173,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
 
   const textAlign = data.textAlign ?? (isText ? 'left' : 'center');
   const verticalAlign: VerticalAlign = data.verticalAlign ?? 'middle';
-  const fontSizePx = FONT_SIZE_PX[data.fontSize ?? 'medium'];
+  const fontSizePx = resolveFontSize(data.fontSize);
   const darkBg = isDarkFill(data.fill);
   // Both decorations can be worn at once, and CSS spells that as one property.
   const textDecoration = [data.underline && 'underline', data.strikethrough && 'line-through']

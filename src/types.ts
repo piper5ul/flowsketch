@@ -52,6 +52,11 @@ export interface SwatchColor {
   stroke: string;
 }
 
+/**
+ * The label sizes shapes were drawn at before `fontSize` became a number of
+ * pixels. Still the only spelling a *connector* label has, and still readable
+ * on a shape — `src/lib/text.ts` is where the two meet.
+ */
 export type FontSize = 'small' | 'medium' | 'large';
 export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
@@ -61,7 +66,12 @@ export interface ShapeData {
   shape: ShapeKind;
   fill: string;
   stroke: string;
-  fontSize?: FontSize;
+  /**
+   * The label's size in pixels. Diagrams saved before the scale existed hold
+   * one of the three preset names instead; `resolveFontSize` reads both, which
+   * is why there is no migration step for this.
+   */
+  fontSize?: FontSize | number;
   bold?: boolean;
   italic?: boolean;
   underline?: boolean;

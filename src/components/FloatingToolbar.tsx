@@ -32,6 +32,7 @@ import {
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
 import { canSwapShapeKind } from '../lib/nodeKinds';
+import { DEFAULT_FONT_SIZE } from '../lib/text';
 import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
 import type { ArrowStyle, ConnectorKind, ShapeKind, StrokeStyle, StrokeWidth } from '../types';
 
@@ -439,7 +440,7 @@ export function FloatingToolbar() {
             <div className="mx-0.5 h-6 w-px bg-white/10" />
             <TextFormatControls
               value={{
-                fontSize: styleableNodes[0].data.fontSize ?? 'medium',
+                fontSize: styleableNodes[0].data.fontSize ?? DEFAULT_FONT_SIZE,
                 bold: styleableNodes[0].data.bold ?? false,
                 italic: styleableNodes[0].data.italic ?? false,
                 underline: styleableNodes[0].data.underline ?? false,

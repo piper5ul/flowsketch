@@ -18,6 +18,7 @@ import * as Popover from '@radix-ui/react-popover';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
 import { PALETTE } from '../lib/palette';
+import { FONT_SIZE_MAX, FONT_SIZE_MIN, nextFontSize, resolveFontSize } from '../lib/text';
 import { suppressNextBlurCommit } from '../store/useDiagramStore';
 import type { FontSize, TextAlign, VerticalAlign } from '../types';
 
@@ -41,7 +42,8 @@ const TEXT_COLORS: string[] = [
 
 /** The formatting the controls display. Callers map it onto whatever they edit. */
 export interface TextFormatValue {
-  fontSize: FontSize;
+  /** Pixels on a shape; one of the three names on a connector's label. */
+  fontSize: FontSize | number;
   bold: boolean;
   italic: boolean;
   underline: boolean;
@@ -147,26 +149,44 @@ function TextColorPicker({
  */
 export function TextFormatControls({ value, onChange, target = 'shape' }: TextFormatControlsProps) {
   const isShape = target === 'shape';
-  const sizeIndex = FONT_SIZES.indexOf(value.fontSize);
 
-  const cycleSize = (dir: -1 | 1) => {
-    onChange({ fontSize: FONT_SIZES[Math.max(0, Math.min(FONT_SIZES.length - 1, sizeIndex + dir))] });
+  // A shape's label is sized in pixels; a connector's still wears one of the
+  // three names, so its stepper walks that list instead of the scale.
+  const presetIndex = FONT_SIZES.indexOf(value.fontSize as FontSize);
+  const sizePx = resolveFontSize(value.fontSize);
+
+  const stepSize = (direction: -1 | 1) => {
+    if (isShape) {
+      onChange({ fontSize: nextFontSize(value.fontSize, direction) });
+      return;
+    }
+    const next = Math.max(0, Math.min(FONT_SIZES.length - 1, presetIndex + direction));
+    onChange({ fontSize: FONT_SIZES[next] });
   };
+
+  const atMin = isShape ? sizePx <= FONT_SIZE_MIN : presetIndex === 0;
+  const atMax = isShape ? sizePx >= FONT_SIZE_MAX : presetIndex === FONT_SIZES.length - 1;
 
   return (
     <>
       <Tooltip label="Decrease size" side="top">
-        <button onClick={() => cycleSize(-1)} disabled={sizeIndex === 0} className={BUTTON_CLASS}>
+        <button
+          aria-label="Decrease size"
+          onClick={() => stepSize(-1)}
+          disabled={atMin}
+          className={BUTTON_CLASS}
+        >
           <Minus size={14} />
         </button>
       </Tooltip>
-      <span className="w-6 text-center text-xs font-semibold text-white/80">
-        {FONT_SIZE_LABEL[value.fontSize]}
+      <span className="w-6 text-center text-xs font-semibold tabular-nums text-white/80">
+        {isShape ? sizePx : FONT_SIZE_LABEL[value.fontSize as FontSize]}
       </span>
       <Tooltip label="Increase size" side="top">
         <button
-          onClick={() => cycleSize(1)}
-          disabled={sizeIndex === FONT_SIZES.length - 1}
+          aria-label="Increase size"
+          onClick={() => stepSize(1)}
+          disabled={atMax}
           className={BUTTON_CLASS}
         >
           <Plus size={14} />
