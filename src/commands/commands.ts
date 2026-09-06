@@ -490,6 +490,12 @@ export const commands: Command[] = [
     group: 'view',
     run: () => useViewPreferences.getState().toggleMinimap(),
   },
+  {
+    id: 'view.toggleGridSnap',
+    title: 'Snap to grid',
+    group: 'view',
+    run: () => useViewPreferences.getState().toggleGridSnap(),
+  },
 ];
 
 export const registry = createRegistry(commands);

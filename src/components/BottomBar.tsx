@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useStore } from '@xyflow/react';
-import { Undo2, Redo2, Minus, Plus, Maximize2, Map } from 'lucide-react';
+import { Undo2, Redo2, Minus, Plus, Maximize2, Map, Grid3x3 } from 'lucide-react';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { formatShortcut, registry } from '../commands/commands';
@@ -50,6 +50,7 @@ export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void
   const canRedo = useDiagramStore((s) => s.canRedo);
   const zoom = useStore((s) => s.transform[2]);
   const minimap = useViewPreferences((s) => s.minimap);
+  const gridSnap = useViewPreferences((s) => s.gridSnap);
   const [percent, setPercent] = useState(80);
 
   useEffect(() => {
@@ -90,6 +91,9 @@ export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">
         <IconButton onClick={run('view.toggleMinimap')} label="Minimap" pressed={minimap}>
           <Map size={16} />
+        </IconButton>
+        <IconButton onClick={run('view.toggleGridSnap')} label="Snap to grid" pressed={gridSnap}>
+          <Grid3x3 size={16} />
         </IconButton>
       </div>
       <div className="pointer-events-auto flex items-center rounded-2xl bg-white/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-black/[0.04] backdrop-blur">

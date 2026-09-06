@@ -29,6 +29,14 @@ import { ShortcutSheet } from './ShortcutSheet';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import type { ShapeData, ShapeKind, Tool } from '../types';
 
+/**
+ * The grid a dragged shape lands on while snapping is on. 10 px is a divisor of
+ * the 10 px far-nudge and of every default shape size, so a snapped shape stays
+ * snapped when it is nudged or resized.
+ */
+const GRID_SIZE = 10;
+const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
+
 function isTypingTarget(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false;
   return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
@@ -47,6 +55,7 @@ export function Canvas() {
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
   const minimap = useViewPreferences((s) => s.minimap);
+  const gridSnap = useViewPreferences((s) => s.gridSnap);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
@@ -386,6 +395,11 @@ export function Canvas() {
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
         onPaneContextMenu={onPaneContextMenu}
+        // Grid snapping is opt-in and orthogonal to the shape-to-shape
+        // alignment guides, which keep working either way: the grid rounds the
+        // drag, the guides still line the shape up with its neighbours.
+        snapToGrid={gridSnap}
+        snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={30}
         connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}

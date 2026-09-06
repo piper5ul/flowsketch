@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createRegistry, formatShortcut } from './registry';
 import { bindingsOf, commands, registry } from './commands';
+import { useViewPreferences } from '../store/useViewPreferences';
 import type { Command, CommandContext, Keybinding } from './types';
 
 /** A key event as the registry sees it — the fields it reads, nothing else. */
@@ -281,6 +282,32 @@ describe('the align and distribute shortcuts', () => {
   it('offers align and distribute on the shape right-click menu', () => {
     for (const [id] of [...ALIGN, ...DISTRIBUTE]) {
       expect(registry.find(id)?.contextMenu, `${id} is not tagged`).toBe('node');
+    }
+  });
+});
+
+describe('the canvas chrome toggles', () => {
+  const TOGGLES = [
+    ['view.toggleMinimap', 'minimap'],
+    ['view.toggleGridSnap', 'gridSnap'],
+  ] as const;
+
+  it('flips its own view preference, and puts it back', () => {
+    for (const [id, preference] of TOGGLES) {
+      const command = registry.find(id);
+      expect(command, `${id} is not registered`).toBeDefined();
+
+      const before = useViewPreferences.getState()[preference];
+      command!.run({} as CommandContext);
+      expect(useViewPreferences.getState()[preference], id).toBe(!before);
+      command!.run({} as CommandContext);
+      expect(useViewPreferences.getState()[preference], id).toBe(before);
+    }
+  });
+
+  it('takes no keystroke, which also keeps it off the cheat sheet', () => {
+    for (const [id] of TOGGLES) {
+      expect(bindingsOf(registry.find(id)!), id).toEqual([]);
     }
   });
 });
