@@ -459,7 +459,7 @@ function RenameInput({
  */
 function SkeletonGrid() {
   return (
-    <div className={CARD_GRID} aria-hidden="true" data-testid="diagram-skeletons">
+    <div className={CARD_GRID} aria-hidden="true">
       {Array.from({ length: SKELETON_COUNT }, (_, i) => (
         <div key={i} className="animate-pulse rounded-xl bg-white ring-1 ring-black/[0.04]">
           <div className="h-36 rounded-t-xl bg-black/[0.05]" />

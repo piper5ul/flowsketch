@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 /**
  * Creates a fresh account through the real sign-up form. Email verification is
@@ -367,6 +368,37 @@ test('a diagram exported as JSON can be imported back from the dashboard', async
   await page.getByRole('button', { name: 'Back to dashboard' }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
   await expect(page.getByText('Untitled', { exact: true })).toHaveCount(2);
+});
+
+test('exporting as SVG writes a self-contained document holding the diagram', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 500, y: 350 } });
+  const node = page.locator('.react-flow__node');
+  await expect(node).toHaveCount(1);
+  await node.dblclick();
+  await page.keyboard.type('Vector shape');
+  await page.keyboard.press('Escape');
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    (async () => {
+      await page.getByRole('button', { name: 'Export' }).click();
+      await page.getByRole('button', { name: 'Export as SVG' }).click();
+    })(),
+  ]);
+  expect(download.suggestedFilename()).toBe('Untitled.svg');
+
+  const svg = await readFile((await download.path())!, 'utf8');
+  expect(svg.startsWith('<svg')).toBe(true);
+  // The background is painted in the SVG's own coordinates, not on the
+  // transformed clone, so it covers the whole document.
+  expect(svg).toContain('<rect width="100%" height="100%"');
+  expect(svg).toContain('Vector shape');
+  // Self-contained: nothing to fetch when the file is opened on its own.
+  expect(svg).not.toMatch(/(src|href)="(?!data:|#)/);
 });
 
 test('a pasted image is uploaded and referenced by URL, not embedded as base64', async ({ page }) => {

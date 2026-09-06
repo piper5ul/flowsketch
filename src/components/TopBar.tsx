@@ -1,10 +1,10 @@
 import { useCallback, useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Star, Check, Loader2, Download, Image, FileText, FileJson } from 'lucide-react';
+import { ArrowLeft, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes } from 'lucide-react';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
-import { renderDiagramPng } from '../lib/exportImage';
+import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
 import { buildDiagramExport, diagramFileName } from '../lib/diagramFile';
 import { api } from '../lib/api';
 
@@ -104,6 +104,13 @@ function ExportMenu() {
 
   const exportSvg = useCallback(async () => {
     setOpen(false);
+    const dataUrl = await renderDiagramSvg();
+    if (!dataUrl) return;
+    download(dataUrl, diagramFileName(title, 'svg'));
+  }, [title]);
+
+  const printDiagram = useCallback(async () => {
+    setOpen(false);
     const dataUrl = await renderDiagramPng();
     if (!dataUrl) return;
     const printWindow = window.open('');
@@ -141,6 +148,12 @@ function ExportMenu() {
           </button>
           <button
             onClick={exportSvg}
+            className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10"
+          >
+            <Shapes size={15} /> Export as SVG
+          </button>
+          <button
+            onClick={printDiagram}
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10"
           >
             <FileText size={15} /> Print / PDF
