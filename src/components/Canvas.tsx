@@ -16,6 +16,7 @@ import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
 import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
+import { ConnectorMarkerDefs } from '../edges/ConnectorMarkerDefs';
 import { LeftRail } from './LeftRail';
 import { FloatingToolbar } from './FloatingToolbar';
 import { BottomBar } from './BottomBar';
@@ -406,6 +407,7 @@ export function Canvas() {
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#D6D9E4" className="rf-canvas" />
+        <ConnectorMarkerDefs />
         <AlignmentGuides />
       </ReactFlow>
 

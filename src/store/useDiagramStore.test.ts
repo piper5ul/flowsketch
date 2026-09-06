@@ -770,23 +770,25 @@ describe('updateEdgeData', () => {
   it('recolors the arrowheads when the stroke changes', () => {
     const id = edgeId();
     store().updateEdgeData(id, { stroke: '#FF0000' });
-    expect(store().edges[0].markerEnd).toMatchObject({ color: '#FF0000' });
+    expect(store().edges[0].markerEnd).toContain('FF0000');
   });
 
-  it('adds and removes arrowheads as the arrow flags change', () => {
+  it('adds and removes arrowheads as their styles change', () => {
     const id = edgeId();
-    store().updateEdgeData(id, { startArrow: true });
-    expect(store().edges[0].markerStart).toBeDefined();
+    store().updateEdgeData(id, { startArrowStyle: 'diamond' });
+    expect(store().edges[0].markerStart).toContain('diamond');
 
-    store().updateEdgeData(id, { endArrow: false });
+    store().updateEdgeData(id, { endArrowStyle: 'none' });
     expect(store().edges[0].markerEnd).toBeUndefined();
     expect(store().edges[0].markerStart).toBeDefined();
   });
 
   it('resizes the arrowheads when the line thickens', () => {
     const id = edgeId();
+    const before = store().edges[0].markerEnd;
     store().updateEdgeData(id, { strokeWidth: 3 });
-    expect(store().edges[0].markerEnd).toMatchObject({ width: 14, height: 14 });
+    expect(store().edges[0].markerEnd).not.toBe(before);
+    expect(store().edges[0].markerEnd).toContain('-14');
   });
 
   it('leaves the markers alone for a patch that cannot affect them', () => {
@@ -925,14 +927,12 @@ describe('setNodeSizeTransient', () => {
 });
 
 describe('computeMarkers', () => {
-  it('emits colored arrowheads only for the enabled ends', () => {
-    const both = computeMarkers({ stroke: '#ABCDEF', startArrow: true, endArrow: true });
-    expect(both.markerStart).toMatchObject({ color: '#ABCDEF' });
-    expect(both.markerEnd).toMatchObject({ color: '#ABCDEF' });
-
-    const none = computeMarkers({ stroke: '#ABCDEF', startArrow: false, endArrow: false });
-    expect(none.markerStart).toBeUndefined();
-    expect(none.markerEnd).toBeUndefined();
+  // Behaviour is covered in `src/lib/edgeMarkers.test.ts`; this guards the
+  // re-export the store publishes so callers need only one import.
+  it('is re-exported from the store', () => {
+    const { markerStart, markerEnd } = computeMarkers({ stroke: '#ABCDEF', endArrowStyle: 'circle' });
+    expect(markerStart).toBeUndefined();
+    expect(markerEnd).toContain('circle');
   });
 });
 
@@ -944,7 +944,7 @@ describe('loadDiagram', () => {
     });
     expect(store().title).toBe('D');
     expect(store().starred).toBe(true);
-    expect(store().edges[0].markerEnd).toMatchObject({ color: '#123456' });
+    expect(store().edges[0].markerEnd).toContain('123456');
   });
 
   it('runs the payload through the migrations', () => {
