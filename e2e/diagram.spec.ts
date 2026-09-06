@@ -652,8 +652,20 @@ test('the toolbar swaps a connector\'s end arrowhead for a circle', async ({ pag
   await page.getByRole('button', { name: 'Circle', exact: true }).click();
 
   // The marker is one this app defines — React Flow has no circle of its own.
-  await expect(edgePath).toHaveAttribute('marker-end', /circle/);
-  await expect(page.locator('marker[id*="circle"]')).toHaveCount(1);
+  await expect(edgePath).toHaveAttribute('marker-end', /^url\(['"]?#fs-circle-/);
+
+  // Assert the def this path actually points at, rather than counting every
+  // circle on the page: `markerDefsForEdges` renders one def per style/colour/
+  // size, so a global count also sees defs on their way out and races their
+  // unmount. `expect.poll` re-reads the attribute, since the id changes with
+  // the connector's colour and width.
+  await expect
+    .poll(async () => {
+      const ref = (await edgePath.getAttribute('marker-end')) ?? '';
+      const markerId = ref.replace(/^url\(['"]?#/, '').replace(/['"]?\)$/, '');
+      return page.locator(`marker[id="${markerId}"]`).count();
+    })
+    .toBe(1);
 });
 
 test('the colour palette hides for an image-only selection and comes back for a mixed one', async ({ page }) => {
