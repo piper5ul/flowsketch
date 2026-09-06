@@ -6,6 +6,7 @@ import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { Direction, FontSize, VerticalAlign } from '../types';
 import { isDarkFill } from '../lib/palette';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { isClipShape, svgPaths } from '../lib/shapePaths';
 import { useShiftKey } from '../lib/useShiftKey';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
@@ -157,13 +158,10 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
 
   const isText = isTextShape;
   const isSticky = data.shape === 'sticky';
-  const isDiamond = data.shape === 'diamond';
   const isEllipse = data.shape === 'ellipse';
   const isPill = data.shape === 'pill';
-  const isTriangle = data.shape === 'triangle';
-  const isHexagon = data.shape === 'hexagon';
   const isCylinder = data.shape === 'cylinder';
-  const hasClipShape = isDiamond || isTriangle || isHexagon;
+  const hasClipShape = isClipShape(data.shape);
   const isLocked = !!data.locked;
 
   const textAlign = data.textAlign ?? (isText ? 'left' : 'center');
@@ -171,14 +169,13 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
   const fontSizePx = FONT_SIZE_PX[data.fontSize ?? 'medium'];
   const darkBg = isDarkFill(data.fill);
 
-  const svgPaths: Record<string, string> = {
-    diamond: 'M 50 0 L 100 50 L 50 100 L 0 50 Z',
-    triangle: 'M 50 0 L 100 100 L 0 100 Z',
-    hexagon: 'M 25 0 L 75 0 L 100 50 L 75 100 L 25 100 L 0 50 Z',
-  };
+  // A star's points leave much less room across the middle than a box does, so
+  // its label is inset further to stay inside the silhouette.
+  const textInset = data.shape === 'star' ? 'px-7' : 'px-3';
 
   const shapeClass = clsx(
-    'relative h-full w-full flex justify-center px-3 transition-shadow',
+    'relative h-full w-full flex justify-center transition-shadow',
+    textInset,
     verticalAlign === 'top' && 'items-start pt-2',
     verticalAlign === 'middle' && 'items-center',
     verticalAlign === 'bottom' && 'items-end pb-2',
@@ -213,7 +210,7 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
                 : undefined,
         }}
       >
-        {hasClipShape && (
+        {isClipShape(data.shape) && (
           <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" overflow="visible">
             <path
               d={svgPaths[data.shape]}

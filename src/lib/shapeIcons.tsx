@@ -1,5 +1,18 @@
 import type { ComponentType } from 'react';
-import { Circle, Database, Diamond, Hexagon, Image as ImageIcon, Square, StickyNote, Triangle, Type } from 'lucide-react';
+import {
+  Circle,
+  Cloud,
+  Database,
+  Diamond,
+  Hexagon,
+  Image as ImageIcon,
+  MessageSquare,
+  Square,
+  StickyNote,
+  Star,
+  Triangle,
+  Type,
+} from 'lucide-react';
 import type { ShapeKind } from '../types';
 
 /**
@@ -50,6 +63,12 @@ export const SHAPE_ICONS: Record<ShapeKind, ShapeIcon> = {
   sticky: StickyNote,
   text: Type,
   image: ImageIcon,
+  parallelogram: outlineIcon('ParallelogramIcon', 'M8 5h13l-5 14H3z'),
+  document: outlineIcon('DocumentIcon', 'M4 4h16v12c-2.7 2.7-5.3-2.7-8 0s-5.3 2.7-8 0z'),
+  cloud: Cloud,
+  star: Star,
+  callout: MessageSquare,
+  arrow: outlineIcon('BlockArrowIcon', 'M3 9h10V4l8 8-8 8v-5H3z'),
 };
 
 export const SHAPE_LABELS: Record<ShapeKind, string> = {
@@ -63,6 +82,12 @@ export const SHAPE_LABELS: Record<ShapeKind, string> = {
   sticky: 'Sticky note',
   text: 'Text',
   image: 'Image',
+  parallelogram: 'Parallelogram',
+  document: 'Document',
+  cloud: 'Cloud',
+  star: 'Star',
+  callout: 'Callout',
+  arrow: 'Arrow',
 };
 
 /**
@@ -78,4 +103,10 @@ export const SWAPPABLE_SHAPE_KINDS: ShapeKind[] = [
   'hexagon',
   'cylinder',
   'sticky',
+  'parallelogram',
+  'document',
+  'cloud',
+  'star',
+  'callout',
+  'arrow',
 ];

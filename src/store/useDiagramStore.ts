@@ -625,6 +625,12 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       triangle: { width: 140, height: 120 },
       hexagon: { width: 160, height: 100 },
       cylinder: { width: 120, height: 130 },
+      parallelogram: { width: 190, height: 100 },
+      document: { width: 170, height: 120 },
+      cloud: { width: 190, height: 130 },
+      star: { width: 140, height: 140 },
+      callout: { width: 180, height: 120 },
+      arrow: { width: 170, height: 90 },
       // Never used in practice: images are inserted through `addImageNode`,
       // which always knows the real pixel size. Present so the table stays
       // exhaustive over ShapeKind.

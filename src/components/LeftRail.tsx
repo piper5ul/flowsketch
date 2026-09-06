@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CornerDownRight,
   ChevronRight,
+  Shapes,
 } from 'lucide-react';
 import { Tooltip } from './Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
@@ -16,26 +17,23 @@ import type { ShapeKind, Tool } from '../types';
 
 const ImageIcon = SHAPE_ICONS.image;
 
-function RailButton({
-  active,
-  label,
-  shortcut,
-  onClick,
-  children,
-}: {
+// Props are forwarded to the button so a Radix `asChild` trigger can wrap this
+// the way it wraps a plain one.
+type RailButtonProps = React.ComponentPropsWithRef<'button'> & {
   active?: boolean;
   label: string;
   shortcut?: string;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
+};
+
+function RailButton({ active, label, shortcut, className, children, ...rest }: RailButtonProps) {
   return (
     <Tooltip label={label} shortcut={shortcut}>
       <button
-        onClick={onClick}
+        {...rest}
         className={clsx(
           'flex h-10 w-10 items-center justify-center rounded-xl transition-colors',
           active ? 'bg-accent-500 text-white shadow-[0_4px_14px_-2px_rgba(124,92,255,0.55)]' : 'text-white/70 hover:bg-white/10 hover:text-white',
+          className,
         )}
       >
         {children}
@@ -47,17 +45,33 @@ function RailButton({
 /** Every tool that draws a shape is named after the kind it draws. */
 type ShapeTool = Tool & ShapeKind;
 
-/** Rendered as a button of its own; the label and icon come from the shared maps. */
+/**
+ * The shapes with a button of their own. The rail is a column beside the
+ * canvas, so it can hold about this many before it stops being a glance and
+ * starts being a list — everything else lives behind "More shapes".
+ */
 const SHAPE_TOOLS: { tool: ShapeTool; shortcut: string }[] = [
   { tool: 'rectangle', shortcut: 'R' },
   { tool: 'ellipse', shortcut: 'O' },
   { tool: 'diamond', shortcut: 'D' },
   { tool: 'pill', shortcut: 'U' },
+];
+
+/** The rest, in the "More shapes" grid. The four with a keystroke keep it. */
+const MORE_SHAPE_TOOLS: { tool: ShapeTool; shortcut?: string }[] = [
   { tool: 'triangle', shortcut: 'G' },
   { tool: 'hexagon', shortcut: 'X' },
   { tool: 'cylinder', shortcut: 'Y' },
   { tool: 'sticky', shortcut: 'S' },
+  { tool: 'parallelogram', shortcut: 'P' },
+  { tool: 'document' },
+  { tool: 'cloud' },
+  { tool: 'star' },
+  { tool: 'callout' },
+  { tool: 'arrow' },
 ];
+
+const MORE_SHAPE_SET = new Set<Tool>(MORE_SHAPE_TOOLS.map((s) => s.tool));
 
 function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: string }) {
   const active = useDiagramStore((s) => s.tool === tool);
@@ -67,6 +81,54 @@ function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: strin
     <RailButton active={active} label={SHAPE_LABELS[tool]} shortcut={shortcut} onClick={() => setTool(tool)}>
       <Icon size={18} />
     </RailButton>
+  );
+}
+
+/** The overflow of the shape rail: one button that opens a grid of the rest. */
+function MoreShapesMenu() {
+  const tool = useDiagramStore((s) => s.tool);
+  const setTool = useDiagramStore((s) => s.setTool);
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <RailButton active={MORE_SHAPE_SET.has(tool)} label="More shapes">
+          <Shapes size={18} />
+        </RailButton>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="right"
+          sideOffset={12}
+          aria-label="More shapes"
+          className="panel-in z-50 rounded-2xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          <div className="grid grid-cols-5 gap-0.5">
+            {MORE_SHAPE_TOOLS.map(({ tool: kind, shortcut }) => {
+              const Icon = SHAPE_ICONS[kind];
+              return (
+                <Tooltip key={kind} label={SHAPE_LABELS[kind]} shortcut={shortcut} side="top">
+                  <button
+                    onClick={() => {
+                      setTool(kind);
+                      setOpen(false);
+                    }}
+                    className={clsx(
+                      'flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
+                      tool === kind ? 'bg-accent-500 text-white' : 'text-white/70 hover:bg-white/10 hover:text-white',
+                    )}
+                  >
+                    <Icon size={18} />
+                  </button>
+                </Tooltip>
+              );
+            })}
+          </div>
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -105,6 +167,8 @@ export function LeftRail() {
         {SHAPE_TOOLS.map((s) => (
           <ShapeToolButton key={s.tool} tool={s.tool} shortcut={s.shortcut} />
         ))}
+
+        <MoreShapesMenu />
 
         <ShapeToolButton tool="text" shortcut="T" />
 

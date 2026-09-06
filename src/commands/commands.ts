@@ -75,6 +75,7 @@ const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[] }[] = [
   { tool: 'ellipse', title: 'Ellipse', keys: ['o'] },
   { tool: 'diamond', title: 'Diamond', keys: ['d'] },
   { tool: 'pill', title: 'Pill', keys: ['u'] },
+  { tool: 'parallelogram', title: 'Parallelogram', keys: ['p'] },
   { tool: 'triangle', title: 'Triangle', keys: ['g'] },
   { tool: 'hexagon', title: 'Hexagon', keys: ['x'] },
   { tool: 'cylinder', title: 'Cylinder', keys: ['y'] },
@@ -565,7 +566,12 @@ function distributeCommands(): Command[] {
   }));
 }
 
-/** The shape kinds a tool command can place, so Canvas can keep its own list honest. */
+/**
+ * The shape kinds a tool can place, so Canvas can keep its own list honest.
+ * Not all of them have a keystroke — the ones behind the rail's "More shapes"
+ * menu are chosen there and placed the same way.
+ */
+>>>>>>> 33147a6 (feat(shapes): add parallelogram, document, cloud, star, callout and arrow)
 export const SHAPE_TOOL_KINDS: ShapeKind[] = [
   'rectangle',
   'ellipse',
@@ -576,4 +582,10 @@ export const SHAPE_TOOL_KINDS: ShapeKind[] = [
   'triangle',
   'hexagon',
   'cylinder',
+  'parallelogram',
+  'document',
+  'cloud',
+  'star',
+  'callout',
+  'arrow',
 ];

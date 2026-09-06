@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
+import { SHAPE_KINDS } from '../lib/nodeKinds';
 import { useToastStore } from './useToastStore';
 import { api } from '../lib/api';
 
@@ -49,6 +50,17 @@ describe('addShape', () => {
     expect(text.data).toMatchObject({ fill: 'transparent', stroke: 'transparent' });
     expect(store().editingNodeId).toBe(textId);
   });
+
+  it('has a default size for every shape kind', () => {
+    // A kind with no entry would be placed as a zero-sized node the user cannot
+    // find, so the table has to stay exhaustive as kinds are added.
+    for (const kind of SHAPE_KINDS) {
+      const id = store().addShape(kind, { x: 0, y: 0 });
+      const node = store().nodes.find((n) => n.id === id)!;
+      expect(node.width, kind).toBeGreaterThan(0);
+      expect(node.height, kind).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('setSelectedShapeKind', () => {
@@ -71,6 +83,15 @@ describe('setSelectedShapeKind', () => {
     // it was drawn at rather than snapping to the diamond's default size.
     expect({ width: first.width, height: first.height }).toEqual({ width: 180, height: 100 });
     expect(store().nodes.find((n) => n.id === b)!.data.shape).toBe('diamond');
+  });
+
+  it('swaps to a kind drawn as an SVG outline just as readily as to a CSS one', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+
+    store().setSelectedShapeKind('star');
+
+    expect(store().nodes.find((n) => n.id === id)!.data.shape).toBe('star');
   });
 
   it('leaves unselected shapes alone', () => {

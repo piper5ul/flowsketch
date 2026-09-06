@@ -1,4 +1,30 @@
-import type { ShapeData } from '../types';
+import type { ShapeData, ShapeKind } from '../types';
+
+/**
+ * Every shape kind, at runtime. Built from an exhaustive record rather than
+ * written out as an array, so adding a kind to `ShapeKind` and forgetting it
+ * here is a type error rather than a table that silently misses a shape.
+ */
+const ALL_SHAPE_KINDS: Record<ShapeKind, true> = {
+  rectangle: true,
+  ellipse: true,
+  diamond: true,
+  sticky: true,
+  text: true,
+  pill: true,
+  triangle: true,
+  hexagon: true,
+  cylinder: true,
+  image: true,
+  parallelogram: true,
+  document: true,
+  cloud: true,
+  star: true,
+  callout: true,
+  arrow: true,
+};
+
+export const SHAPE_KINDS = Object.keys(ALL_SHAPE_KINDS) as ShapeKind[];
 
 /**
  * True for the invisible 1×1 rectangles a floating arrow hangs off.
