@@ -70,8 +70,9 @@ npm run db:migrate:deploy      # or: npx prisma migrate deploy
 | `20260906065812_init` | The whole schema as it stood before migrations existed |
 | `20260906094058_sharing` | Adds `Diagram.shareToken` (nullable, unique) and the `DiagramMember` table, with cascading foreign keys to `Diagram` and `User` |
 | `20260906114233_version_history` | Adds the `DiagramVersion` table (snapshots of a diagram's `data` and `title`), indexed by `(diagramId, createdAt DESC)`; `ON DELETE CASCADE` from `Diagram`, `ON DELETE SET NULL` from `User` |
+| `20260906132915_comments` | Adds the `CommentThread` and `Comment` tables, indexed by `(diagramId, resolved)` and `(threadId, createdAt)`; `ON DELETE CASCADE` from `Diagram`, from the thread, and from `User` — a comment is a person speaking, so it goes when the account does |
 
-Both migrations after `init` are additive — a new nullable column and new tables — so they apply to a populated database without a backfill and without downtime. Existing diagrams come out unshared (`shareToken IS NULL`), with no members, and with an empty history; their first data-changing save records the state they were already in.
+Every migration after `init` is additive — a new nullable column and new tables — so they apply to a populated database without a backfill and without downtime. Existing diagrams come out unshared (`shareToken IS NULL`), with no members, with an empty history and with no comment threads; their first data-changing save records the state they were already in.
 
 ### Version history and storage
 
