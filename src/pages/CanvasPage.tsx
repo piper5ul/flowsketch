@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Canvas } from '../components/Canvas';
+import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
-import { api } from '../lib/api';
+import { api, setUnauthorizedHandler } from '../lib/api';
+import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
 import { renderDiagramPng } from '../lib/exportImage';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
@@ -18,6 +20,22 @@ export function CanvasPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const loadDiagram = useDiagramStore((s) => s.loadDiagram);
+  const saveStatus = useDiagramStore((s) => s.saveStatus);
+  const { data: session } = useSession();
+
+  // A 401 elsewhere in the app means "go and sign in"; here it means "the edits
+  // on screen have nowhere to go yet", and navigating would be what loses them.
+  // The dialog below is shown off `saveStatus` instead.
+  useEffect(() => {
+    setUnauthorizedHandler(() => {});
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
+  const onReauthenticated = useCallback(() => {
+    // The save that hit the expired session is retried straight away; a
+    // success clears `unauthorized`, which is what rearms autosave.
+    void useDiagramStore.getState().saveDiagram();
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -56,10 +74,11 @@ export function CanvasPage() {
     const autosaver = createAutosaver({
       save: async () => {
         const outcome = await useDiagramStore.getState().saveDiagram();
-        // A conflict is not transient: another attempt would be refused in
-        // exactly the same way, so the autosaver stands down and the banner
-        // takes over. It is rearmed by the next edit once the conflict is gone.
-        if (outcome === 'conflict') {
+        // Neither a conflict nor an expired session is transient: another
+        // attempt would be refused in exactly the same way, so the autosaver
+        // stands down and the banner (or the re-auth dialog) takes over. It is
+        // rearmed by the next edit once the status is no longer one of those.
+        if (outcome === 'conflict' || outcome === 'unauthorized') {
           autosaver.cancel();
           return;
         }
@@ -112,9 +131,11 @@ export function CanvasPage() {
       ) {
         return;
       }
-      // Autosave stays down until the conflict is resolved; scheduling here
-      // would only queue a save the server is going to refuse.
-      if (state.saveStatus !== 'conflict') autosaver.schedule();
+      // Autosave stays down until the conflict is resolved or the session is
+      // renewed; scheduling here would only queue a save the server refuses.
+      if (state.saveStatus !== 'conflict' && state.saveStatus !== 'unauthorized') {
+        autosaver.schedule();
+      }
       // Neither a retitle nor a pan changes the picture, so only shape edits
       // mark the thumbnail stale.
       if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
@@ -174,6 +195,15 @@ export function CanvasPage() {
       <ReactFlowProvider>
         <div className="h-screen w-screen overflow-hidden">
           <Canvas />
+          {saveStatus === 'unauthorized' && (
+            // `session` is the one that just expired: better-auth keeps the
+            // last response it read, so the address is usually still there to
+            // prefill. An empty string is a normal outcome, not a failure.
+            <ReauthDialog
+              defaultEmail={session?.user.email ?? ''}
+              onSuccess={onReauthenticated}
+            />
+          )}
         </div>
         <Toasts />
       </ReactFlowProvider>

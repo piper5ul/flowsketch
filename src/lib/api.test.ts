@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ConflictError, api } from './api';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConflictError, UnauthorizedError, api, setUnauthorizedHandler } from './api';
 
 /** A `fetch` that answers every call with one response. */
 function respondWith(status: number, body?: unknown) {
@@ -13,8 +13,40 @@ function respondWith(status: number, body?: unknown) {
   return fetchMock;
 }
 
+beforeEach(() => {
+  setUnauthorizedHandler(null);
+});
+
 afterEach(() => {
+  setUnauthorizedHandler(null);
   vi.unstubAllGlobals();
+});
+
+describe('a 401 answer', () => {
+  it('rejects with a typed error rather than navigating away from unsaved work', async () => {
+    respondWith(401, { error: 'Unauthorized' });
+    await expect(api.listDiagrams()).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+
+  it('runs the installed handler instead of the default redirect', async () => {
+    respondWith(401, { error: 'Unauthorized' });
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+
+    await expect(api.listDiagrams()).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops running a handler that has been taken back off', async () => {
+    respondWith(401, { error: 'Unauthorized' });
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    await expect(api.listDiagrams()).rejects.toBeInstanceOf(UnauthorizedError);
+
+    setUnauthorizedHandler(null);
+    await expect(api.listDiagrams()).rejects.toBeInstanceOf(UnauthorizedError);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('a 409 answer', () => {

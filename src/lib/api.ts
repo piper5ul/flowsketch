@@ -3,6 +3,20 @@ import type { DiagramData, DiagramMeta } from '../../shared/types';
 const BASE = import.meta.env.VITE_API_URL || '';
 
 /**
+ * The session behind a request has expired or was never there.
+ *
+ * Thrown rather than acted on, because what a 401 should *do* depends on what
+ * the page is holding: the dashboard can bounce to the login form, but the
+ * canvas has unsaved edits in memory that a navigation would throw away.
+ */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super('Unauthorized');
+    this.name = 'UnauthorizedError';
+  }
+}
+
+/**
  * `PUT /api/diagrams/:id` refused the write: the row has been saved by someone
  * else — in practice a second tab — since the version this client is holding.
  * `updatedAt` is where the row actually is now.
@@ -15,6 +29,23 @@ export class ConflictError extends Error {
     this.name = 'ConflictError';
     this.updatedAt = updatedAt;
   }
+}
+
+/** The dashboard's answer to a 401: nothing unsaved, so go and sign in again. */
+function redirectToLogin() {
+  if (typeof window !== 'undefined') window.location.href = '/login';
+}
+
+let onUnauthorized: () => void = redirectToLogin;
+
+/**
+ * Replaces what a 401 does *besides* rejecting. The canvas installs a no-op
+ * while it is mounted so an expired session is renewed in place rather than
+ * navigating away from edits that have not been saved yet; passing `null`
+ * restores the redirect.
+ */
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  onUnauthorized = handler ?? redirectToLogin;
 }
 
 /** The 409 body the server sends; `updatedAt` is missing only if it changes shape. */
@@ -39,8 +70,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     if (res.status === 401) {
-      window.location.href = '/login';
-      throw new Error('Unauthorized');
+      onUnauthorized();
+      throw new UnauthorizedError();
     }
     if (res.status === 409) throw new ConflictError(await conflictUpdatedAt(res));
     throw new Error(`API error: ${res.status}`);

@@ -28,7 +28,7 @@ import {
   type DistributeAxis,
   type MatchDimension,
 } from '../lib/arrange';
-import { ConflictError, api } from '../lib/api';
+import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import { toastError } from './useToastStore';
 
 // Re-exported here because this is where the rest of the app reaches for it.
@@ -176,17 +176,25 @@ function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
  * the autosaver has scheduled another attempt after a failure (see
  * `src/lib/autosave.ts`), and it survives the failures that follow.
  *
- * `conflict` is terminal until the user acts: another attempt would be refused
- * in exactly the same way, so `CanvasPage` stops autosaving while it is set.
+ * `conflict` and `unauthorized` are both terminal until the user acts: neither
+ * is worth retrying, because another attempt would fail exactly the same way.
+ * `CanvasPage` stops autosaving while `saveStatus` is one of them.
  */
-export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error' | 'retrying' | 'conflict';
+export type SaveStatus =
+  | 'idle'
+  | 'saving'
+  | 'saved'
+  | 'error'
+  | 'retrying'
+  | 'conflict'
+  | 'unauthorized';
 
 /**
  * What `saveDiagram` did. It never rejects — its other callers `void` it —
  * so the outcome is a value the autosave callback can act on: only `error` is
  * worth another attempt.
  */
-export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'skipped';
+export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'skipped';
 
 /** Where the row actually is, once a save has been refused as stale. */
 export interface SaveConflict {
@@ -558,11 +566,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       if (result?.updatedAt) get().noteSaved(result.updatedAt);
       return 'saved';
     } catch (err) {
-      // Not worth retrying: the same body would be refused the same way until
-      // the user reloads or overwrites.
+      // Neither of these is worth retrying: the same body would be refused the
+      // same way until the user reloads, overwrites, or signs back in.
       if (err instanceof ConflictError) {
         set({ saveStatus: 'conflict', conflict: { updatedAt: err.updatedAt } });
         return 'conflict';
+      }
+      if (err instanceof UnauthorizedError) {
+        set({ saveStatus: 'unauthorized' });
+        return 'unauthorized';
       }
       // Once the autosaver is retrying, every further failure of that streak
       // keeps saying "retrying" rather than flashing "save failed" per attempt.

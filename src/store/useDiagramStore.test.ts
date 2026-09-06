@@ -3,7 +3,7 @@ import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramS
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS } from '../lib/nodeKinds';
 import { useToastStore } from './useToastStore';
-import { ConflictError, api } from '../lib/api';
+import { ConflictError, UnauthorizedError, api } from '../lib/api';
 
 // Only `api` itself is a stub: the error classes have to be the real ones, or
 // the `instanceof` checks in `saveDiagram` would never match.
@@ -1341,6 +1341,15 @@ describe('saveDiagram — the two-tab conflict guard', () => {
     expect(store().loadedAt).toBe(OTHER_TAB_AT);
   });
 
+  it('reports an expired session rather than treating it as a retryable failure', async () => {
+    saveDiagram.mockRejectedValue(new UnauthorizedError());
+    const outcome = await store().saveDiagram();
+
+    expect(outcome).toBe('unauthorized');
+    expect(store().saveStatus).toBe('unauthorized');
+    // The re-auth dialog is the message; a toast would just be noise behind it.
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
 });
 
 describe('addImageNode', () => {
