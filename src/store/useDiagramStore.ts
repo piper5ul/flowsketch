@@ -29,6 +29,7 @@ import {
   type MatchDimension,
 } from '../lib/arrange';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
+import type { ImageBackfillPatch } from '../lib/imageBackfill';
 import { toastError } from './useToastStore';
 
 // Re-exported here because this is where the rest of the app reaches for it.
@@ -291,6 +292,13 @@ interface DiagramState {
     image: { src: string; width: number; height: number; position: { x: number; y: number } },
   ) => void;
   removeImagePlaceholder: (id: string) => void;
+  /**
+   * Repoints nodes at uploaded images, replacing the base64 an old diagram was
+   * carrying inline. Records **no** history entry: it is housekeeping, not an
+   * edit the user made, and an undo that put the megabytes back would be a
+   * trap. Autosave persists it like any other change to `nodes`.
+   */
+  applyImageBackfill: (patches: readonly ImageBackfillPatch[]) => void;
   addConnectedShape: (sourceId: string, direction: Direction) => string | null;
   updateNodeData: (id: string, data: Partial<ShapeData>) => void;
   updateSelectedNodesStyle: (patch: Partial<Pick<ShapeData, 'fill' | 'stroke'>>) => void;
@@ -802,6 +810,19 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   removeImagePlaceholder: (id) => {
     set((s) => ({ nodes: s.nodes.filter((n) => n.id !== id) }));
+  },
+
+  applyImageBackfill: (patches) => {
+    if (patches.length === 0) return;
+    const byId = new Map(patches.map((patch) => [patch.id, patch]));
+    set((s) => ({
+      nodes: s.nodes.map((n) => {
+        const patch = byId.get(n.id);
+        // Only the source and the shape change: the node keeps the box it was
+        // drawn at, so the picture does not move under the user.
+        return patch ? { ...n, data: { ...n.data, imageSrc: patch.imageSrc, shape: patch.shape } } : n;
+      }),
+    }));
   },
 
   // Click a directional handle on a hovered shape to instantly spawn a

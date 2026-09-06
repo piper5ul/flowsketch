@@ -10,7 +10,9 @@ import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
 import { renderDiagramPng } from '../lib/exportImage';
+import { backfillBase64Images, findBase64ImageNodes } from '../lib/imageBackfill';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
+import { toastError } from '../store/useToastStore';
 
 const AUTOSAVE_DELAY_MS = 2000;
 
@@ -29,6 +31,27 @@ export function CanvasPage() {
   useEffect(() => {
     setUnauthorizedHandler(() => {});
     return () => setUnauthorizedHandler(null);
+  }, []);
+
+  /**
+   * Moves an old diagram's inline base64 images into `/api/images`, behind the
+   * canvas the user is already looking at. Never blocks the load: the diagram
+   * renders those nodes either way, and a failed upload just leaves one where
+   * it was for the next open to try again.
+   */
+  const runImageBackfill = useCallback(async (diagramId: string) => {
+    const { nodes } = useDiagramStore.getState();
+    const candidates = findBase64ImageNodes(nodes);
+    if (candidates.length === 0) return;
+
+    const patches = await backfillBase64Images(nodes);
+    // /d/A -> /d/B while the uploads were in flight: these patches are A's.
+    if (useDiagramStore.getState().diagramId !== diagramId) return;
+    useDiagramStore.getState().applyImageBackfill(patches);
+    // One message for the whole run, not one per image.
+    if (patches.length < candidates.length) {
+      toastError('Some images could not be moved to storage. They still work — we will try again next time.');
+    }
   }, []);
 
   const onReauthenticated = useCallback(() => {
@@ -151,6 +174,10 @@ export function CanvasPage() {
     };
     window.addEventListener('pagehide', onPageHide);
 
+    // Started only once the subscription above exists, so the patches it
+    // applies schedule a save rather than sitting there until the next edit.
+    void runImageBackfill(id);
+
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       unsubscribe();
@@ -162,7 +189,7 @@ export function CanvasPage() {
       // to save" rather than an error.
       void thumbnails.flush();
     };
-  }, [loading, loadError, id]);
+  }, [loading, loadError, id, runImageBackfill]);
 
   // Autosave is never armed in this branch, so the unreadable diagram cannot be
   // overwritten by this build.

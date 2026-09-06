@@ -1352,6 +1352,78 @@ describe('saveDiagram — the two-tab conflict guard', () => {
   });
 });
 
+describe('applyImageBackfill', () => {
+  /** A rectangle in the pre-upload format: its pixels are in the diagram JSON. */
+  function inlineImageNode(id: string) {
+    useDiagramStore.setState((s) => ({
+      nodes: [
+        ...s.nodes,
+        {
+          id,
+          type: 'shape' as const,
+          position: { x: 0, y: 0 },
+          width: 320,
+          height: 180,
+          data: {
+            label: '',
+            shape: 'rectangle' as const,
+            fill: '#fff',
+            stroke: '#000',
+            imageSrc: 'data:image/png;base64,AAAA',
+          },
+        },
+      ],
+    }));
+  }
+
+  it('repoints the node at the uploaded URL and draws it as an image', () => {
+    inlineImageNode('n1');
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+
+    const node = store().nodes.find((n) => n.id === 'n1')!;
+    expect(node.data).toMatchObject({ imageSrc: '/api/images/one', shape: 'image' });
+    // The picture must not move or resize under the user.
+    expect({ width: node.width, height: node.height }).toEqual({ width: 320, height: 180 });
+    expect(node.position).toEqual({ x: 0, y: 0 });
+  });
+
+  it('leaves every other node alone', () => {
+    inlineImageNode('n1');
+    const other = store().addShape('rectangle', { x: 500, y: 0 });
+
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+
+    expect(store().nodes.find((n) => n.id === other)!.data.shape).toBe('rectangle');
+  });
+
+  it('records no history entry — it is housekeeping, not an edit to undo', () => {
+    inlineImageNode('n1');
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+
+    // Nothing to undo: a freshly loaded diagram whose images were quietly
+    // moved to storage must not hand the user an undo that puts them back.
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('does not eat the undo belonging to a real edit', () => {
+    inlineImageNode('n1');
+    const drawn = store().addShape('rectangle', { x: 500, y: 0 });
+
+    store().applyImageBackfill([{ id: 'n1', imageSrc: '/api/images/one', shape: 'image' }]);
+    store().undo();
+
+    expect(store().nodes.find((n) => n.id === drawn)).toBeUndefined();
+  });
+
+  it('does nothing at all when there is nothing to patch', () => {
+    inlineImageNode('n1');
+    const before = store().nodes;
+    store().applyImageBackfill([]);
+    // Same array, so nothing subscribed to the store is woken for no reason.
+    expect(store().nodes).toBe(before);
+  });
+});
+
 describe('addImageNode', () => {
   it('adds a dedicated image node at the given position and size', () => {
     const id = store().addImageNode({
