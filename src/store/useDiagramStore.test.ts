@@ -864,6 +864,29 @@ describe('addConnectedShape', () => {
   });
 });
 
+describe('setDefaultStyle', () => {
+  it('draws quick-added connectors with the default kind', () => {
+    store().setDefaultStyle({ connector: 'curved' });
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    expect(store().edges[0].data!.connectorType).toBe('curved');
+  });
+
+  it('draws hand-dragged connectors with the default kind', () => {
+    store().setDefaultStyle({ connector: 'curved' });
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 300, y: 0 });
+    store().onConnect({ source: a, target: b, sourceHandle: 'right', targetHandle: 'left' });
+    expect(store().edges[0].data!.connectorType).toBe('curved');
+  });
+
+  it('leaves the colours alone when only the connector kind is set', () => {
+    const { defaultFill, defaultStroke } = store();
+    store().setDefaultStyle({ connector: 'straight' });
+    expect(store()).toMatchObject({ defaultFill, defaultStroke, defaultConnector: 'straight' });
+  });
+});
+
 describe('updateEdgeData', () => {
   /** An edge with the default styling, plus the id of its source shape. */
   function edgeId() {
@@ -1000,6 +1023,40 @@ describe('updateSelectedNodesData', () => {
 
     store().undo();
     expect(store().nodes.every((n) => n.data.italic === undefined)).toBe(true);
+  });
+
+  it('carries the decorations and an explicit text colour', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesData({ underline: true, strikethrough: true, textColor: '#BE185D' });
+
+    expect(store().nodes.find((n) => n.id === a)!.data).toMatchObject({
+      underline: true,
+      strikethrough: true,
+      textColor: '#BE185D',
+    });
+  });
+
+  it('carries the box styling a shape can wear', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesData({ cornerRadius: 24, opacity: 0.5, shadow: true });
+
+    expect(store().nodes.find((n) => n.id === a)!.data).toMatchObject({
+      cornerRadius: 24,
+      opacity: 0.5,
+      shadow: true,
+    });
+  });
+
+  it('hands the label back to auto-contrast when the colour is cleared', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesData({ textColor: '#FFFFFF' });
+    store().updateSelectedNodesData({ textColor: undefined });
+
+    // Absent, not empty: ShapeNode reads a missing colour as "pick one for me".
+    expect(store().nodes.find((n) => n.id === a)!.data.textColor).toBeUndefined();
   });
 });
 
@@ -1298,5 +1355,32 @@ describe('image placeholders', () => {
     });
     expect(store().nodes).toHaveLength(0);
     expect(store().canUndo).toBe(false);
+  });
+});
+
+describe('updateSelectedNodesDataTransient', () => {
+  it('applies the patch without spending a history entry', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+
+    // What a slider does on every frame of a drag: the entry was pushed once
+    // by `beginInteraction`, so the frames themselves must not push more.
+    store().beginInteraction();
+    store().updateSelectedNodesDataTransient({ opacity: 0.8 });
+    store().updateSelectedNodesDataTransient({ opacity: 0.5 });
+    expect(store().nodes.find((n) => n.id === a)!.data.opacity).toBe(0.5);
+
+    store().undo();
+    expect(store().nodes.find((n) => n.id === a)!.data.opacity).toBeUndefined();
+  });
+
+  it('leaves an image alone, as the committing version does', () => {
+    const shape = store().addShape('rectangle', { x: 0, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 64, height: 64, position: { x: 200, y: 0 } });
+    select(shape, image);
+    store().updateSelectedNodesDataTransient({ opacity: 0.5 });
+
+    expect(store().nodes.find((n) => n.id === shape)!.data.opacity).toBe(0.5);
+    expect(store().nodes.find((n) => n.id === image)!.data.opacity).toBeUndefined();
   });
 });

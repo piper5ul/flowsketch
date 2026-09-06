@@ -1,7 +1,8 @@
 import { renderDiagramPng } from '../lib/exportImage';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
-import type { FontSize, ShapeKind, Tool } from '../types';
+import { nextFontSize } from '../lib/text';
+import type { ShapeKind, Tool } from '../types';
 import { createRegistry } from './registry';
 import type { Command, CommandContext, DiagramState, Keybinding } from './types';
 
@@ -10,8 +11,6 @@ export { bindingsOf, formatShortcut, shortcutLabels, detectPlatform } from './re
 const ZOOM_MS = 150;
 const FIT_MS = 300;
 const FIT_PADDING = 0.2;
-
-const FONT_SIZES: FontSize[] = ['small', 'medium', 'large'];
 
 function selectedNodes(state: DiagramState) {
   return state.nodes.filter((node) => node.selected);
@@ -50,9 +49,9 @@ function stepFontSize(ctx: CommandContext, delta: 1 | -1) {
   const state = ctx.store.getState();
   const selected = state.nodes.find((n) => n.selected);
   if (!selected) return;
-  const index = FONT_SIZES.indexOf(selected.data.fontSize ?? 'medium');
-  const next = Math.min(FONT_SIZES.length - 1, Math.max(0, index + delta));
-  state.updateSelectedNodesData({ fontSize: FONT_SIZES[next] });
+  // The first selected shape sets the size the whole selection steps to, the
+  // same way the toolbar's −/+ read it.
+  state.updateSelectedNodesData({ fontSize: nextFontSize(selected.data.fontSize, delta) });
 }
 
 function deselectAll(ctx: CommandContext) {

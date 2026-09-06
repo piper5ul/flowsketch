@@ -721,3 +721,47 @@ test('a shape can be swapped from the toolbar and a new kind drawn from the rail
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(page.locator('.react-flow__node [data-shape="cloud"]')).toHaveCount(1);
 });
+
+test('the Style popover shadows and fades a shape', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.click();
+
+  // The shadow is the wrapper's own; the selection ring lives on the box inside
+  // it, so an unshadowed wrapper really is bare.
+  const shape = node.locator('.shape-wrapper');
+  await expect(shape).toHaveCSS('box-shadow', 'none');
+
+  await page.getByRole('button', { name: 'Style' }).click();
+  const stylePanel = page.getByRole('dialog', { name: 'Style' });
+  await stylePanel.getByRole('button', { name: 'Drop shadow' }).click();
+  await expect(shape).not.toHaveCSS('box-shadow', 'none');
+
+  // A range input set without a pointer commits as its own edit rather than
+  // waiting for a drag that never happens.
+  await stylePanel.getByLabel('Opacity').fill('0.5');
+  await expect(shape).toHaveCSS('opacity', '0.5');
+});
+
+test('the format bar underlines a label being edited', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+
+  await node.dblclick();
+  await page.keyboard.type('Hi');
+  await page.getByRole('button', { name: 'Underline' }).click();
+  await page.keyboard.press('Escape');
+
+  await expect(node).toContainText('Hi');
+  await expect(node.locator('[contenteditable]')).toHaveCSS('text-decoration-line', 'underline');
+});

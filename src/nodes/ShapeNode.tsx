@@ -3,16 +3,27 @@ import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
-import type { Direction, FontSize, VerticalAlign } from '../types';
+import type { Direction, VerticalAlign } from '../types';
+import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
-import { isAnchorNode } from '../lib/nodeKinds';
-import { isClipShape, svgPaths } from '../lib/shapePaths';
+import { canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
+import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
 import { useShiftKey } from '../lib/useShiftKey';
-
-const FONT_SIZE_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };
 
 /** Text shapes never shrink below the height they are created at. */
 const TEXT_MIN_HEIGHT = 40;
+
+/**
+ * The breathing room every label gets, before the shape's own silhouette asks
+ * for more. The vertical half is only spent when the text is pushed against
+ * that edge — a middle-aligned label needs no gap above it.
+ */
+const LABEL_PADDING_X = 12;
+const LABEL_PADDING_Y = 8;
+
+/** The drop shadow a shape casts when it is asked to, boxed and un-boxed. */
+const SHAPE_SHADOW = '0 12px 28px -10px rgba(20, 20, 50, 0.55)';
+const SHAPE_SHADOW_FILTER = 'drop-shadow(0 8px 10px rgba(20, 20, 50, 0.35))';
 
 const HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
   { id: 'top', position: Position.Top, style: { top: -5, left: '50%', transform: 'translateX(-50%)' } },
@@ -28,7 +39,7 @@ const QUICK_ADD: { direction: Direction; style: React.CSSProperties }[] = [
   { direction: 'left', style: { left: -12, top: '50%', transform: 'translateY(-50%)' } },
 ];
 
-export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeType>) {
+export function ShapeNode({ id, data, width, height, selected }: NodeProps<ShapeNodeType>) {
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const setNodeSizeTransient = useDiagramStore((s) => s.setNodeSizeTransient);
   const addConnectedShape = useDiagramStore((s) => s.addConnectedShape);
@@ -166,19 +177,46 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
 
   const textAlign = data.textAlign ?? (isText ? 'left' : 'center');
   const verticalAlign: VerticalAlign = data.verticalAlign ?? 'middle';
-  const fontSizePx = FONT_SIZE_PX[data.fontSize ?? 'medium'];
+  const fontSizePx = resolveFontSize(data.fontSize);
   const darkBg = isDarkFill(data.fill);
+  // Both decorations can be worn at once, and CSS spells that as one property.
+  const textDecoration = [data.underline && 'underline', data.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
 
-  // A star's points leave much less room across the middle than a box does, so
-  // its label is inset further to stay inside the silhouette.
-  const textInset = data.shape === 'star' ? 'px-7' : 'px-3';
+  // A silhouette holds less text than the box it is drawn in — a star is mostly
+  // points, an arrow mostly head — so the label is padded away from the edges
+  // the outline actually cuts. The insets are proportions of the node's own box
+  // (as the paths are), which is why they are resolved against its size here
+  // rather than handed to CSS: a percentage padding resolves against the
+  // *width* on all four sides, which would be wrong for the vertical pair.
+  const inset = textInset(data.shape);
+  const labelPadding: React.CSSProperties = {
+    paddingLeft: LABEL_PADDING_X + ((width ?? 0) * inset.left) / 100,
+    paddingRight: LABEL_PADDING_X + ((width ?? 0) * inset.right) / 100,
+    paddingTop: (verticalAlign === 'top' ? LABEL_PADDING_Y : 0) + ((height ?? 0) * inset.top) / 100,
+    paddingBottom:
+      (verticalAlign === 'bottom' ? LABEL_PADDING_Y : 0) + ((height ?? 0) * inset.bottom) / 100,
+  };
+
+  // Opacity and the drop shadow belong to the whole node rather than to the box
+  // inside it, so they go on the wrapper — where they leave the selection ring
+  // alone. A silhouette has no box for a shadow to trace, so it casts one
+  // through its alpha with a filter instead of a rectangle nothing drew.
+  const wrapperStyle: React.CSSProperties = {
+    opacity: data.opacity,
+    ...(data.shadow
+      ? hasClipShape || isCylinder
+        ? { filter: SHAPE_SHADOW_FILTER }
+        : { boxShadow: SHAPE_SHADOW }
+      : {}),
+  };
 
   const shapeClass = clsx(
     'relative h-full w-full flex justify-center transition-shadow',
-    textInset,
-    verticalAlign === 'top' && 'items-start pt-2',
+    verticalAlign === 'top' && 'items-start',
     verticalAlign === 'middle' && 'items-center',
-    verticalAlign === 'bottom' && 'items-end pb-2',
+    verticalAlign === 'bottom' && 'items-end',
     textAlign === 'left' && 'text-left',
     textAlign === 'center' && 'text-center',
     textAlign === 'right' && 'text-right',
@@ -193,12 +231,15 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
     <div
       data-shape={data.shape}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
+      style={wrapperStyle}
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}
     >
       <div
         ref={shapeRef}
         className={shapeClass}
         style={{
+          ...labelPadding,
+          borderRadius: canRoundCorners(data.shape) ? data.cornerRadius : undefined,
           background: hasClipShape || isCylinder ? 'transparent' : data.fill,
           borderColor: data.stroke,
           boxShadow: hasClipShape || isCylinder
@@ -266,7 +307,10 @@ export function ShapeNode({ id, data, height, selected }: NodeProps<ShapeNodeTyp
               fontSize: fontSizePx,
               fontWeight: data.bold ? 700 : 500,
               fontStyle: data.italic ? 'italic' : 'normal',
-              color: darkBg ? '#fff' : undefined,
+              textDecoration: textDecoration || undefined,
+              // A colour the user picked outranks the automatic one; without
+              // it the label goes white on a dark fill and dark on a light one.
+              color: data.textColor ?? (darkBg ? '#fff' : undefined),
             }}
             className={clsx(
               'relative z-[1] w-full break-words whitespace-pre-wrap leading-snug outline-none',

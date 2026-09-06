@@ -27,14 +27,17 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 ### Text & Formatting
 - Double-click any shape to edit text inline
 - Multi-line text support
-- **Bold**, *italic*, and font size controls (small / medium / large)
+- **Bold**, *italic*, <u>underline</u> and ~~strikethrough~~
+- Font size on a 10–48 px scale, stepped from the toolbar or with ⌘⌥= / ⌘⌥−
 - Text alignment (left, center, right) and vertical alignment (top, middle, bottom)
-- Auto-contrast text color on dark backgrounds
+- Auto-contrast text color on dark backgrounds, or pick the label's color yourself
+- Labels stay inside the shape they belong to — a star's points and an arrow's head are not text
 
 ### Colors
 - 28-color palette with quick-access swatches
 - Independent fill and stroke color for each shape
 - Works across all shape types including SVG-based shapes
+- Per-shape corner radius, opacity and drop shadow behind the toolbar's Style button
 
 ### Canvas
 - Infinite pan and zoom canvas

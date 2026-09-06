@@ -45,14 +45,33 @@ export function isAnchorNode(data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>)
 }
 
 /**
+ * True for the shapes with corners to round.
+ *
+ * A radius is a property of a CSS box: an ellipse and a pill are already as
+ * round as they go, a silhouette's corners belong to its path, and a text shape
+ * draws no outline to round at all. That leaves the two rectangles — plain and
+ * sticky — which is exactly where the control is offered.
+ */
+export function canRoundCorners(shape: ShapeKind): boolean {
+  return shape === 'rectangle' || shape === 'sticky';
+}
+
+/**
  * True for the shapes whose kind the toolbar can swap.
  *
  * An image *is* its bytes and a text shape draws no outline at all while sizing
  * itself to what is typed — turning either into a diamond would throw away the
- * thing that makes it what it is. A locked shape sits the edit out, as it sits
- * out every other one. The floating toolbar and the store share this predicate
- * so the button is offered exactly when pressing it would do something.
+ * thing that makes it what it is. An anchor node is not a shape the user drew
+ * at all but one end of a floating arrow, and giving a 1×1 invisible endpoint a
+ * silhouette would put a speck of a star on the canvas that nothing selected. A
+ * locked shape sits the edit out, as it sits out every other one. The floating
+ * toolbar and the store share this predicate so the button is offered exactly
+ * when pressing it would do something.
  */
-export function canSwapShapeKind(data: Pick<ShapeData, 'shape' | 'locked'>): boolean {
-  return data.shape !== 'image' && data.shape !== 'text' && !data.locked;
+export function canSwapShapeKind(
+  data: Pick<ShapeData, 'shape' | 'locked' | 'fill' | 'stroke'>,
+): boolean {
+  if (data.shape === 'image' || data.shape === 'text') return false;
+  if (isAnchorNode(data)) return false;
+  return !data.locked;
 }

@@ -52,6 +52,11 @@ export interface SwatchColor {
   stroke: string;
 }
 
+/**
+ * The label sizes shapes were drawn at before `fontSize` became a number of
+ * pixels. Still the only spelling a *connector* label has, and still readable
+ * on a shape — `src/lib/text.ts` is where the two meet.
+ */
 export type FontSize = 'small' | 'medium' | 'large';
 export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
@@ -61,11 +66,33 @@ export interface ShapeData {
   shape: ShapeKind;
   fill: string;
   stroke: string;
-  fontSize?: FontSize;
+  /**
+   * The label's size in pixels. Diagrams saved before the scale existed hold
+   * one of the three preset names instead; `resolveFontSize` reads both, which
+   * is why there is no migration step for this.
+   */
+  fontSize?: FontSize | number;
   bold?: boolean;
   italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  /**
+   * The label's colour, as a hex string. Absent means "pick one for me": the
+   * label is drawn light or dark to contrast with the fill, which is what every
+   * shape saved before this existed still wants.
+   */
+  textColor?: string;
   textAlign?: TextAlign;
   verticalAlign?: VerticalAlign;
+  /**
+   * How far the corners are rounded, in px. Only the kinds CSS draws as a box
+   * with corners have any — `canRoundCorners` is the list.
+   */
+  cornerRadius?: number;
+  /** 0.1–1. Absent is fully opaque, which is what every older shape wants. */
+  opacity?: number;
+  /** Whether the shape casts a drop shadow. */
+  shadow?: boolean;
   link?: string;
   locked?: boolean;
   imageSrc?: string;

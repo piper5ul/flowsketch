@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { getNodesBounds, useViewport } from '@xyflow/react';
 import { useDiagramStore, suppressNextBlurCommit } from '../store/useDiagramStore';
 import { TextFormatControls, type TextFormatValue } from './TextFormatControls';
+import { DEFAULT_FONT_SIZE } from '../lib/text';
 import type { ConnectorData, FontSize, TextAlign, VerticalAlign } from '../types';
 
 export function TextFormatBar() {
@@ -25,16 +26,21 @@ export function TextFormatBar() {
 
   const isEdge = !!editingEdge;
 
-  // Get formatting state from either node or edge
-  const fontSize: FontSize = isEdge
+  // Get formatting state from either node or edge. A shape's size is a number
+  // of pixels (or, on an old diagram, the name of one); a connector's label has
+  // only ever been one of the three names.
+  const fontSize: FontSize | number = isEdge
     ? (editingEdge?.data?.labelFontSize ?? 'medium')
-    : (editingNode?.data.fontSize ?? 'medium');
+    : (editingNode?.data.fontSize ?? DEFAULT_FONT_SIZE);
   const bold = isEdge
     ? (editingEdge?.data?.labelBold ?? false)
     : (editingNode?.data.bold ?? false);
   const italic = isEdge
     ? (editingEdge?.data?.labelItalic ?? false)
     : (editingNode?.data.italic ?? false);
+  const underline = !isEdge && (editingNode?.data.underline ?? false);
+  const strikethrough = !isEdge && (editingNode?.data.strikethrough ?? false);
+  const textColor = isEdge ? undefined : editingNode?.data.textColor;
   const textAlign: TextAlign = isEdge
     ? 'center'
     : (editingNode?.data.textAlign ?? (editingNode?.data.shape === 'text' ? 'left' : 'center'));
@@ -76,7 +82,9 @@ export function TextFormatBar() {
       return;
     }
     const edgePatch: Partial<ConnectorData> = {};
-    if (patch.fontSize !== undefined) edgePatch.labelFontSize = patch.fontSize;
+    // A connector's label is sized by name rather than in pixels, and the bar
+    // offers it the name stepper — so a number here would be a bug, not a size.
+    if (typeof patch.fontSize === 'string') edgePatch.labelFontSize = patch.fontSize;
     if (patch.bold !== undefined) edgePatch.labelBold = patch.bold;
     if (patch.italic !== undefined) edgePatch.labelItalic = patch.italic;
     updateEdgeData(entityId, edgePatch);
@@ -92,9 +100,9 @@ export function TextFormatBar() {
         onMouseDown={(e) => { e.preventDefault(); suppressNextBlurCommit(); }}
       >
         <TextFormatControls
-          value={{ fontSize, bold, italic, textAlign, verticalAlign }}
+          value={{ fontSize, bold, italic, underline, strikethrough, textColor, textAlign, verticalAlign }}
           onChange={apply}
-          showAlignment={!isEdge}
+          target={isEdge ? 'connectorLabel' : 'shape'}
         />
       </div>
     </div>
