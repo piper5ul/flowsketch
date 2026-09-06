@@ -210,11 +210,43 @@ function nodeHeight(node: ShapeNode): number {
   return node.height ?? node.measured?.height ?? 0;
 }
 
-/** The selection as plain rects, in node order, for the `arrange` helpers. */
+/**
+ * The selection as plain rects **in board coordinates**, in node order, for the
+ * `arrange` helpers.
+ *
+ * A child's `position` is relative to its parent, so feeding raw positions to
+ * `arrange.ts` would line a framed shape up with a frame-relative copy of the
+ * board and leave it visibly crooked. The rects are absolute here and
+ * `commitArrangedPositions` converts each result back on the way in.
+ *
+ * **A node whose ancestor is also selected sits the command out.** Moving a
+ * container moves its contents with it (their positions are offsets from it), so
+ * arranging both in one command would apply two moves to the same shape and the
+ * result would match neither. Skipping the descendant keeps the container the
+ * one thing that moves — the same rule `outermostSelected` applies to grouping.
+ */
 function selectedRects(nodes: ShapeNode[]): ArrangeRect[] {
+  const byId = nodesById(nodes);
+  const selectedIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
   return nodes
-    .filter((n) => n.selected)
-    .map((n) => ({ id: n.id, x: n.position.x, y: n.position.y, w: nodeWidth(n), h: nodeHeight(n) }));
+    .filter((n) => n.selected && !hasSelectedAncestor(n, byId, selectedIds))
+    .map((n) => ({ id: n.id, ...absoluteBounds(n, byId) }));
+}
+
+/** True when any of `node`'s ancestors is in `selectedIds`. */
+function hasSelectedAncestor(
+  node: ShapeNode,
+  byId: Map<string, ShapeNode>,
+  selectedIds: ReadonlySet<string>,
+): boolean {
+  const seen = new Set<string>([node.id]);
+  let parentId = node.parentId;
+  while (parentId !== undefined && !seen.has(parentId)) {
+    if (selectedIds.has(parentId)) return true;
+    seen.add(parentId);
+    parentId = byId.get(parentId)?.parentId;
+  }
+  return false;
 }
 
 /** Every node by id, for the parent-chain walks in `src/lib/nodeTree.ts`. */
@@ -549,22 +581,37 @@ function pushHistory(state: DiagramState) {
  * run on an already-aligned selection does not cost the user a ⌘Z. Locked nodes
  * sit the move out the way they sit out a nudge, but they still counted towards
  * the geometry, so locking a node makes it the anchor everything else lines up on.
+ *
+ * `positions` are **board coordinates** (that is what `selectedRects` fed the
+ * geometry), so each one is turned back into an offset from the node's parent
+ * before it is stored: the shape lands where the user was shown it would, and
+ * the JSON keeps the parent-relative form React Flow reads.
  */
 function commitArrangedPositions(positions: Record<string, ArrangePosition>) {
   const state = useDiagramStore.getState();
-  const movedIds = new Set(
-    state.nodes
-      .filter((n) => {
-        const next = positions[n.id];
-        return !n.data.locked && next && (next.x !== n.position.x || next.y !== n.position.y);
-      })
-      .map((n) => n.id),
-  );
-  if (movedIds.size === 0) return;
+  const byId = nodesById(state.nodes);
+  const relative = new Map<string, ArrangePosition>();
+  for (const node of state.nodes) {
+    const next = positions[node.id];
+    if (!next || node.data.locked) continue;
+    // The parent is not itself being moved (a selected ancestor takes its
+    // descendants out of the selection), so its absolute position is the offset
+    // both before and after this command.
+    const origin =
+      node.parentId !== undefined && byId.has(node.parentId)
+        ? absolutePosition(byId.get(node.parentId)!, byId)
+        : { x: 0, y: 0 };
+    const position = { x: next.x - origin.x, y: next.y - origin.y };
+    if (position.x !== node.position.x || position.y !== node.position.y) relative.set(node.id, position);
+  }
+  if (relative.size === 0) return;
 
   pushHistory(state);
   useDiagramStore.setState({
-    nodes: state.nodes.map((n) => (movedIds.has(n.id) ? { ...n, position: positions[n.id] } : n)),
+    nodes: state.nodes.map((n) => {
+      const position = relative.get(n.id);
+      return position ? { ...n, position } : n;
+    }),
   });
 }
 

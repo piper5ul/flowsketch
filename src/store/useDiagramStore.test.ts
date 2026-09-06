@@ -851,6 +851,112 @@ describe('matchSizeSelected', () => {
   });
 });
 
+describe('arranging nodes inside containers', () => {
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  /** A rectangle at an absolute position, optionally inside `parent`. */
+  function rect(x: number, y: number, w = 100, h = 100, parent?: string) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    if (parent) {
+      const origin = nodeOf(parent).position;
+      useDiagramStore.setState((s) => ({
+        nodes: s.nodes.map((n) =>
+          n.id === id
+            ? { ...n, parentId: parent, position: { x: x - origin.x, y: y - origin.y } }
+            : n,
+        ),
+      }));
+    }
+    return id;
+  }
+
+  /** Where a node really sits on the board, its parent's offset folded in. */
+  function absolute(id: string) {
+    const node = nodeOf(id);
+    if (node.parentId === undefined) return node.position;
+    const origin = nodeOf(node.parentId).position;
+    return { x: node.position.x + origin.x, y: node.position.y + origin.y };
+  }
+
+  it('aligns a framed child with an outside shape in board coordinates', () => {
+    const frame = store().addFrame({ x: 500, y: 100 });
+    const inside = rect(550, 150, 100, 100, frame);
+    const outside = rect(200, 400);
+
+    // The stored position is the offset from the frame, not the board.
+    expect(nodeOf(inside).position).toEqual({ x: 50, y: 50 });
+
+    select(inside, outside);
+    store().alignSelected('left');
+
+    // Visually aligned: both left edges on x = 200 on the board …
+    expect(absolute(inside).x).toBe(200);
+    expect(absolute(outside).x).toBe(200);
+    // … while what is stored for the child stays relative to its frame.
+    expect(nodeOf(inside).position).toEqual({ x: -300, y: 50 });
+    expect(nodeOf(frame).position).toEqual({ x: 500, y: 100 });
+  });
+
+  it('distributes across a frame boundary', () => {
+    const frame = store().addFrame({ x: 1000, y: 1000 });
+    const a = rect(0, 0);
+    const b = rect(150, 0, 100, 100, frame);
+    const c = rect(400, 0);
+
+    select(a, b, c);
+    store().distributeSelected('x');
+
+    // 500 of span holding 300 of node leaves 200 over two gaps, as it would
+    // with no frame in the selection at all.
+    expect(absolute(a).x).toBe(0);
+    expect(absolute(b).x).toBe(200);
+    expect(absolute(c).x).toBe(400);
+    expect(nodeOf(b).position).toEqual({ x: -800, y: -1000 });
+  });
+
+  it('matches size regardless of parentage', () => {
+    const frame = store().addFrame({ x: 700, y: 700 });
+    const inside = rect(750, 750, 100, 50, frame);
+    const outside = rect(0, 0, 200, 120);
+
+    select(inside, outside);
+    store().matchSizeSelected('both');
+
+    expect(nodeOf(inside)).toMatchObject({ width: 200, height: 120 });
+    // A resize is not a move: the child keeps the offset it had.
+    expect(nodeOf(inside).position).toEqual({ x: 50, y: 50 });
+  });
+
+  it('skips a descendant whose ancestor is selected too', () => {
+    const frame = store().addFrame({ x: 500, y: 100 });
+    const inside = rect(550, 150, 100, 100, frame);
+    const outside = rect(200, 400);
+
+    select(frame, inside, outside);
+    store().alignSelected('left');
+
+    // The frame moved and carried its child, so the child's own offset is
+    // untouched — arranging both would have moved it twice.
+    expect(nodeOf(frame).position.x).toBe(200);
+    expect(nodeOf(inside).position).toEqual({ x: 50, y: 50 });
+    expect(nodeOf(outside).position.x).toBe(200);
+  });
+
+  it('does nothing when the only other selected node is a descendant', () => {
+    const frame = store().addFrame({ x: 500, y: 100 });
+    const inside = rect(550, 150, 100, 100, frame);
+
+    select(frame, inside);
+    store().alignSelected('left');
+
+    // One rect is not a selection to align, so nothing moved and no history
+    // entry was pushed: the two adds and the reparent are the whole history.
+    expect(nodeOf(frame).position).toEqual({ x: 500, y: 100 });
+    expect(nodeOf(inside).position).toEqual({ x: 50, y: 50 });
+  });
+});
+
 describe('addConnectedShape', () => {
   it('places the neighbor to the right with a gap and connects it', () => {
     const a = store().addShape('rectangle', { x: 100, y: 100 });
