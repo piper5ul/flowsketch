@@ -13,6 +13,7 @@ import { nanoid } from 'nanoid';
 import type { DiagramData } from '../../shared/types';
 import type { ConnectorData, ConnectorKind, Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { api } from '../lib/api';
@@ -438,14 +439,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   onConnect: (connection) => {
     pushHistory(get());
     set((s) => {
-      const data: ConnectorData = {
-        connectorType: s.defaultConnector,
-        stroke: '#6B7080',
-        strokeStyle: 'solid',
-        label: '',
-        startArrow: false,
-        endArrow: true,
-      };
+      const data = makeEdgeData(s.defaultConnector);
       return {
         edges: rfAddEdge(
           {
@@ -542,14 +536,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       selected: true,
       data: { label: '', shape: source.data.shape, fill: source.data.fill, stroke: source.data.stroke },
     };
-    const edgeData: ConnectorData = {
-      connectorType: state.defaultConnector,
-      stroke: '#6B7080',
-      strokeStyle: 'solid',
-      label: '',
-      startArrow: false,
-      endArrow: true,
-    };
+    const edgeData = makeEdgeData(state.defaultConnector);
     const edge: ConnectorEdge = {
       id: nanoid(8),
       source: sourceId,

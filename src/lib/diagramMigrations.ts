@@ -12,12 +12,10 @@
  */
 import type { DiagramData, SerializedEdge, SerializedNode } from '../../shared/types';
 import { computeMarkers } from './edgeMarkers';
+import { DEFAULT_EDGE_STROKE } from './defaults';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 1;
-
-/** Same value as `DEFAULT_EDGE_STROKE`; inlined until that constant exists. */
-const LEGACY_EDGE_STROKE = '#6B7080';
 
 type Bag = Record<string, unknown>;
 
@@ -62,7 +60,7 @@ function v0ToV1(raw: Bag): Bag {
       // Markers are derived state; recompute them so a v0 row with stale or
       // missing arrowheads renders the arrows its data actually asks for.
       const { markerStart, markerEnd } = computeMarkers({
-        stroke: isNonEmptyString(data.stroke) ? data.stroke : LEGACY_EDGE_STROKE,
+        stroke: isNonEmptyString(data.stroke) ? data.stroke : DEFAULT_EDGE_STROKE,
         startArrow: data.startArrow === true,
         // An end arrow is the app default, so only an explicit `false` removes it.
         endArrow: data.endArrow !== false,

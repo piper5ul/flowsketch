@@ -9,6 +9,7 @@ import {
   type Rect,
 } from '../lib/edgeGeometry';
 import { manhattanRoute } from '../lib/manhattanRouter';
+import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { FontSize } from '../types';
@@ -326,7 +327,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const { x: sx, y: sy } = anchorToPoint(sourceAnchor, rectOfNode(sourceNode));
   const { x: tx, y: ty } = anchorToPoint(targetAnchor, rectOfNode(targetNode));
 
-  const stroke = data?.stroke ?? '#6B7080';
+  const stroke = data?.stroke ?? DEFAULT_EDGE_STROKE;
   const strokeStyle = data?.strokeStyle ?? 'solid';
   const connectorType = data?.connectorType ?? 'elbow';
   const waypoint = data?.waypoint ?? null;
