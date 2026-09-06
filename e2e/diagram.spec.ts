@@ -387,3 +387,49 @@ test('an image dropped onto the canvas lands where it was dropped', async ({ pag
   expect(Math.abs(dropped.x + dropped.width / 2 - drop.x)).toBeLessThan(20);
   expect(Math.abs(dropped.y + dropped.height / 2 - drop.y)).toBeLessThan(20);
 });
+
+test('pressing ? opens the shortcut cheat sheet, and Escape closes it', async ({ page }) => {
+  await signUp(page);
+  await newDiagram(page);
+
+  await page.keyboard.press('?');
+  const sheet = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  await expect(sheet).toBeVisible();
+  await expect(sheet.getByRole('heading', { name: 'Keyboard shortcuts' })).toBeVisible();
+  // The sheet is generated from the registry, so a known command has to be in it.
+  await expect(sheet.getByText('Undo', { exact: true })).toBeVisible();
+
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+});
+
+test('right-clicking a shape opens a context menu that deletes it', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  const node = page.locator('.react-flow__node');
+  await expect(node).toHaveCount(1);
+
+  // Right-clicking an unselected shape selects it, then acts on it.
+  await node.click({ button: 'right' });
+  const menu = page.getByRole('menu', { name: 'Canvas actions' });
+  await expect(menu).toBeVisible();
+
+  await menu.getByRole('menuitem', { name: 'Delete' }).click();
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  await expect(menu).toBeHidden();
+});
+
+test('X selects the hexagon tool', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('x');
+  await pane.click({ position: { x: 640, y: 400 } });
+
+  const node = page.locator('.react-flow__node');
+  await expect(node).toHaveCount(1);
+  await expect(node.locator('[data-shape="hexagon"]')).toHaveCount(1);
+});

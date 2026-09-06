@@ -1,0 +1,93 @@
+import { useEffect, useMemo, useRef } from 'react';
+import { formatShortcut, registry } from '../commands/commands';
+import type { Command, CommandContext, ContextMenuTarget } from '../commands/types';
+
+export interface ContextMenuState {
+  x: number;
+  y: number;
+  target: Exclude<ContextMenuTarget, 'any'>;
+}
+
+function offeredOn(command: Command, target: ContextMenuState['target']): boolean {
+  if (!command.contextMenu) return false;
+  const targets = Array.isArray(command.contextMenu) ? command.contextMenu : [command.contextMenu];
+  return targets.includes('any') || targets.includes(target);
+}
+
+const MENU_WIDTH = 208;
+/** Rough height per item plus the panel's own padding — enough to keep the menu on screen. */
+const ITEM_HEIGHT = 30;
+const MENU_PADDING = 12;
+
+export function ContextMenu({
+  state,
+  ctx,
+  onClose,
+}: {
+  state: ContextMenuState;
+  ctx: CommandContext;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // The menu is rebuilt from the registry every time it opens, so a command
+  // added to the registry shows up here without touching this file.
+  const items = useMemo(
+    () => registry.all().filter((command) => offeredOn(command, state.target) && (!command.when || command.when(ctx))),
+    [state.target, ctx],
+  );
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      // Captured, so Escape dismisses the menu without also clearing the
+      // selection the menu is acting on.
+      event.stopPropagation();
+      event.preventDefault();
+      onClose();
+    }
+    function onPointerDown(event: PointerEvent) {
+      if (ref.current?.contains(event.target as Node)) return;
+      onClose();
+    }
+    window.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('pointerdown', onPointerDown);
+    };
+  }, [onClose]);
+
+  if (items.length === 0) return null;
+
+  const height = items.length * ITEM_HEIGHT + MENU_PADDING;
+  const left = Math.min(state.x, window.innerWidth - MENU_WIDTH - 8);
+  const top = Math.min(state.y, window.innerHeight - height - 8);
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label="Canvas actions"
+      className="panel-in fixed z-50 flex flex-col gap-0.5 rounded-xl bg-white p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.35)] ring-1 ring-black/[0.06]"
+      style={{ left: Math.max(8, left), top: Math.max(8, top), width: MENU_WIDTH }}
+    >
+      {items.map((command) => (
+        <button
+          key={command.id}
+          role="menuitem"
+          onClick={() => {
+            command.run(ctx);
+            onClose();
+          }}
+          className="flex items-center justify-between gap-4 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium text-ink-800 transition hover:bg-black/[0.05]"
+        >
+          <span>{command.title}</span>
+          <span className="text-[11px] font-semibold text-ink-600/60">
+            {formatShortcut(command.shortcut)}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}

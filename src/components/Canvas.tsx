@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -10,9 +10,10 @@ import {
 import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { makeEdgeData } from '../lib/defaults';
-import { renderDiagramPng } from '../lib/exportImage';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { useImageInsert } from '../lib/useImageInsert';
+import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
+import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { LeftRail } from './LeftRail';
@@ -21,26 +22,9 @@ import { BottomBar } from './BottomBar';
 import { TopBar } from './TopBar';
 import { AlignmentGuides } from './AlignmentGuides';
 import { TextFormatBar } from './TextFormatBar';
-import type { FontSize, ShapeData, ShapeKind, Tool } from '../types';
-
-const SHAPE_TOOLS: ShapeKind[] = ['rectangle', 'ellipse', 'diamond', 'sticky', 'text', 'pill', 'triangle', 'hexagon', 'cylinder'];
-const SHORTCUTS: Record<string, Tool> = {
-  v: 'select',
-  h: 'pan',
-  r: 'rectangle',
-  o: 'ellipse',
-  d: 'diamond',
-  s: 'sticky',
-  n: 'sticky',
-  t: 'text',
-  a: 'connector',
-  l: 'connector',
-  u: 'pill',
-  g: 'triangle',
-  y: 'cylinder',
-};
-
-let copiedStyle: Partial<ShapeData> | null = null;
+import { ShortcutSheet } from './ShortcutSheet';
+import { ContextMenu, type ContextMenuState } from './ContextMenu';
+import type { ShapeData, ShapeKind, Tool } from '../types';
 
 function isTypingTarget(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false;
@@ -56,11 +40,8 @@ export function Canvas() {
   const addShape = useDiagramStore((s) => s.addShape);
   const tool = useDiagramStore((s) => s.tool);
   const setTool = useDiagramStore((s) => s.setTool);
-  const deleteSelection = useDiagramStore((s) => s.deleteSelection);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
-  const undo = useDiagramStore((s) => s.undo);
-  const redo = useDiagramStore((s) => s.redo);
   const defaultConnector = useDiagramStore((s) => s.defaultConnector);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
@@ -68,10 +49,85 @@ export function Canvas() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevToolRef = useRef<Tool>('select');
   const connectorSourceRef = useRef<string | null>(null);
+  // Both clipboards live outside the store: neither belongs in a saved diagram.
+  const clipboardRef = useRef<ClipboardPayload | null>(null);
+  const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   useEffect(() => {
     if (tool !== 'connector') connectorSourceRef.current = null;
   }, [tool]);
+
+  // Everything a command is allowed to reach: the store, the viewport, the two
+  // clipboards, hold-to-pan and the sheet.
+  const commandContext = useMemo<CommandContext>(
+    () => ({
+      store: useDiagramStore,
+      view: { zoomIn, zoomOut, zoomTo, fitView },
+      clipboard: {
+        get: () => clipboardRef.current,
+        set: (value) => { clipboardRef.current = value; },
+      },
+      styleClipboard: {
+        get: () => styleClipboardRef.current,
+        set: (value) => { styleClipboardRef.current = value; },
+      },
+      pan: {
+        begin: () => {
+          prevToolRef.current = useDiagramStore.getState().tool;
+          useDiagramStore.getState().setTool('pan');
+        },
+        end: () => useDiagramStore.getState().setTool(prevToolRef.current),
+      },
+      ui: { openShortcuts: () => setShortcutsOpen(true) },
+    }),
+    [zoomIn, zoomOut, zoomTo, fitView],
+  );
+
+  const runCommand = useCallback(
+    (id: string) => {
+      const command = registry.find(id);
+      if (!command || (command.when && !command.when(commandContext))) return;
+      command.run(commandContext);
+    },
+    [commandContext],
+  );
+
+  /** Right-clicking something that is not selected selects it first. */
+  const selectOnly = useCallback((kind: 'node' | 'edge', id: string) => {
+    const state = useDiagramStore.getState();
+    useDiagramStore.setState({
+      nodes: state.nodes.map((n) => ({ ...n, selected: kind === 'node' && n.id === id })),
+      edges: state.edges.map((e) => ({ ...e, selected: kind === 'edge' && e.id === id })),
+    });
+  }, []);
+
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: ShapeNode) => {
+      event.preventDefault();
+      if (!node.selected) selectOnly('node', node.id);
+      setContextMenu({ x: event.clientX, y: event.clientY, target: 'node' });
+    },
+    [selectOnly],
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (event: React.MouseEvent, edge: { id: string; selected?: boolean }) => {
+      event.preventDefault();
+      if (!edge.selected) selectOnly('edge', edge.id);
+      setContextMenu({ x: event.clientX, y: event.clientY, target: 'edge' });
+    },
+    [selectOnly],
+  );
+
+  const onPaneContextMenu = useCallback((event: React.MouseEvent | MouseEvent) => {
+    event.preventDefault();
+    setContextMenu({ x: event.clientX, y: event.clientY, target: 'pane' });
+  }, []);
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
 
   const onNodeDragStart = useCallback(
     (event: MouseEvent | TouchEvent) => {
@@ -153,7 +209,7 @@ export function Canvas() {
         return;
       }
 
-      if (!SHAPE_TOOLS.includes(tool as ShapeKind)) return;
+      if (!SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) return;
       const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const shape = tool as ShapeKind;
       const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
@@ -249,12 +305,10 @@ export function Canvas() {
     [screenToFlowPosition, addNodes, addEdges, defaultConnector],
   );
 
+  // Pasted images are uploaded and referenced by URL. Inlining them as
+  // base64 used to blow a screenshot-sized paste past the 5 MB limit on the
+  // diagram's JSON body, which failed the save rather than the paste.
   useEffect(() => {
-    let clipboard: ClipboardPayload | null = null;
-
-    // Pasted images are uploaded and referenced by URL. Inlining them as
-    // base64 used to blow a screenshot-sized paste past the 5 MB limit on the
-    // diagram's JSON body, which failed the save rather than the paste.
     function onPaste(e: ClipboardEvent) {
       if (isTypingTarget(e.target)) return;
       const items = e.clipboardData?.items;
@@ -272,259 +326,37 @@ export function Canvas() {
       insertImages(files);
     }
 
+    window.addEventListener('paste', onPaste);
+    return () => window.removeEventListener('paste', onPaste);
+  }, [insertImages]);
+
+  // Every shortcut is a command now; this handler only decides whether one
+  // applies. A keystroke that matches nothing falls through untouched, which is
+  // what leaves ⌘V to the paste listener above when our clipboard is empty.
+  useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (isTypingTarget(e.target)) return;
-
-      // Undo / Redo
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
-
-      // Select all (excludes locked nodes)
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a') {
-        e.preventDefault();
-        const state = useDiagramStore.getState();
-        useDiagramStore.setState({
-          nodes: state.nodes.map((n) => ({ ...n, selected: !n.data.locked })),
-          edges: state.edges.map((ed) => ({ ...ed, selected: true })),
-        });
-        return;
-      }
-
-      // Cmd+Shift+C → Copy as image
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
-        e.preventDefault();
-        void renderDiagramPng().then(async (dataUrl) => {
-          if (!dataUrl) return;
-          const res = await fetch(dataUrl);
-          const blob = await res.blob();
-          await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-        });
-        return;
-      }
-
-      // Cmd+Shift+D → Save as default style
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
-        e.preventDefault();
-        const state = useDiagramStore.getState();
-        const sel = state.nodes.find((nd) => nd.selected);
-        if (sel) state.setDefaultStyle({ fill: sel.data.fill, stroke: sel.data.stroke });
-        return;
-      }
-
-      // Cmd+Shift+L → Lock/unlock
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'l') {
-        e.preventDefault();
-        useDiagramStore.getState().toggleLock();
-        return;
-      }
-
-      // Cmd+Option+C → Copy style
-      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyC') {
-        e.preventDefault();
-        const sel = useDiagramStore.getState().nodes.find((nd) => nd.selected);
-        if (sel) {
-          const { fill, stroke, fontSize, bold, italic, textAlign, verticalAlign } = sel.data;
-          copiedStyle = { fill, stroke, fontSize, bold, italic, textAlign, verticalAlign };
-        }
-        return;
-      }
-
-      // Cmd+Option+V → Paste style
-      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'KeyV') {
-        e.preventDefault();
-        if (copiedStyle) useDiagramStore.getState().updateSelectedNodesData(copiedStyle);
-        return;
-      }
-
-      // Cmd+Option+= → Increase font size
-      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'Equal') {
-        e.preventDefault();
-        const SIZES: FontSize[] = ['small', 'medium', 'large'];
-        const sel = useDiagramStore.getState().nodes.find((nd) => nd.selected);
-        if (sel) {
-          const idx = SIZES.indexOf(sel.data.fontSize ?? 'medium');
-          useDiagramStore.getState().updateSelectedNodesData({ fontSize: SIZES[Math.min(idx + 1, 2)] });
-        }
-        return;
-      }
-
-      // Cmd+Option+- → Decrease font size
-      if ((e.metaKey || e.ctrlKey) && e.altKey && e.code === 'Minus') {
-        e.preventDefault();
-        const SIZES: FontSize[] = ['small', 'medium', 'large'];
-        const sel = useDiagramStore.getState().nodes.find((nd) => nd.selected);
-        if (sel) {
-          const idx = SIZES.indexOf(sel.data.fontSize ?? 'medium');
-          useDiagramStore.getState().updateSelectedNodesData({ fontSize: SIZES[Math.max(0, idx - 1)] });
-        }
-        return;
-      }
-
-      // Copy / Cut
-      if ((e.metaKey || e.ctrlKey) && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'x')) {
-        const state = useDiagramStore.getState();
-        const selNodes = state.nodes.filter((n) => n.selected);
-        const selEdges = state.edges.filter((ed) => ed.selected);
-        if (selNodes.length === 0 && selEdges.length === 0) return;
-        const selNodeIds = new Set(selNodes.map((n) => n.id));
-        const connectedEdges = selEdges.length > 0
-          ? selEdges
-          : state.edges.filter((ed) => selNodeIds.has(ed.source) && selNodeIds.has(ed.target));
-        clipboard = {
-          nodes: selNodes.map((n) => ({ ...n, selected: false })),
-          edges: connectedEdges.map((ed) => ({ ...ed, selected: false })),
-        };
-        if (e.key.toLowerCase() === 'x') {
-          e.preventDefault();
-          deleteSelection();
-        }
-        return;
-      }
-
-      // Duplicate
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
-        e.preventDefault();
-        useDiagramStore.getState().duplicateSelection();
-        return;
-      }
-
-      // Paste
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
-        if (!clipboard || clipboard.nodes.length === 0) return;
-        e.preventDefault();
-        // Paste again from what was just pasted, so repeats keep stepping away.
-        clipboard = useDiagramStore.getState().pasteClipboard(clipboard);
-        return;
-      }
-
-      // Zoom in / out
-      if ((e.metaKey || e.ctrlKey) && (e.key === '=' || e.key === '+')) {
-        e.preventDefault();
-        zoomIn({ duration: 150 });
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === '-') {
-        e.preventDefault();
-        zoomOut({ duration: 150 });
-        return;
-      }
-
-      // Fit view
-      if ((e.metaKey || e.ctrlKey) && e.key === '0') {
-        e.preventDefault();
-        fitView({ padding: 0.2, duration: 300 });
-        return;
-      }
-
-      // Cmd+] → Bring forward, Cmd+[ → Send backward
-      if ((e.metaKey || e.ctrlKey) && e.key === ']') {
-        e.preventDefault();
-        useDiagramStore.getState().bringForward();
-        return;
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === '[') {
-        e.preventDefault();
-        useDiagramStore.getState().sendBackward();
-        return;
-      }
-
-      // Enter to edit
-      if (e.key === 'Enter') {
-        const state = useDiagramStore.getState();
-        const selNodes = state.nodes.filter((n) => n.selected);
-        const selEdges = state.edges.filter((ed) => ed.selected);
-        if (selNodes.length === 1) {
-          e.preventDefault();
-          setEditingNodeId(selNodes[0].id);
-          return;
-        }
-        if (selNodes.length === 0 && selEdges.length === 1) {
-          e.preventDefault();
-          setEditingEdgeId(selEdges[0].id);
-          return;
-        }
-      }
-
-      // Escape to deselect
-      if (e.key === 'Escape') {
-        const state = useDiagramStore.getState();
-        if (state.editingNodeId || state.editingEdgeId) return;
-        useDiagramStore.setState({
-          nodes: state.nodes.map((n) => ({ ...n, selected: false })),
-          edges: state.edges.map((ed) => ({ ...ed, selected: false })),
-        });
-        setTool('select');
-        return;
-      }
-
-      // Arrow keys to nudge selected shapes
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        const state = useDiagramStore.getState();
-        if (!state.nodes.some((n) => n.selected)) return;
-        e.preventDefault();
-        const step = e.shiftKey ? 10 : 1;
-        const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
-        const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
-        state.nudgeSelected(dx, dy);
-        return;
-      }
-
-      // Delete
-      if (e.key === 'Backspace' || e.key === 'Delete') {
-        e.preventDefault();
-        deleteSelection();
-        return;
-      }
-
-      // Space to pan (hold)
-      if (e.key === ' ' && !e.repeat) {
-        const currentTool = useDiagramStore.getState().tool;
-        if (currentTool !== 'pan') {
-          e.preventDefault();
-          prevToolRef.current = currentTool;
-          setTool('pan');
-        }
-        return;
-      }
-
-      // Bare zoom shortcuts
-      if (e.key === '=' || e.key === '+') { zoomIn({ duration: 150 }); return; }
-      if (e.key === '-' && !e.metaKey && !e.ctrlKey) { zoomOut({ duration: 150 }); return; }
-      if (e.key === '0') { zoomTo(1, { duration: 150 }); return; }
-      if (e.key === '1') { fitView({ padding: 0.2, duration: 300 }); return; }
-      if (e.key === '2') {
-        const selNodes = useDiagramStore.getState().nodes.filter((nd) => nd.selected);
-        if (selNodes.length > 0) fitView({ nodes: selNodes.map((nd) => ({ id: nd.id })), padding: 0.2, duration: 300 });
-        return;
-      }
-
-      // Bare layer ordering: ] bring to front, [ send to back
-      if (e.key === ']') { useDiagramStore.getState().bringToFront(); return; }
-      if (e.key === '[') { useDiagramStore.getState().sendToBack(); return; }
-
-      const nextTool = SHORTCUTS[e.key.toLowerCase()];
-      if (nextTool) setTool(nextTool);
+      // The sheet is modal: it takes Escape itself and swallows the rest.
+      if (shortcutsOpen) return;
+      const command = registry.matchEvent(e, commandContext);
+      if (!command) return;
+      e.preventDefault();
+      command.run(commandContext);
     }
 
+    // Hold-to-pan is the one shortcut with two halves: the keydown is the
+    // `view.pan` command, and releasing Space hands the previous tool back.
     function onKeyUp(e: KeyboardEvent) {
-      if (e.key === ' ') {
-        setTool(prevToolRef.current);
-      }
+      if (e.key === ' ') commandContext.pan.end();
     }
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
-    window.addEventListener('paste', onPaste);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
-      window.removeEventListener('paste', onPaste);
     };
-  }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, insertImages]);
+  }, [commandContext, shortcutsOpen]);
 
   return (
     <div
@@ -547,10 +379,15 @@ export function Canvas() {
         onNodeClick={onNodeClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
+        onPaneContextMenu={onPaneContextMenu}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={30}
         connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}
-        panOnDrag={tool === 'pan' ? true : [1, 2]}
+        // The right button opens the context menu, so panning is the middle
+        // button plus the hand tool and hold-to-pan.
+        panOnDrag={tool === 'pan' ? true : [1]}
         selectionOnDrag={tool === 'select'}
         nodesDraggable={tool !== 'connector'}
         panOnScroll
@@ -565,7 +402,7 @@ export function Canvas() {
         fitView
         fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         defaultViewport={{ x: 0, y: 0, zoom: 0.8 }}
-        className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOLS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
+        className={`${tool === 'pan' ? 'cursor-grab' : (SHAPE_TOOL_KINDS.includes(tool as ShapeKind) || tool === 'connector') ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
         proOptions={{ hideAttribution: true }}
       >
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="#D6D9E4" className="rf-canvas" />
@@ -576,7 +413,12 @@ export function Canvas() {
       <LeftRail />
       <FloatingToolbar />
       <TextFormatBar />
-      <BottomBar />
+      <BottomBar onRunCommand={runCommand} />
+
+      {contextMenu && (
+        <ContextMenu state={contextMenu} ctx={commandContext} onClose={closeContextMenu} />
+      )}
+      {shortcutsOpen && <ShortcutSheet onClose={closeShortcuts} />}
     </div>
   );
 }

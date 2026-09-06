@@ -46,6 +46,8 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Quick-add neighbor buttons on hover that create a connected shape in any direction
 - Drag connector endpoints to reconnect them to other shapes
 - Drag connector labels along the path to reposition them
+- Right-click a shape, a connector or the canvas for a context menu of the actions that apply
+- Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
 - Auto-save to server (diagrams persist across sessions)
 
 ### Collaboration-Ready Backend
@@ -69,12 +71,13 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `D` | Diamond |
 | `U` | Pill |
 | `G` | Triangle |
+| `X` | Hexagon |
 | `Y` | Cylinder |
 | `S` / `N` | Sticky note |
 | `T` | Text |
 | `A` / `L` | Connector |
 
-Hexagon has no keyboard shortcut — select it from the left rail. Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.
+Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.
 
 ### Editing
 
@@ -85,6 +88,7 @@ Hexagon has no keyboard shortcut — select it from the left rail. Pressing a to
 | Double-click a shape | Edit its text inline |
 | Double-click a connector label | Edit the label |
 | Double-click empty canvas | Add a text shape and edit it |
+| Right-click | Open the context menu for the shape, connector or canvas under the pointer |
 | `Backspace` / `Delete` | Delete the selection |
 
 ### Selection & arrangement
@@ -131,6 +135,11 @@ Hexagon has no keyboard shortcut — select it from the left rail. Pressing a to
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
+| `?` | Show the keyboard shortcut cheat sheet |
+
+Every shortcut above is a single entry in the command registry (`src/commands/`), which also
+generates the cheat sheet and the right-click menus — so this table, the tooltips and the app
+cannot drift apart.
 
 ## Tech Stack
 
