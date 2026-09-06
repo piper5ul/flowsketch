@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import type { DiagramRole } from '../shared/types.js';
+import { serveForTest } from './testServer.js';
 
 const { prismaMock } = vi.hoisted(() => ({
   prismaMock: { diagram: { findFirst: vi.fn() } },
@@ -85,8 +86,12 @@ describe('getDiagramAccess', () => {
 });
 
 describe('requireDiagramRole', () => {
-  /** A one-route app that reports what the helper decided. */
-  function appRequiring(minimum: DiagramRole) {
+  /**
+   * A listening server for a one-route app that reports what the helper
+   * decided. Built per case because `minimum` differs; one port per test
+   * rather than one per request. See `testServer.ts`.
+   */
+  async function serverRequiring(minimum: DiagramRole) {
     const app = express();
     app.get('/d/:id', (req, _res, next) => {
       req.user = { id: 'u1' } as NonNullable<typeof req.user>;
@@ -99,29 +104,29 @@ describe('requireDiagramRole', () => {
       if (!access) return;
       res.json({ role: access.role });
     });
-    return app;
+    return serveForTest(app);
   }
 
   it('lets a caller through whose role is strong enough', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'owner', members: [{ role: 'editor' }] });
-    const res = await request(appRequiring('viewer')).get('/d/d1').expect(200);
+    const res = await request(await serverRequiring('viewer')).get('/d/d1').expect(200);
     expect(res.body).toEqual({ role: 'editor' });
   });
 
   it('404s a caller with no access at all, so the diagram stays unobservable', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    const res = await request(appRequiring('viewer')).get('/d/d1').expect(404);
+    const res = await request(await serverRequiring('viewer')).get('/d/d1').expect(404);
     expect(res.body).toEqual({ error: 'Not found' });
   });
 
   it('403s a caller who can see it but may not do this to it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'owner', members: [{ role: 'viewer' }] });
-    const res = await request(appRequiring('editor')).get('/d/d1').expect(403);
+    const res = await request(await serverRequiring('editor')).get('/d/d1').expect(403);
     expect(res.body).toEqual({ error: 'Forbidden' });
   });
 
   it('403s an editor where ownership is required', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'owner', members: [{ role: 'editor' }] });
-    await request(appRequiring('owner')).get('/d/d1').expect(403);
+    await request(await serverRequiring('owner')).get('/d/d1').expect(403);
   });
 });

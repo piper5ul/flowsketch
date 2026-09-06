@@ -170,18 +170,39 @@ imagesRouter.use((err: unknown, _req: Request, res: Response, next: NextFunction
 });
 
 /**
- * Delete the images in `candidateIds` that no diagram of `ownerId` references
- * any more, rows and files both. Call it *after* the diagram that referenced
- * them is gone, or it will count itself as a live reference.
+ * Delete the images in `candidateIds` that nothing of `ownerId`'s references
+ * any more, rows and files both. Call it *after* the diagram (or version) that
+ * referenced them is gone, or it will count itself as a live reference.
+ *
+ * **What counts as a reference:** the owner's live diagrams *and* the stored
+ * `DiagramVersion` rows of those diagrams. Scanning boards alone was the
+ * original behaviour and it was wrong: an image edited off the canvas was
+ * deleted while a snapshot still drew it, so restoring far enough back brought
+ * the node back pointing at a 404. Version history is part of what keeps an
+ * image alive, so it is part of what decides one is dead.
+ *
+ * **Cost:** two queries, issued together — the same `data`-wide scan the image
+ * routes already pay (documented at `memberCanSeeImage`), now over a second
+ * table. Retention caps history at `MAX_VERSIONS` per diagram, so the version
+ * scan is bounded by the same thing the diagram scan is.
  */
 export async function deleteOrphanImages(ownerId: string, candidateIds: string[]): Promise<string[]> {
   if (candidateIds.length === 0) return [];
 
-  const survivors = await prisma.diagram.findMany({
-    where: { userId: ownerId },
-    select: { data: true },
-  });
-  const stillReferenced = new Set(survivors.flatMap((d) => imageIdsInDiagram(d.data)));
+  const [survivors, history] = await Promise.all([
+    prisma.diagram.findMany({
+      where: { userId: ownerId },
+      select: { data: true },
+    }),
+    prisma.diagramVersion.findMany({
+      where: { diagram: { userId: ownerId } },
+      select: { data: true },
+    }),
+  ]);
+  const stillReferenced = new Set([
+    ...survivors.flatMap((d) => imageIdsInDiagram(d.data)),
+    ...history.flatMap((v) => imageIdsInDiagram(v.data)),
+  ]);
   const orphanIds = candidateIds.filter((id) => !stillReferenced.has(id));
   if (orphanIds.length === 0) return [];
 

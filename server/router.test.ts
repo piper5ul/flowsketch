@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { AuthUser } from './types.js';
 import { MAX_THUMBNAIL_CHARS, THUMBNAIL_DATA_URL_PREFIX } from '../shared/types.js';
 import { MAX_TITLE_CHARS } from './validation.js';
+import { serveForFile } from './testServer.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-router-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -75,6 +76,9 @@ const app = express();
 // would parse (a 200 KB thumbnail) is not turned into a 413 by the harness.
 app.use('/api', express.json({ limit: '5mb' }));
 app.use('/api', apiRouter);
+// One port for the whole file, rather than the one-per-request supertest binds
+// when handed an app — see `testServer.ts` for what that was costing.
+const server = await serveForFile(app);
 
 const owned = { id: 'd1', userId: 'u1', title: 'Mine', starred: false, data: { nodes: [], edges: [] } };
 
@@ -103,18 +107,21 @@ beforeEach(() => {
   // to `versions.test.ts`; here it only has to stay out of the way, so the
   // newest snapshot is always "just now" and the interval suppresses it.
   prismaMock.diagramVersion.findFirst.mockResolvedValue({ createdAt: new Date() });
+  // The orphan scan reads stored versions as well as live diagrams. A diagram
+  // with no history is the default; the case where one exists is asserted below.
+  prismaMock.diagramVersion.findMany.mockResolvedValue([]);
 });
 
 describe('auth gate', () => {
   it('rejects every route without a session', async () => {
     authState.user = null;
-    await request(app).get('/api/diagrams').expect(401);
-    await request(app).post('/api/diagrams').send({}).expect(401);
-    await request(app).get('/api/diagrams/d1').expect(401);
-    await request(app).put('/api/diagrams/d1').send({}).expect(401);
-    await request(app).delete('/api/diagrams/d1').expect(401);
-    await request(app).patch('/api/diagrams/d1/star').expect(401);
-    await request(app).post('/api/diagrams/d1/duplicate').expect(401);
+    await request(server).get('/api/diagrams').expect(401);
+    await request(server).post('/api/diagrams').send({}).expect(401);
+    await request(server).get('/api/diagrams/d1').expect(401);
+    await request(server).put('/api/diagrams/d1').send({}).expect(401);
+    await request(server).delete('/api/diagrams/d1').expect(401);
+    await request(server).patch('/api/diagrams/d1/star').expect(401);
+    await request(server).post('/api/diagrams/d1/duplicate').expect(401);
     expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
   });
 });
@@ -138,7 +145,7 @@ describe('GET /api/diagrams', () => {
 
   it('lists the caller\'s own diagrams, newest first, as metadata', async () => {
     prismaMock.diagram.findMany.mockResolvedValue([listRow()]);
-    const res = await request(app).get('/api/diagrams').expect(200);
+    const res = await request(server).get('/api/diagrams').expect(200);
     expect(res.body).toHaveLength(1);
     expect(res.body[0]).not.toHaveProperty('data');
     expect(res.body[0]).toMatchObject({ id: 'd1', role: 'owner' });
@@ -158,7 +165,7 @@ describe('GET /api/diagrams', () => {
       listRow({ id: 'd2', title: 'Theirs', userId: 'u2', user: { name: 'User Two' }, members: [{ role: 'editor' }] }),
       listRow({ id: 'd3', title: 'Read only', userId: 'u2', user: { name: 'User Two' }, members: [{ role: 'viewer' }] }),
     ]);
-    const res = await request(app).get('/api/diagrams').expect(200);
+    const res = await request(server).get('/api/diagrams').expect(200);
     expect(res.body.map((d: { id: string; role: string }) => [d.id, d.role])).toEqual([
       ['d1', 'owner'],
       ['d2', 'editor'],
@@ -172,7 +179,7 @@ describe('GET /api/diagrams', () => {
 
   it('includes createdAt, which the dashboard offers as a sort order', async () => {
     prismaMock.diagram.findMany.mockResolvedValue([]);
-    await request(app).get('/api/diagrams').expect(200);
+    await request(server).get('/api/diagrams').expect(200);
     const [{ select }] = prismaMock.diagram.findMany.mock.calls[0] as [{ select: object }];
     expect(select).toMatchObject({ createdAt: true });
   });
@@ -181,19 +188,19 @@ describe('GET /api/diagrams', () => {
 describe('POST /api/diagrams', () => {
   it('creates an empty untitled diagram for the caller by default', async () => {
     prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'new', ...data }));
-    const res = await request(app).post('/api/diagrams').send({}).expect(201);
+    const res = await request(server).post('/api/diagrams').send({}).expect(201);
     expect(res.body).toMatchObject({ id: 'new', userId: 'u1', title: 'Untitled', data: { nodes: [], edges: [] } });
   });
 
   it('accepts a title and initial data', async () => {
     prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'new', ...data }));
-    const res = await request(app).post('/api/diagrams').send({ title: 'Plan', data: { nodes: [{ id: 'n' }], edges: [] } }).expect(201);
+    const res = await request(server).post('/api/diagrams').send({ title: 'Plan', data: { nodes: [{ id: 'n' }], edges: [] } }).expect(201);
     expect(res.body.title).toBe('Plan');
     expect(res.body.data.nodes).toHaveLength(1);
   });
 
   it('rejects a title longer than 200 characters without touching the database', async () => {
-    const res = await request(app).post('/api/diagrams').send({ title: 'x'.repeat(201) }).expect(400);
+    const res = await request(server).post('/api/diagrams').send({ title: 'x'.repeat(201) }).expect(400);
     expect(res.body).toMatchObject({ error: 'Invalid body' });
     expect(res.body.issues[0]).toMatchObject({ path: 'title' });
     expect(prismaMock.diagram.create).not.toHaveBeenCalled();
@@ -203,7 +210,7 @@ describe('POST /api/diagrams', () => {
 describe('GET /api/diagrams/:id', () => {
   it('returns the full diagram when the caller owns it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ ...owned, shareToken: null });
-    const res = await request(app).get('/api/diagrams/d1').expect(200);
+    const res = await request(server).get('/api/diagrams/d1').expect(200);
     expect(res.body).toMatchObject({ id: 'd1', data: { nodes: [], edges: [] }, role: 'owner' });
     expect(prismaMock.diagram.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: accessWhere('d1') }),
@@ -212,21 +219,21 @@ describe('GET /api/diagrams/:id', () => {
 
   it('404s for a diagram the caller can neither own nor see (indistinguishable from missing)', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    await request(app).get('/api/diagrams/someone-elses').expect(404);
+    await request(server).get('/api/diagrams/someone-elses').expect(404);
   });
 
   it('serves a diagram the caller is a viewer of, without the owner\'s share token', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(
       memberRow('viewer', { ...owned, userId: 'u2', shareToken: 'secret-token' }),
     );
-    const res = await request(app).get('/api/diagrams/d1').expect(200);
+    const res = await request(server).get('/api/diagrams/d1').expect(200);
     expect(res.body).toMatchObject({ id: 'd1', role: 'viewer' });
     expect(res.body).not.toHaveProperty('shareToken');
   });
 
   it('refuses a member row carrying a role it does not recognise', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ ...owned, userId: 'u2', members: [{ role: 'admin' }] });
-    await request(app).get('/api/diagrams/d1').expect(404);
+    await request(server).get('/api/diagrams/d1').expect(404);
   });
 });
 
@@ -234,12 +241,12 @@ describe('PUT /api/diagrams/:id', () => {
   it('updates only the fields that were sent', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed' });
-    await request(app).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { title: 'Renamed' } });
   });
 
   it('rejects a non-boolean starred before looking the diagram up', async () => {
-    const res = await request(app).put('/api/diagrams/d1').send({ starred: 'yes' }).expect(400);
+    const res = await request(server).put('/api/diagrams/d1').send({ starred: 'yes' }).expect(400);
     expect(res.body).toMatchObject({ error: 'Invalid body' });
     expect(res.body.issues[0]).toMatchObject({ path: 'starred' });
     expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
@@ -247,32 +254,59 @@ describe('PUT /api/diagrams/:id', () => {
   });
 
   it('rejects a body with nothing to update', async () => {
-    await request(app).put('/api/diagrams/d1').send({}).expect(400);
+    await request(server).put('/api/diagrams/d1').send({}).expect(400);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
   it('refuses to update a diagram the caller does not own', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    await request(app).put('/api/diagrams/d1').send({ title: 'Hijack' }).expect(404);
+    await request(server).put('/api/diagrams/d1').send({ title: 'Hijack' }).expect(404);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
   it('lets an editor write', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Edited' });
-    await request(app).put('/api/diagrams/d1').send({ title: 'Edited' }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ title: 'Edited' }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { title: 'Edited' } });
+  });
+
+  it('never hands an editor the owner\'s share token back', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
+    // `update` reads the whole row back, so the share token is in hand here —
+    // the response is where it has to be dropped.
+    prismaMock.diagram.update.mockResolvedValue({
+      ...owned,
+      userId: 'owner-user',
+      title: 'Edited',
+      shareToken: 'secret-token',
+    });
+
+    const res = await request(server).put('/api/diagrams/d1').send({ title: 'Edited' }).expect(200);
+
+    expect(res.body).toMatchObject({ id: 'd1', title: 'Edited' });
+    expect(res.body).not.toHaveProperty('shareToken');
+  });
+
+  it('keeps the share token in the owner\'s own PUT response', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
+    prismaMock.diagram.update.mockResolvedValue({ ...owned, shareToken: 'secret-token' });
+
+    const res = await request(server).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
+
+    // The owner is the one person the link belongs to; the share dialog reads it.
+    expect(res.body.shareToken).toBe('secret-token');
   });
 
   it('refuses a viewer\'s write with a 403, not a 404: they can already see it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('viewer'));
-    await request(app).put('/api/diagrams/d1').send({ title: 'Nope' }).expect(403);
+    await request(server).put('/api/diagrams/d1').send({ title: 'Nope' }).expect(403);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
   it('refuses even an editor\'s attempt to star: the flag belongs to the owner', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
-    await request(app).put('/api/diagrams/d1').send({ starred: true }).expect(403);
+    await request(server).put('/api/diagrams/d1').send({ starred: true }).expect(403);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
@@ -290,7 +324,7 @@ describe('PUT /api/diagrams/:id', () => {
     prismaMock.diagram.findMany.mockResolvedValue([]);
     prismaMock.image.findMany.mockResolvedValue([]);
 
-    await request(app).put('/api/diagrams/d1').send({ data: { nodes: [], edges: [] } }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ data: { nodes: [], edges: [] } }).expect(200);
 
     // Scoped to `owner-user`, whose uploads they are — never to the editor.
     expect(prismaMock.diagram.findMany).toHaveBeenCalledWith({
@@ -303,19 +337,19 @@ describe('PUT /api/diagrams/:id', () => {
     const thumbnail = `${THUMBNAIL_DATA_URL_PREFIX}iVBORw0KGgo=`;
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagram.update.mockResolvedValue({ ...owned, thumbnail });
-    await request(app).put('/api/diagrams/d1').send({ thumbnail }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ thumbnail }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { thumbnail } });
   });
 
   it('clears the thumbnail when it is sent as null', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagram.update.mockResolvedValue({ ...owned, thumbnail: null });
-    await request(app).put('/api/diagrams/d1').send({ thumbnail: null }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ thumbnail: null }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { thumbnail: null } });
   });
 
   it('rejects a thumbnail that is not a PNG data URL', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .put('/api/diagrams/d1')
       .send({ thumbnail: 'data:image/svg+xml;base64,PHN2Zz4=' })
       .expect(400);
@@ -325,7 +359,7 @@ describe('PUT /api/diagrams/:id', () => {
 
   it('rejects an oversized thumbnail before it reaches the database', async () => {
     const huge = THUMBNAIL_DATA_URL_PREFIX + 'A'.repeat(MAX_THUMBNAIL_CHARS);
-    await request(app).put('/api/diagrams/d1').send({ thumbnail: huge }).expect(400);
+    await request(server).put('/api/diagrams/d1').send({ thumbnail: huge }).expect(400);
     expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
@@ -341,7 +375,7 @@ describe('PUT /api/diagrams/:id — the ifUnmodifiedSince guard', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', updatedAt: loadedAt });
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed', updatedAt: savedAt });
 
-    const res = await request(app)
+    const res = await request(server)
       .put('/api/diagrams/d1')
       .send({ title: 'Renamed', ifUnmodifiedSince: loadedAt.toISOString() })
       .expect(200);
@@ -357,7 +391,7 @@ describe('PUT /api/diagrams/:id — the ifUnmodifiedSince guard', () => {
   it('refuses the write with a 409 when the row has moved on', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', updatedAt: movedOnAt });
 
-    const res = await request(app)
+    const res = await request(server)
       .put('/api/diagrams/d1')
       .send({ title: 'Stale', ifUnmodifiedSince: loadedAt.toISOString() })
       .expect(409);
@@ -370,12 +404,12 @@ describe('PUT /api/diagrams/:id — the ifUnmodifiedSince guard', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', updatedAt: movedOnAt });
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Mine wins' });
 
-    await request(app).put('/api/diagrams/d1').send({ title: 'Mine wins' }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ title: 'Mine wins' }).expect(200);
     expect(prismaMock.diagram.update).toHaveBeenCalled();
   });
 
   it('rejects a guard that is not an ISO timestamp', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .put('/api/diagrams/d1')
       .send({ title: 'Renamed', ifUnmodifiedSince: 'yesterday' })
       .expect(400);
@@ -384,7 +418,7 @@ describe('PUT /api/diagrams/:id — the ifUnmodifiedSince guard', () => {
   });
 
   it('does not treat the guard on its own as something to update', async () => {
-    await request(app)
+    await request(server)
       .put('/api/diagrams/d1')
       .send({ ifUnmodifiedSince: loadedAt.toISOString() })
       .expect(400);
@@ -396,26 +430,26 @@ describe('DELETE /api/diagrams/:id', () => {
   it('deletes an owned diagram and returns 204', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagram.delete.mockResolvedValue(owned);
-    await request(app).delete('/api/diagrams/d1').expect(204);
+    await request(server).delete('/api/diagrams/d1').expect(204);
     expect(prismaMock.diagram.delete).toHaveBeenCalledWith({ where: { id: 'd1' } });
   });
 
   it('refuses to delete a diagram the caller does not own', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    await request(app).delete('/api/diagrams/d1').expect(404);
+    await request(server).delete('/api/diagrams/d1').expect(404);
     expect(prismaMock.diagram.delete).not.toHaveBeenCalled();
   });
 
   it('refuses to delete a diagram the caller only edits', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor', { id: 'd1', data: { nodes: [], edges: [] } }));
-    await request(app).delete('/api/diagrams/d1').expect(403);
+    await request(server).delete('/api/diagrams/d1').expect(403);
     expect(prismaMock.diagram.delete).not.toHaveBeenCalled();
   });
 
   it('does not touch the image tables when the diagram references no images', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', data: { nodes: [], edges: [] } });
     prismaMock.diagram.delete.mockResolvedValue(owned);
-    await request(app).delete('/api/diagrams/d1').expect(204);
+    await request(server).delete('/api/diagrams/d1').expect(204);
     expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
   });
@@ -446,7 +480,7 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
     fs.writeFileSync(lonelyFile, 'x');
     fs.writeFileSync(sharedFile, 'x');
 
-    await request(app).delete('/api/diagrams/d1').expect(204);
+    await request(server).delete('/api/diagrams/d1').expect(204);
 
     expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['lonely'] }, userId: 'u1' },
@@ -466,7 +500,7 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.image.findMany.mockResolvedValue([{ id: 'lonely', mime: 'image/png' }]);
     prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
 
-    await request(app).delete('/api/diagrams/d1').expect(204);
+    await request(server).delete('/api/diagrams/d1').expect(204);
 
     // Otherwise the diagram being deleted would count as a live reference to its own images.
     const deletedAt = prismaMock.diagram.delete.mock.invocationCallOrder[0];
@@ -489,7 +523,7 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
     // Ownership filter matches nothing: the id was in the JSON but the row is someone else's.
     prismaMock.image.findMany.mockResolvedValue([]);
 
-    await request(app).delete('/api/diagrams/d1').expect(204);
+    await request(server).delete('/api/diagrams/d1').expect(204);
 
     expect(prismaMock.image.findMany).toHaveBeenCalledWith({
       where: { id: { in: ['not-mine'] }, userId: 'u1' },
@@ -507,7 +541,7 @@ describe('DELETE /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.delete.mockResolvedValue(owned);
     prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
 
-    await request(app).delete('/api/diagrams/d1').expect(204);
+    await request(server).delete('/api/diagrams/d1').expect(204);
   });
 });
 
@@ -536,7 +570,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     const droppedFile = imagePath('u1', 'dropped', 'png');
     fs.writeFileSync(droppedFile, 'x');
 
-    await request(app).put('/api/diagrams/d1').send(bodyWith('kept')).expect(200);
+    await request(server).put('/api/diagrams/d1').send(bodyWith('kept')).expect(200);
 
     expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['dropped'] }, userId: 'u1' },
@@ -558,11 +592,51 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     const sharedFile = imagePath('u1', 'shared', 'png');
     fs.writeFileSync(sharedFile, 'x');
 
-    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+    await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
 
     expect(prismaMock.image.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
     expect(fs.existsSync(sharedFile)).toBe(true);
+  });
+
+  it('keeps a dropped image that only a stored version still draws', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('in-history'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    // Nothing on any live board references it any more…
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    // …but a snapshot of the owner's own diagram still does, and restoring that
+    // snapshot has to bring the picture back with it.
+    prismaMock.diagramVersion.findMany.mockResolvedValue([{ data: bodyWith('in-history').data }]);
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const historicFile = imagePath('u1', 'in-history', 'png');
+    fs.writeFileSync(historicFile, 'x');
+
+    await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    // Scoped to the owner's own history, as the diagram scan is to their boards.
+    expect(prismaMock.diagramVersion.findMany).toHaveBeenCalledWith({
+      where: { diagram: { userId: 'u1' } },
+      select: { data: true },
+    });
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+    expect(fs.existsSync(historicFile)).toBe(true);
+  });
+
+  it('deletes a dropped image once no version references it either', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(existingWith('dropped'));
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
+    // History exists but draws something else, so it is no reason to keep it.
+    prismaMock.diagramVersion.findMany.mockResolvedValue([{ data: bodyWith('other').data }]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'dropped', mime: 'image/png' }]);
+    prismaMock.image.deleteMany.mockResolvedValue({ count: 1 });
+
+    await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+
+    expect(prismaMock.image.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['dropped'] }, userId: 'u1' },
+    });
   });
 
   it('scans the survivors only after the row is updated', async () => {
@@ -571,7 +645,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.findMany.mockResolvedValue([{ data: bodyWith().data }]);
     prismaMock.image.findMany.mockResolvedValue([]);
 
-    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+    await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
 
     // Otherwise the pre-edit JSON would still count as a live reference.
     const updatedAt = prismaMock.diagram.update.mock.invocationCallOrder[0];
@@ -583,7 +657,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('kept'));
     prismaMock.diagram.update.mockResolvedValue(owned);
 
-    await request(app).put('/api/diagrams/d1').send(bodyWith('kept', 'added')).expect(200);
+    await request(server).put('/api/diagrams/d1').send(bodyWith('kept', 'added')).expect(200);
 
     expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
@@ -593,7 +667,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.findFirst.mockResolvedValue(existingWith('kept'));
     prismaMock.diagram.update.mockResolvedValue({ ...owned, title: 'Renamed' });
 
-    await request(app).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
+    await request(server).put('/api/diagrams/d1').send({ title: 'Renamed' }).expect(200);
 
     expect(prismaMock.diagram.findMany).not.toHaveBeenCalled();
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
@@ -604,7 +678,7 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
     prismaMock.diagram.update.mockResolvedValue(owned);
     prismaMock.diagram.findMany.mockRejectedValue(new Error('database on fire'));
 
-    await request(app).put('/api/diagrams/d1').send(bodyWith()).expect(200);
+    await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
   });
 });
 
@@ -620,7 +694,7 @@ describe('POST /api/diagrams/:id/duplicate', () => {
     prismaMock.diagram.findFirst.mockResolvedValue(source);
     prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'd2', ...data }));
 
-    const res = await request(app).post('/api/diagrams/d1/duplicate').expect(201);
+    const res = await request(server).post('/api/diagrams/d1/duplicate').expect(201);
 
     expect(res.body).toMatchObject({ id: 'd2', title: 'Roadmap (copy)', data: source.data });
     expect(prismaMock.diagram.create).toHaveBeenCalledWith({
@@ -636,7 +710,7 @@ describe('POST /api/diagrams/:id/duplicate', () => {
 
   it('looks the source up under the caller, so another user\'s diagram is a 404', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    await request(app).post('/api/diagrams/someone-elses/duplicate').expect(404);
+    await request(server).post('/api/diagrams/someone-elses/duplicate').expect(404);
     expect(prismaMock.diagram.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: accessWhere('someone-elses') }),
     );
@@ -645,7 +719,7 @@ describe('POST /api/diagrams/:id/duplicate', () => {
 
   it('stays owner-only: a member may open the diagram but not copy it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor', source));
-    await request(app).post('/api/diagrams/d1/duplicate').expect(403);
+    await request(server).post('/api/diagrams/d1/duplicate').expect(403);
     expect(prismaMock.diagram.create).not.toHaveBeenCalled();
   });
 
@@ -653,7 +727,7 @@ describe('POST /api/diagrams/:id/duplicate', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ ...source, title: 'x'.repeat(MAX_TITLE_CHARS) });
     prismaMock.diagram.create.mockImplementation(async ({ data }: { data: object }) => ({ id: 'd2', ...data }));
 
-    const res = await request(app).post('/api/diagrams/d1/duplicate').expect(201);
+    const res = await request(server).post('/api/diagrams/d1/duplicate').expect(201);
 
     expect(res.body.title).toHaveLength(MAX_TITLE_CHARS);
     expect(res.body.title.endsWith(' (copy)')).toBe(true);
@@ -664,14 +738,14 @@ describe('PATCH /api/diagrams/:id/star', () => {
   it('flips the starred flag and returns the new value', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', starred: false });
     prismaMock.diagram.update.mockResolvedValue({ ...owned, starred: true });
-    const res = await request(app).patch('/api/diagrams/d1/star').expect(200);
+    const res = await request(server).patch('/api/diagrams/d1/star').expect(200);
     expect(res.body).toEqual({ starred: true });
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({ where: { id: 'd1' }, data: { starred: true } });
   });
 
   it('stays owner-only: starring is a column on the row, not a per-user flag', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor', { id: 'd1', starred: false }));
-    await request(app).patch('/api/diagrams/d1/star').expect(403);
+    await request(server).patch('/api/diagrams/d1/star').expect(403);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 });

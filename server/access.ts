@@ -96,6 +96,26 @@ export async function getDiagramAccess<S extends DiagramColumns>(
 }
 
 /**
+ * A diagram row as it may be handed to a caller holding `role`.
+ *
+ * The public link is the owner's to give out: a member is not told whether one
+ * exists, let alone what it is. **Every route that answers with a diagram row
+ * goes through here**, because doing it by hand is exactly how `PUT` came to
+ * return the whole row (share token included) while `GET` stripped it.
+ *
+ * A row that never selected `shareToken` passes through untouched, so a route
+ * that has already narrowed its `select` pays nothing for the guarantee.
+ */
+export function publicDiagram<T extends { id: string; shareToken?: string | null }>(
+  row: T,
+  role: DiagramRole,
+): T | Omit<T, 'shareToken'> {
+  if (role === 'owner') return row;
+  const { shareToken: _ownersAlone, ...rest } = row;
+  return rest;
+}
+
+/**
  * `getDiagramAccess` for a request, answering the client itself when the
  * caller may not proceed: `404` when they have no access to `:id` at all (a
  * diagram they cannot see stays indistinguishable from one that is not there)

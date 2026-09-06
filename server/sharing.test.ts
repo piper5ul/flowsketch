@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AuthUser } from './types.js';
+import { serveForFile } from './testServer.js';
 
 const uploadDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flowsketch-sharing-uploads-'));
 process.env.UPLOAD_DIR = uploadDir;
@@ -71,6 +72,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 app.use('/api', sharingRouter);
+// One port for the whole file — see `testServer.ts`.
+const server = await serveForFile(app);
 
 /** A real, valid 1x1 transparent PNG. */
 const PNG_1X1 = Buffer.from(
@@ -108,11 +111,11 @@ describe('createShareToken', () => {
 describe('auth gate', () => {
   it('rejects the owner-side sharing routes without a session', async () => {
     authState.user = null;
-    await request(app).post('/api/diagrams/d1/share').expect(401);
-    await request(app).delete('/api/diagrams/d1/share').expect(401);
-    await request(app).get('/api/diagrams/d1/members').expect(401);
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'a@b.test', role: 'viewer' }).expect(401);
-    await request(app).delete('/api/diagrams/d1/members/u2').expect(401);
+    await request(server).post('/api/diagrams/d1/share').expect(401);
+    await request(server).delete('/api/diagrams/d1/share').expect(401);
+    await request(server).get('/api/diagrams/d1/members').expect(401);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'a@b.test', role: 'viewer' }).expect(401);
+    await request(server).delete('/api/diagrams/d1/members/u2').expect(401);
     expect(prismaMock.diagram.findFirst).not.toHaveBeenCalled();
   });
 
@@ -124,7 +127,7 @@ describe('auth gate', () => {
       data: { nodes: [], edges: [] },
       updatedAt: new Date(0),
     });
-    const res = await request(app).get('/api/shared/tok123').expect(200);
+    const res = await request(server).get('/api/shared/tok123').expect(200);
     expect(res.body).toEqual({
       id: 'd1',
       title: 'Public',
@@ -139,7 +142,7 @@ describe('POST /api/diagrams/:id/share', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', shareToken: null });
     prismaMock.diagram.update.mockResolvedValue({ id: 'd1' });
 
-    const res = await request(app).post('/api/diagrams/d1/share').expect(200);
+    const res = await request(server).post('/api/diagrams/d1/share').expect(200);
 
     expect(res.body.shareToken).toMatch(/^[A-Za-z0-9_-]{24,}$/);
     expect(res.body.url).toBe(`/s/${res.body.shareToken}`);
@@ -152,7 +155,7 @@ describe('POST /api/diagrams/:id/share', () => {
   it('returns the token already there rather than replacing it', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', shareToken: 'already-shared-token' });
 
-    const res = await request(app).post('/api/diagrams/d1/share').expect(200);
+    const res = await request(server).post('/api/diagrams/d1/share').expect(200);
 
     expect(res.body).toEqual({ shareToken: 'already-shared-token', url: '/s/already-shared-token' });
     // A URL the user has already pasted somewhere must keep working.
@@ -161,13 +164,13 @@ describe('POST /api/diagrams/:id/share', () => {
 
   it('is owner-only: an editor may not hand the diagram to the internet', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor', { id: 'd1', shareToken: null }));
-    await request(app).post('/api/diagrams/d1/share').expect(403);
+    await request(server).post('/api/diagrams/d1/share').expect(403);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
   it('404s a diagram the caller has no access to', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    await request(app).post('/api/diagrams/d1/share').expect(404);
+    await request(server).post('/api/diagrams/d1/share').expect(404);
   });
 });
 
@@ -176,7 +179,7 @@ describe('DELETE /api/diagrams/:id/share', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagram.update.mockResolvedValue({ id: 'd1' });
 
-    await request(app).delete('/api/diagrams/d1/share').expect(204);
+    await request(server).delete('/api/diagrams/d1/share').expect(204);
 
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({
       where: { id: 'd1' },
@@ -186,7 +189,7 @@ describe('DELETE /api/diagrams/:id/share', () => {
 
   it('is owner-only', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
-    await request(app).delete('/api/diagrams/d1/share').expect(403);
+    await request(server).delete('/api/diagrams/d1/share').expect(403);
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 });
@@ -200,7 +203,7 @@ describe('GET /api/shared/:token', () => {
       updatedAt: new Date('2026-09-05T10:00:00.000Z'),
     });
 
-    const res = await request(app).get('/api/shared/tok123').expect(200);
+    const res = await request(server).get('/api/shared/tok123').expect(200);
 
     expect(prismaMock.diagram.findUnique).toHaveBeenCalledWith({
       where: { shareToken: 'tok123' },
@@ -212,7 +215,7 @@ describe('GET /api/shared/:token', () => {
 
   it('404s a token that has been revoked, indistinguishably from one that never existed', async () => {
     prismaMock.diagram.findUnique.mockResolvedValue(null);
-    await request(app).get('/api/shared/stale-token').expect(404);
+    await request(server).get('/api/shared/stale-token').expect(404);
   });
 });
 
@@ -233,7 +236,7 @@ describe('GET /api/shared/:token/images/:imageId', () => {
       size: PNG_1X1.length,
     });
 
-    const res = await request(app).get('/api/shared/tok123/images/drawn').expect(200);
+    const res = await request(server).get('/api/shared/tok123/images/drawn').expect(200);
 
     expect(res.headers['content-type']).toBe('image/png');
     expect(Buffer.from(res.body).equals(PNG_1X1)).toBe(true);
@@ -242,7 +245,7 @@ describe('GET /api/shared/:token/images/:imageId', () => {
   it('404s an image the diagram does not reference, so a token cannot walk the owner\'s uploads', async () => {
     prismaMock.diagram.findUnique.mockResolvedValue({ data: { nodes: [nodeWithImage('drawn')], edges: [] } });
 
-    await request(app).get('/api/shared/tok123/images/other').expect(404);
+    await request(server).get('/api/shared/tok123/images/other').expect(404);
 
     // Never even looked the row up: the diagram's own JSON is the allow-list.
     expect(prismaMock.image.findUnique).not.toHaveBeenCalled();
@@ -250,7 +253,7 @@ describe('GET /api/shared/:token/images/:imageId', () => {
 
   it('404s every image once the token is revoked', async () => {
     prismaMock.diagram.findUnique.mockResolvedValue(null);
-    await request(app).get('/api/shared/stale-token/images/drawn').expect(404);
+    await request(server).get('/api/shared/stale-token/images/drawn').expect(404);
     expect(prismaMock.image.findUnique).not.toHaveBeenCalled();
   });
 
@@ -262,7 +265,7 @@ describe('GET /api/shared/:token/images/:imageId', () => {
       mime: 'image/png',
       size: 10,
     });
-    await request(app).get('/api/shared/tok123/images/ghost').expect(404);
+    await request(server).get('/api/shared/tok123/images/ghost').expect(404);
   });
 });
 
@@ -279,7 +282,7 @@ describe('GET /api/diagrams/:id/members', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagram.findUnique.mockResolvedValue(listed);
 
-    const res = await request(app).get('/api/diagrams/d1/members').expect(200);
+    const res = await request(server).get('/api/diagrams/d1/members').expect(200);
 
     expect(res.body).toEqual([
       { userId: 'u1', name: 'User One', email: 'u1@example.test', role: 'owner' },
@@ -291,12 +294,12 @@ describe('GET /api/diagrams/:id/members', () => {
   it('is readable by an editor', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
     prismaMock.diagram.findUnique.mockResolvedValue(listed);
-    await request(app).get('/api/diagrams/d1/members').expect(200);
+    await request(server).get('/api/diagrams/d1/members').expect(200);
   });
 
   it('is not readable by a viewer', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('viewer'));
-    await request(app).get('/api/diagrams/d1/members').expect(403);
+    await request(server).get('/api/diagrams/d1/members').expect(403);
     expect(prismaMock.diagram.findUnique).not.toHaveBeenCalled();
   });
 });
@@ -310,7 +313,7 @@ describe('POST /api/diagrams/:id/members', () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: 'u2', name: 'User Two', email: 'u2@example.test' });
     prismaMock.diagramMember.upsert.mockResolvedValue({ id: 'm1' });
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/diagrams/d1/members')
       .send({ email: 'u2@example.test', role: 'editor' })
       .expect(201);
@@ -327,7 +330,7 @@ describe('POST /api/diagrams/:id/members', () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: 'u2', name: 'User Two', email: 'u2@example.test' });
     prismaMock.diagramMember.upsert.mockResolvedValue({ id: 'm1' });
 
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'u2@example.test', role: 'viewer' }).expect(201);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'u2@example.test', role: 'viewer' }).expect(201);
 
     expect(prismaMock.diagramMember.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ update: { role: 'viewer' } }),
@@ -338,7 +341,7 @@ describe('POST /api/diagrams/:id/members', () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: 'u2', name: 'User Two', email: 'u2@example.test' });
     prismaMock.diagramMember.upsert.mockResolvedValue({ id: 'm1' });
 
-    await request(app)
+    await request(server)
       .post('/api/diagrams/d1/members')
       .send({ email: '  U2@Example.Test ', role: 'viewer' })
       .expect(201);
@@ -351,7 +354,7 @@ describe('POST /api/diagrams/:id/members', () => {
   it('404s an address with no account behind it, with a message the dialog can show', async () => {
     prismaMock.user.findUnique.mockResolvedValue(null);
 
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/diagrams/d1/members')
       .send({ email: 'nobody@example.test', role: 'viewer' })
       .expect(404);
@@ -362,20 +365,20 @@ describe('POST /api/diagrams/:id/members', () => {
 
   it('refuses to invite the owner to their own diagram', async () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: 'u1', name: 'User One', email: 'u1@example.test' });
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'u1@example.test', role: 'editor' }).expect(400);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'u1@example.test', role: 'editor' }).expect(400);
     expect(prismaMock.diagramMember.upsert).not.toHaveBeenCalled();
   });
 
   it('rejects a malformed address and an unknown role before any lookup', async () => {
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'not-an-email', role: 'viewer' }).expect(400);
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'u2@example.test', role: 'owner' }).expect(400);
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'u2@example.test' }).expect(400);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'not-an-email', role: 'viewer' }).expect(400);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'u2@example.test', role: 'owner' }).expect(400);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'u2@example.test' }).expect(400);
     expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
   });
 
   it('is owner-only: an editor cannot invite anyone', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
-    await request(app).post('/api/diagrams/d1/members').send({ email: 'u3@example.test', role: 'editor' }).expect(403);
+    await request(server).post('/api/diagrams/d1/members').send({ email: 'u3@example.test', role: 'editor' }).expect(403);
     expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
   });
 });
@@ -385,7 +388,7 @@ describe('DELETE /api/diagrams/:id/members/:userId', () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagramMember.deleteMany.mockResolvedValue({ count: 1 });
 
-    await request(app).delete('/api/diagrams/d1/members/u2').expect(204);
+    await request(server).delete('/api/diagrams/d1/members/u2').expect(204);
 
     expect(prismaMock.diagramMember.deleteMany).toHaveBeenCalledWith({
       where: { diagramId: 'd1', userId: 'u2' },
@@ -395,14 +398,14 @@ describe('DELETE /api/diagrams/:id/members/:userId', () => {
   it('is a 204 even when there was no such member, so removing twice is safe', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1' });
     prismaMock.diagramMember.deleteMany.mockResolvedValue({ count: 0 });
-    await request(app).delete('/api/diagrams/d1/members/nobody').expect(204);
+    await request(server).delete('/api/diagrams/d1/members/nobody').expect(204);
   });
 
   it('lets a viewer remove themselves', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('viewer'));
     prismaMock.diagramMember.deleteMany.mockResolvedValue({ count: 1 });
 
-    await request(app).delete('/api/diagrams/d1/members/u1').expect(204);
+    await request(server).delete('/api/diagrams/d1/members/u1').expect(204);
 
     expect(prismaMock.diagramMember.deleteMany).toHaveBeenCalledWith({
       where: { diagramId: 'd1', userId: 'u1' },
@@ -411,13 +414,13 @@ describe('DELETE /api/diagrams/:id/members/:userId', () => {
 
   it('refuses one member removing another', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('editor'));
-    await request(app).delete('/api/diagrams/d1/members/u3').expect(403);
+    await request(server).delete('/api/diagrams/d1/members/u3').expect(403);
     expect(prismaMock.diagramMember.deleteMany).not.toHaveBeenCalled();
   });
 
   it('404s for a diagram the caller cannot see at all', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(null);
-    await request(app).delete('/api/diagrams/d1/members/u1').expect(404);
+    await request(server).delete('/api/diagrams/d1/members/u1').expect(404);
     expect(prismaMock.diagramMember.deleteMany).not.toHaveBeenCalled();
   });
 });

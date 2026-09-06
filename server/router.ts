@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from './db.js';
 import { requireAuth } from './middleware.js';
-import { requireDiagramRole } from './access.js';
+import { publicDiagram, requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { sharingRouter } from './sharing.js';
@@ -97,7 +97,9 @@ apiRouter.post<Record<string, string>, unknown, CreateDiagramBody>(
         data: data || { nodes: [], edges: [] },
       },
     });
-    res.status(201).json(diagram);
+    // The caller owns what they just created, so nothing is stripped — it goes
+    // through the serializer so that no diagram-returning route is an exception.
+    res.status(201).json(publicDiagram(diagram, 'owner'));
   },
 );
 
@@ -114,14 +116,7 @@ apiRouter.get('/diagrams/:id', async (req, res) => {
     updatedAt: true,
   });
   if (!access) return;
-  const { shareToken, ...diagram } = access.diagram;
-  res.json({
-    ...diagram,
-    role: access.role,
-    // The public link is the owner's to hand out; a member is not told whether
-    // one exists, let alone what it is.
-    ...(access.role === 'owner' && { shareToken }),
-  });
+  res.json({ ...publicDiagram(access.diagram, access.role), role: access.role });
 });
 
 apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
@@ -191,6 +186,7 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
           data: existing.data,
           title: existing.title,
           createdById: authedUser(req).id,
+          ownerId,
         });
       } catch (err) {
         console.error(`Version snapshot failed for diagram ${req.params.id}:`, err);
@@ -207,7 +203,9 @@ apiRouter.put<{ id: string }, unknown, UpdateDiagramBody>(
         console.error(`Orphan image cleanup failed for diagram ${req.params.id}:`, err);
       }
     }
-    res.json(updated);
+    // `update` reads the whole row back, share token and all, and an editor is
+    // as much "not the owner" here as they are on the `GET`.
+    res.json(publicDiagram(updated, access.role));
   },
 );
 
@@ -252,7 +250,9 @@ apiRouter.post('/diagrams/:id/duplicate', async (req, res) => {
       starred: false,
     },
   });
-  res.status(201).json(copy);
+  // The copy belongs to the caller, so again nothing is stripped; the call is
+  // here so that adding a route beside this one inherits the rule.
+  res.status(201).json(publicDiagram(copy, 'owner'));
 });
 
 /**
