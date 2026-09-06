@@ -204,7 +204,7 @@ interface DiagramState {
   setNodeSizeTransient: (id: string, size: { width?: number; height?: number }) => void;
 
   nudgeSelected: (dx: number, dy: number) => void;
-  duplicateSelection: (offset?: number) => void;
+  duplicateSelection: (options?: { offset?: number; select?: boolean }) => void;
   pasteClipboard: (clip: ClipboardPayload, offset?: number) => ClipboardPayload;
 
   setDefaultStyle: (patch: { fill?: string; stroke?: string; connector?: ConnectorKind }) => void;
@@ -215,7 +215,6 @@ interface DiagramState {
   sendBackward: () => void;
   toggleLock: () => void;
   updateSelectedNodesData: (patch: Partial<ShapeData>) => void;
-  duplicateSelectedInPlace: () => void;
 
   deleteSelection: () => void;
   undo: () => void;
@@ -262,6 +261,7 @@ function cloneSubgraph(
   nodes: ShapeNode[],
   edges: ConnectorEdge[],
   offset: number,
+  selected = true,
 ): { nodes: ShapeNode[]; edges: ConnectorEdge[] } {
   const idMap = new Map<string, string>();
   const clonedNodes = nodes.map((n) => {
@@ -271,7 +271,7 @@ function cloneSubgraph(
       ...n,
       id: newId,
       position: { x: n.position.x + offset, y: n.position.y + offset },
-      selected: true,
+      selected,
     };
   });
   const clonedEdges = edges.map((e) => ({
@@ -279,7 +279,7 @@ function cloneSubgraph(
     id: nanoid(8),
     source: idMap.get(e.source) ?? e.source,
     target: idMap.get(e.target) ?? e.target,
-    selected: true,
+    selected,
   }));
   return { nodes: clonedNodes, edges: clonedEdges };
 }
@@ -722,35 +722,6 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
-  duplicateSelectedInPlace: () => {
-    const state = get();
-    const selNodes = state.nodes.filter((n) => n.selected);
-    if (selNodes.length === 0) return;
-    pushHistory(state);
-
-    const idMap = new Map<string, string>();
-    const clones = selNodes.map((n) => {
-      const newId = nanoid(8);
-      idMap.set(n.id, newId);
-      return { ...n, id: newId, selected: false };
-    });
-    const selIds = new Set(selNodes.map((n) => n.id));
-    const edgeClones = (state.edges.filter(
-      (e) => selIds.has(e.source) && selIds.has(e.target),
-    ) as ConnectorEdge[]).map((e) => ({
-      ...e,
-      id: nanoid(8),
-      source: idMap.get(e.source) ?? e.source,
-      target: idMap.get(e.target) ?? e.target,
-      selected: false,
-    }));
-
-    set((s) => ({
-      nodes: [...clones, ...s.nodes],
-      edges: [...s.edges, ...edgeClones],
-    }));
-  },
-
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is
   // concerned, so entries coalesce until the keyboard goes quiet. Locked nodes
   // sit it out, the same way `onNodesChange` drops their drag positions.
@@ -775,7 +746,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
-  duplicateSelection: (offset = 30) => {
+  // ⌘D duplicates to an offset and moves the selection onto the copies. ⌥-drag
+  // asks for `{ offset: 0, select: false }` instead: the copy is left behind,
+  // unselected and underneath, while the originals travel with the pointer.
+  duplicateSelection: ({ offset = 30, select = true }: { offset?: number; select?: boolean } = {}) => {
     const state = get();
     const selNodes = state.nodes.filter((n) => n.selected);
     if (selNodes.length === 0) return;
@@ -783,12 +757,20 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     const selIds = new Set(selNodes.map((n) => n.id));
     const selEdges = state.edges.filter((e) => selIds.has(e.source) && selIds.has(e.target));
-    const clones = cloneSubgraph(selNodes, selEdges, offset);
+    const clones = cloneSubgraph(selNodes, selEdges, offset, select);
 
-    set((s) => ({
-      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...clones.nodes],
-      edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...clones.edges],
-    }));
+    set((s) =>
+      select
+        ? {
+            nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...clones.nodes],
+            edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...clones.edges],
+          }
+        : {
+            // Clones go first so they render behind the originals.
+            nodes: [...clones.nodes, ...s.nodes],
+            edges: [...s.edges, ...clones.edges],
+          },
+    );
   },
 
   // Returns what was pasted (deselected) so the caller can make it the next

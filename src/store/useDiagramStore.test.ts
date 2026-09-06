@@ -286,6 +286,42 @@ describe('duplicateSelection', () => {
     store().undo();
     expect(store().nodes).toHaveLength(1);
   });
+
+  // ⌥-drag duplicates in place: the clone is left behind, unselected and
+  // underneath, while the still-selected originals travel with the pointer.
+  describe('with { offset: 0, select: false }', () => {
+    it('clones selected nodes and the edges between them with fresh ids', () => {
+      const a = store().addShape('rectangle', { x: 0, y: 0 });
+      const b = store().addConnectedShape(a, 'right')!;
+      select(a, b);
+      store().duplicateSelection({ offset: 0, select: false });
+
+      expect(store().nodes).toHaveLength(4);
+      expect(store().edges).toHaveLength(2);
+      const allIds = new Set(store().nodes.map((n) => n.id));
+      expect(allIds.size).toBe(4);
+
+      const clonedEdge = store().edges.find((e) => e.source !== a)!;
+      expect(clonedEdge.source).not.toBe(a);
+      expect(clonedEdge.target).not.toBe(b);
+      expect(allIds.has(clonedEdge.source)).toBe(true);
+      expect(allIds.has(clonedEdge.target)).toBe(true);
+    });
+
+    it('leaves the clones unselected and behind the originals', () => {
+      const a = store().addShape('rectangle', { x: 40, y: 40 });
+      select(a);
+      store().duplicateSelection({ offset: 0, select: false });
+
+      const clone = store().nodes.find((n) => n.id !== a)!;
+      expect(clone.position).toEqual({ x: 40, y: 40 });
+      expect(clone.selected).toBe(false);
+      // Selection stays on the original so the drag that triggered this keeps
+      // moving it, and the clone renders underneath (earlier in the array).
+      expect(store().nodes.find((n) => n.id === a)!.selected).toBe(true);
+      expect(store().nodes[0].id).toBe(clone.id);
+    });
+  });
 });
 
 describe('pasteClipboard', () => {
@@ -427,26 +463,6 @@ describe('addConnectedShape', () => {
   it('returns null for an unknown source', () => {
     expect(store().addConnectedShape('nope', 'right')).toBeNull();
     expect(store().nodes).toHaveLength(0);
-  });
-});
-
-describe('duplicateSelectedInPlace', () => {
-  it('clones selected nodes and the edges between them with fresh ids', () => {
-    const a = store().addShape('rectangle', { x: 0, y: 0 });
-    const b = store().addConnectedShape(a, 'right')!;
-    select(a, b);
-    store().duplicateSelectedInPlace();
-
-    expect(store().nodes).toHaveLength(4);
-    expect(store().edges).toHaveLength(2);
-    const allIds = new Set(store().nodes.map((n) => n.id));
-    expect(allIds.size).toBe(4);
-
-    const clonedEdge = store().edges.find((e) => e.source !== a)!;
-    expect(clonedEdge.source).not.toBe(a);
-    expect(clonedEdge.target).not.toBe(b);
-    expect(allIds.has(clonedEdge.source)).toBe(true);
-    expect(allIds.has(clonedEdge.target)).toBe(true);
   });
 });
 

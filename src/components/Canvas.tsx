@@ -73,7 +73,8 @@ export function Canvas() {
   const onNodeDragStart = useCallback(
     (event: MouseEvent | TouchEvent) => {
       if (!('altKey' in event) || !event.altKey) return;
-      useDiagramStore.getState().duplicateSelectedInPlace();
+      // Leave a copy behind and keep dragging the originals.
+      useDiagramStore.getState().duplicateSelection({ offset: 0, select: false });
     },
     [],
   );
