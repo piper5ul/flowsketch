@@ -562,6 +562,122 @@ describe('alignSelected', () => {
   });
 });
 
+describe('distributeSelected', () => {
+  function rect(x: number, y: number, w = 100, h = 100) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('spreads three unevenly spaced nodes into equal gaps', () => {
+    const a = rect(0, 0);
+    const b = rect(150, 0);
+    const c = rect(400, 0);
+    select(a, b, c);
+    store().distributeSelected('x');
+
+    // 500 of span holding 300 of node leaves 200 over two gaps.
+    expect(nodeOf(a).position.x).toBe(0);
+    expect(nodeOf(b).position.x).toBe(200);
+    expect(nodeOf(c).position.x).toBe(400);
+  });
+
+  it('records one history entry and leaves an even row alone', () => {
+    const a = rect(0, 0);
+    const b = rect(200, 0);
+    const c = rect(400, 0);
+    select(a, b, c);
+    store().distributeSelected('x');
+    expect(nodeOf(b).position.x).toBe(200);
+
+    // Nothing moved, so the three addShape entries are the whole history.
+    store().undo();
+    store().undo();
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('does nothing with fewer than three nodes selected', () => {
+    const a = rect(0, 0);
+    const b = rect(150, 0);
+    select(a, b);
+    store().distributeSelected('x');
+    expect(nodeOf(b).position.x).toBe(150);
+  });
+
+  it('leaves a locked node where it is', () => {
+    const a = rect(0, 0);
+    const b = rect(150, 0);
+    const c = rect(400, 0);
+    select(b);
+    store().toggleLock();
+
+    select(a, b, c);
+    store().distributeSelected('x');
+    expect(nodeOf(b).position.x).toBe(150);
+  });
+});
+
+describe('matchSizeSelected', () => {
+  function rect(x: number, y: number, w: number, h: number) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('resizes the selection to the largest node in it', () => {
+    const small = rect(0, 0, 100, 50);
+    const big = rect(300, 0, 200, 120);
+    select(small, big);
+    store().matchSizeSelected('both');
+
+    expect(nodeOf(small)).toMatchObject({ width: 200, height: 120 });
+    // The reference itself is untouched, position included.
+    expect(nodeOf(big)).toMatchObject({ width: 200, height: 120, position: { x: 300, y: 0 } });
+  });
+
+  it('matches one dimension at a time', () => {
+    const small = rect(0, 0, 100, 50);
+    const big = rect(300, 0, 200, 120);
+    select(small, big);
+
+    store().matchSizeSelected('width');
+    expect(nodeOf(small)).toMatchObject({ width: 200, height: 50 });
+
+    store().matchSizeSelected('height');
+    expect(nodeOf(small)).toMatchObject({ width: 200, height: 120 });
+  });
+
+  it('records one history entry for the resize', () => {
+    const small = rect(0, 0, 100, 50);
+    const big = rect(300, 0, 200, 120);
+    select(small, big);
+    store().matchSizeSelected('both');
+
+    store().undo();
+    expect(nodeOf(small)).toMatchObject({ width: 100, height: 50 });
+    expect(nodeOf(big)).toMatchObject({ width: 200, height: 120 });
+  });
+
+  it('does nothing with a single node selected, and never resizes a locked one', () => {
+    const a = rect(0, 0, 100, 50);
+    const b = rect(300, 0, 200, 120);
+    select(a);
+    store().matchSizeSelected('both');
+    expect(nodeOf(a)).toMatchObject({ width: 100, height: 50 });
+
+    select(a);
+    store().toggleLock();
+    select(a, b);
+    store().matchSizeSelected('both');
+    expect(nodeOf(a)).toMatchObject({ width: 100, height: 50 });
+  });
+});
+
 describe('addConnectedShape', () => {
   it('places the neighbor to the right with a gap and connects it', () => {
     const a = store().addShape('rectangle', { x: 100, y: 100 });

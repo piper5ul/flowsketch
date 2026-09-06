@@ -16,10 +16,17 @@ export interface ArrangeRect {
 }
 
 export type AlignMode = 'left' | 'centerX' | 'right' | 'top' | 'centerY' | 'bottom';
+export type DistributeAxis = 'x' | 'y';
+export type MatchDimension = 'width' | 'height' | 'both';
 
 export interface ArrangePosition {
   x: number;
   y: number;
+}
+
+export interface ArrangeSize {
+  w: number;
+  h: number;
 }
 
 /**
@@ -68,4 +75,63 @@ export function alignNodes(rects: ArrangeRect[], mode: AlignMode): Record<string
     moved[rect.id] = { x, y };
   }
   return moved;
+}
+
+/**
+ * Spreads the rects so the *gaps between their edges* are equal — not their
+ * centres, which is the distinction that matters the moment two shapes are
+ * different sizes. The outermost two never move: the span they define is what
+ * the rest are spread inside, so distributing twice changes nothing.
+ *
+ * Rects are ordered by position along the axis, whatever order they arrive in.
+ * Returns the new position of every rect, keyed by id; empty below three rects,
+ * where there is no middle to move.
+ */
+export function distributeNodes(rects: ArrangeRect[], axis: DistributeAxis): Record<string, ArrangePosition> {
+  const moved: Record<string, ArrangePosition> = {};
+  if (rects.length < 3) return moved;
+
+  const horizontal = axis === 'x';
+  const start = (r: ArrangeRect) => (horizontal ? r.x : r.y);
+  const extent = (r: ArrangeRect) => (horizontal ? r.w : r.h);
+
+  const ordered = [...rects].sort((a, b) => start(a) - start(b) || a.id.localeCompare(b.id));
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
+  const span = start(last) + extent(last) - start(first);
+  const occupied = ordered.reduce((total, r) => total + extent(r), 0);
+  const gap = (span - occupied) / (ordered.length - 1);
+
+  let cursor = start(first);
+  for (const rect of ordered) {
+    moved[rect.id] = horizontal ? { x: cursor, y: rect.y } : { x: rect.x, y: cursor };
+    cursor += extent(rect) + gap;
+  }
+  // Accumulating the gap can leave the last rect a float's-width off the
+  // position it is supposed to have kept, so it is pinned rather than computed.
+  moved[last.id] = { x: last.x, y: last.y };
+  return moved;
+}
+
+/**
+ * Gives every rect the size of the largest one in the set (by area). Selection
+ * order is not tracked anywhere in the app — the store only knows *which* nodes
+ * are selected — so "the largest" is the reference a user can predict without
+ * remembering which shape they clicked first.
+ *
+ * Rects keep their position, so they grow (or shrink) from their top-left
+ * corner. Returns the new size of every rect, keyed by id; empty below two.
+ */
+export function matchSize(rects: ArrangeRect[], dim: MatchDimension): Record<string, ArrangeSize> {
+  const sized: Record<string, ArrangeSize> = {};
+  if (rects.length < 2) return sized;
+
+  const reference = rects.reduce((biggest, r) => (r.w * r.h > biggest.w * biggest.h ? r : biggest), rects[0]);
+  for (const rect of rects) {
+    sized[rect.id] = {
+      w: dim === 'height' ? rect.w : reference.w,
+      h: dim === 'width' ? rect.h : reference.h,
+    };
+  }
+  return sized;
 }

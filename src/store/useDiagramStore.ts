@@ -16,7 +16,17 @@ import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
-import { alignNodes, type AlignMode, type ArrangePosition, type ArrangeRect } from '../lib/arrange';
+import {
+  alignNodes,
+  distributeNodes,
+  matchSize,
+  type AlignMode,
+  type ArrangePosition,
+  type ArrangeRect,
+  type ArrangeSize,
+  type DistributeAxis,
+  type MatchDimension,
+} from '../lib/arrange';
 import { api } from '../lib/api';
 import { toastError } from './useToastStore';
 
@@ -250,6 +260,10 @@ interface DiagramState {
 
   /** Lines the selection up on its own bounding box. Needs two nodes to mean anything. */
   alignSelected: (mode: AlignMode) => void;
+  /** Equalises the gaps between the selection's edges. Needs three: the ends stay put. */
+  distributeSelected: (axis: DistributeAxis) => void;
+  /** Resizes the selection to its largest node. Needs two. */
+  matchSizeSelected: (dim: MatchDimension) => void;
 
   deleteSelection: () => void;
   undo: () => void;
@@ -309,6 +323,27 @@ function commitArrangedPositions(positions: Record<string, ArrangePosition>) {
   pushHistory(state);
   useDiagramStore.setState({
     nodes: state.nodes.map((n) => (movedIds.has(n.id) ? { ...n, position: positions[n.id] } : n)),
+  });
+}
+
+/** The size counterpart of `commitArrangedPositions`, with the same rules. */
+function commitArrangedSizes(sizes: Record<string, ArrangeSize>) {
+  const state = useDiagramStore.getState();
+  const resizedIds = new Set(
+    state.nodes
+      .filter((n) => {
+        const next = sizes[n.id];
+        return !n.data.locked && next && (next.w !== nodeWidth(n) || next.h !== nodeHeight(n));
+      })
+      .map((n) => n.id),
+  );
+  if (resizedIds.size === 0) return;
+
+  pushHistory(state);
+  useDiagramStore.setState({
+    nodes: state.nodes.map((n) =>
+      resizedIds.has(n.id) ? { ...n, width: sizes[n.id].w, height: sizes[n.id].h } : n,
+    ),
   });
 }
 
@@ -868,6 +903,18 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const rects = selectedRects(get().nodes);
     if (rects.length < 2) return;
     commitArrangedPositions(alignNodes(rects, mode));
+  },
+
+  distributeSelected: (axis) => {
+    const rects = selectedRects(get().nodes);
+    if (rects.length < 3) return;
+    commitArrangedPositions(distributeNodes(rects, axis));
+  },
+
+  matchSizeSelected: (dim) => {
+    const rects = selectedRects(get().nodes);
+    if (rects.length < 2) return;
+    commitArrangedSizes(matchSize(rects, dim));
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is
