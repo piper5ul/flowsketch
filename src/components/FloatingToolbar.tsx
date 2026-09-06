@@ -10,9 +10,11 @@ import {
   ChevronDown,
   Link2,
   RotateCcw,
+  Spline,
   Tag,
   X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { ColorPalette } from './ColorPalette';
@@ -21,11 +23,20 @@ import { TextFormatControls } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
-import type { StrokeStyle } from '../types';
+import type { ConnectorKind, StrokeStyle } from '../types';
 
 /** The toolbar's icon button. */
 const BUTTON_CLASS =
   'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white disabled:pointer-events-none disabled:opacity-30';
+
+/** The toolbar's icon button while it shows the value the selection already has. */
+const ACTIVE_BUTTON_CLASS = 'bg-accent-500 text-white hover:bg-accent-500';
+
+const CONNECTOR_KINDS: [ConnectorKind, LucideIcon, string][] = [
+  ['straight', ArrowRight, 'Straight line'],
+  ['elbow', CornerDownRight, 'Elbow line'],
+  ['curved', Spline, 'Curved line'],
+];
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
   solid: undefined,
@@ -166,28 +177,16 @@ export function FloatingToolbar() {
         {isEdgeMode && (
           <>
             <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <Tooltip label="Straight line" side="top">
-              <button
-                onClick={() => updateSelectedEdgesStyle({ connectorType: 'straight' })}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  connectorType === 'straight' && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
-              >
-                <ArrowRight size={16} />
-              </button>
-            </Tooltip>
-            <Tooltip label="Elbow line" side="top">
-              <button
-                onClick={() => updateSelectedEdgesStyle({ connectorType: 'elbow' })}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  connectorType === 'elbow' && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
-              >
-                <CornerDownRight size={16} />
-              </button>
-            </Tooltip>
+            {CONNECTOR_KINDS.map(([kind, Icon, label]) => (
+              <Tooltip key={kind} label={label} side="top">
+                <button
+                  onClick={() => updateSelectedEdgesStyle({ connectorType: kind })}
+                  className={clsx(BUTTON_CLASS, connectorType === kind && ACTIVE_BUTTON_CLASS)}
+                >
+                  <Icon size={16} />
+                </button>
+              </Tooltip>
+            ))}
             <Tooltip label="Reset route" side="top">
               <button
                 aria-label="Reset route"

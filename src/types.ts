@@ -3,7 +3,7 @@
  * picker), never drawn, so it has no `Tool` counterpart and no rail shortcut.
  */
 export type ShapeKind = 'rectangle' | 'ellipse' | 'diamond' | 'sticky' | 'text' | 'pill' | 'triangle' | 'hexagon' | 'cylinder' | 'image';
-export type ConnectorKind = 'straight' | 'elbow';
+export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 export type Direction = 'top' | 'right' | 'bottom' | 'left';
 export type Tool =

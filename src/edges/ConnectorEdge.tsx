@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react';
-import { BaseEdge, EdgeLabelRenderer, getStraightPath, useReactFlow, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from '@xyflow/react';
 import {
   anchorToPoint,
   distanceToRect,
@@ -8,12 +8,13 @@ import {
   type EdgeAnchor,
   type Rect,
 } from '../lib/edgeGeometry';
+import { buildConnectorPath, controlThrough, type Point } from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { DEFAULT_EDGE_STROKE } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
-import type { FontSize } from '../types';
+import type { ConnectorKind, FontSize } from '../types';
 
 const FONT_SIZE_PX: Record<FontSize, number> = { small: 11, medium: 12, large: 15 };
 
@@ -117,59 +118,6 @@ function historyOnce(): () => void {
   };
 }
 
-const BORDER_RADIUS = 10;
-
-function smoothStepPath(points: { x: number; y: number }[]): string {
-  if (points.length < 2) return '';
-  const parts: string[] = [`M ${points[0].x} ${points[0].y}`];
-  for (let i = 1; i < points.length - 1; i++) {
-    const prev = points[i - 1];
-    const curr = points[i];
-    const next = points[i + 1];
-    const d1 = Math.hypot(curr.x - prev.x, curr.y - prev.y);
-    const d2 = Math.hypot(next.x - curr.x, next.y - curr.y);
-    const r = Math.min(BORDER_RADIUS, d1 / 2, d2 / 2);
-    const dx1 = curr.x - prev.x, dy1 = curr.y - prev.y;
-    const len1 = Math.hypot(dx1, dy1) || 1;
-    const dx2 = next.x - curr.x, dy2 = next.y - curr.y;
-    const len2 = Math.hypot(dx2, dy2) || 1;
-    const ax = curr.x - (dx1 / len1) * r;
-    const ay = curr.y - (dy1 / len1) * r;
-    const bx = curr.x + (dx2 / len2) * r;
-    const by = curr.y + (dy2 / len2) * r;
-    parts.push(`L ${ax} ${ay}`);
-    parts.push(`Q ${curr.x} ${curr.y} ${bx} ${by}`);
-  }
-  const last = points[points.length - 1];
-  parts.push(`L ${last.x} ${last.y}`);
-  return parts.join(' ');
-}
-
-function cleanPath(pts: { x: number; y: number }[]): { x: number; y: number }[] {
-  if (pts.length <= 2) return pts;
-
-  const first = pts[0];
-  const last = pts[pts.length - 1];
-
-  for (let i = 0; i < pts.length - 1; i++) {
-    const a = pts[i], b = pts[i + 1];
-    if (Math.abs(a.x - b.x) > 0 && Math.abs(a.x - b.x) < 8) b.x = a.x;
-    if (Math.abs(a.y - b.y) > 0 && Math.abs(a.y - b.y) < 8) b.y = a.y;
-  }
-
-  const result = [first];
-  for (let i = 1; i < pts.length - 1; i++) {
-    const prev = result[result.length - 1];
-    const curr = pts[i];
-    const next = pts[i + 1];
-    const sameX = Math.abs(prev.x - curr.x) < 1 && Math.abs(curr.x - next.x) < 1;
-    const sameY = Math.abs(prev.y - curr.y) < 1 && Math.abs(curr.y - next.y) < 1;
-    if (!sameX && !sameY) result.push(curr);
-  }
-  result.push(last);
-  return result;
-}
-
 export function ConnectorEdge({ id, source, target, data, selected, markerStart, markerEnd }: EdgeProps<ConnectorEdgeType>) {
   const nodes = useDiagramStore((s) => s.nodes);
   const updateEdgeData = useDiagramStore((s) => s.updateEdgeData);
@@ -181,7 +129,11 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const { screenToFlowPosition } = useReactFlow();
   const editing = editingEdgeId === id;
   const labelRef = useRef<HTMLDivElement>(null);
-  const pathPointsRef = useRef<{ x: number; y: number }[]>([]);
+  const pathPointsRef = useRef<Point[]>([]);
+  // What the bend drag needs from the render that laid the path out. Held in a
+  // ref because the handler is a `useCallback` declared before the geometry —
+  // the endpoint nodes may be missing, so the layout runs after an early return.
+  const dragRef = useRef<{ kind: ConnectorKind; source: Point; target: Point } | null>(null);
 
   useEffect(() => {
     if (editing) {
@@ -205,7 +157,13 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       const onMove = (ev: PointerEvent) => {
         begin();
         const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
-        updateEdgeDataTransient(id, { waypoint: { x: flow.x, y: flow.y } });
+        const layout = dragRef.current;
+        // A curve is pulled by a control point off the curve; the other kinds
+        // pass through the waypoint, so the pointer is the waypoint.
+        const waypoint = layout?.kind === 'curved'
+          ? controlThrough(layout.source, flow, layout.target)
+          : { x: flow.x, y: flow.y };
+        updateEdgeDataTransient(id, { waypoint });
       };
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
@@ -333,52 +291,50 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const waypoint = data?.waypoint ?? null;
   const strokeWidth = selected ? 3 : 2.5;
 
-  let svgPathString: string;
-  let edgeCenterX: number;
-  let edgeCenterY: number;
-  let pathPoints: { x: number; y: number }[];
-  const segmentHandles: { x: number; y: number; orientation: 'h' | 'v' }[] = [];
-
+  // Only an elbow is routed around the other shapes; the other two kinds run
+  // straight from anchor to anchor and need nothing from the router.
+  let routed: Point[] | undefined;
   if (connectorType === 'elbow') {
-    const obstacles = nodes
-      .filter((n) => n.id !== source && n.id !== target)
-      .map(rectOfNode);
-
     const isVertical = (sourceAnchor.side === 'top' || sourceAnchor.side === 'bottom') &&
       (targetAnchor.side === 'top' || targetAnchor.side === 'bottom');
     const isHorizontal = (sourceAnchor.side === 'left' || sourceAnchor.side === 'right') &&
       (targetAnchor.side === 'left' || targetAnchor.side === 'right');
     const isCollinear = (isVertical && Math.abs(sx - tx) < 2) || (isHorizontal && Math.abs(sy - ty) < 2);
 
-    let fullPath: { x: number; y: number }[];
+    routed = isCollinear && !waypoint
+      ? []
+      : manhattanRoute({
+          sourceX: sx,
+          sourceY: sy,
+          targetX: tx,
+          targetY: ty,
+          sourceRect: rectOfNode(sourceNode),
+          targetRect: rectOfNode(targetNode),
+          obstacles: nodes.filter((n) => n.id !== source && n.id !== target).map(rectOfNode),
+          vertices: waypoint ? [waypoint] : [],
+          startDirections: [sourceAnchor.side],
+          endDirections: [targetAnchor.side],
+        }).points;
+  }
 
-    if (isCollinear && !waypoint) {
-      fullPath = [{ x: sx, y: sy }, { x: tx, y: ty }];
-    } else {
-      const routed = manhattanRoute({
-        sourceX: sx,
-        sourceY: sy,
-        targetX: tx,
-        targetY: ty,
-        sourceRect: rectOfNode(sourceNode),
-        targetRect: rectOfNode(targetNode),
-        obstacles,
-        vertices: waypoint ? [waypoint] : [],
-        startDirections: [sourceAnchor.side],
-        endDirections: [targetAnchor.side],
-      });
+  const { d: svgPathString, center, points: pathPoints } = buildConnectorPath(connectorType, {
+    source: { x: sx, y: sy },
+    target: { x: tx, y: ty },
+    sourceSide: sourceAnchor.side,
+    targetSide: targetAnchor.side,
+    waypoint,
+    routed,
+  });
+  const edgeCenterX = center.x;
+  const edgeCenterY = center.y;
 
-      fullPath = cleanPath([{ x: sx, y: sy }, ...routed.points, { x: tx, y: ty }]);
-    }
-    svgPathString = smoothStepPath(fullPath);
-    const mid = fullPath[Math.floor(fullPath.length / 2)];
-    edgeCenterX = mid.x;
-    edgeCenterY = mid.y;
-    pathPoints = fullPath;
-
-    for (let i = 0; i < fullPath.length - 1; i++) {
-      const p1 = fullPath[i];
-      const p2 = fullPath[i + 1];
+  // Grab handles for the individual runs of an elbow. The other kinds have no
+  // straight runs to grab, so their only handle is the bend at the centre.
+  const segmentHandles: { x: number; y: number; orientation: 'h' | 'v' }[] = [];
+  if (connectorType === 'elbow') {
+    for (let i = 0; i < pathPoints.length - 1; i++) {
+      const p1 = pathPoints[i];
+      const p2 = pathPoints[i + 1];
       const dx = p2.x - p1.x;
       const dy = p2.y - p1.y;
       if (Math.hypot(dx, dy) < 28) continue;
@@ -387,20 +343,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       if (Math.hypot(mx - edgeCenterX, my - edgeCenterY) < 10) continue;
       segmentHandles.push({ x: mx, y: my, orientation: Math.abs(dx) > Math.abs(dy) ? 'h' : 'v' });
     }
-  } else if (waypoint) {
-    svgPathString = `M ${sx} ${sy} L ${waypoint.x} ${waypoint.y} L ${tx} ${ty}`;
-    edgeCenterX = waypoint.x;
-    edgeCenterY = waypoint.y;
-    pathPoints = [{ x: sx, y: sy }, waypoint, { x: tx, y: ty }];
-  } else {
-    const [path, mx, my] = getStraightPath({ sourceX: sx, sourceY: sy, targetX: tx, targetY: ty });
-    svgPathString = path;
-    edgeCenterX = mx;
-    edgeCenterY = my;
-    pathPoints = [{ x: sx, y: sy }, { x: tx, y: ty }];
   }
 
   pathPointsRef.current = pathPoints;
+  dragRef.current = { kind: connectorType, source: { x: sx, y: sy }, target: { x: tx, y: ty } };
 
   const labelT = data?.labelT ?? 0.5;
   const labelPos = interpolatePolyline(pathPoints, labelT);
