@@ -6,7 +6,7 @@ import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import type { Direction, VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
-import { isAnchorNode } from '../lib/nodeKinds';
+import { canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
 import { useShiftKey } from '../lib/useShiftKey';
 
@@ -20,6 +20,10 @@ const TEXT_MIN_HEIGHT = 40;
  */
 const LABEL_PADDING_X = 12;
 const LABEL_PADDING_Y = 8;
+
+/** The drop shadow a shape casts when it is asked to, boxed and un-boxed. */
+const SHAPE_SHADOW = '0 12px 28px -10px rgba(20, 20, 50, 0.55)';
+const SHAPE_SHADOW_FILTER = 'drop-shadow(0 8px 10px rgba(20, 20, 50, 0.35))';
 
 const HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
   { id: 'top', position: Position.Top, style: { top: -5, left: '50%', transform: 'translateX(-50%)' } },
@@ -195,6 +199,19 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
       (verticalAlign === 'bottom' ? LABEL_PADDING_Y : 0) + ((height ?? 0) * inset.bottom) / 100,
   };
 
+  // Opacity and the drop shadow belong to the whole node rather than to the box
+  // inside it, so they go on the wrapper — where they leave the selection ring
+  // alone. A silhouette has no box for a shadow to trace, so it casts one
+  // through its alpha with a filter instead of a rectangle nothing drew.
+  const wrapperStyle: React.CSSProperties = {
+    opacity: data.opacity,
+    ...(data.shadow
+      ? hasClipShape || isCylinder
+        ? { filter: SHAPE_SHADOW_FILTER }
+        : { boxShadow: SHAPE_SHADOW }
+      : {}),
+  };
+
   const shapeClass = clsx(
     'relative h-full w-full flex justify-center transition-shadow',
     verticalAlign === 'top' && 'items-start',
@@ -214,6 +231,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
     <div
       data-shape={data.shape}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
+      style={wrapperStyle}
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}
     >
       <div
@@ -221,6 +239,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
         className={shapeClass}
         style={{
           ...labelPadding,
+          borderRadius: canRoundCorners(data.shape) ? data.cornerRadius : undefined,
           background: hasClipShape || isCylinder ? 'transparent' : data.fill,
           borderColor: data.stroke,
           boxShadow: hasClipShape || isCylinder

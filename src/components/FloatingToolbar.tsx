@@ -12,6 +12,7 @@ import {
   Link2,
   Shapes,
   RotateCcw,
+  SlidersHorizontal,
   Spline,
   Tag,
   X,
@@ -31,10 +32,14 @@ import {
   DEFAULT_START_ARROW,
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
-import { canSwapShapeKind } from '../lib/nodeKinds';
+import { canRoundCorners, canSwapShapeKind } from '../lib/nodeKinds';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
 import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
-import type { ArrowStyle, ConnectorKind, ShapeKind, StrokeStyle, StrokeWidth } from '../types';
+import type { ArrowStyle, ConnectorKind, ShapeData, ShapeKind, StrokeStyle, StrokeWidth } from '../types';
+
+/** How far a corner can be rounded, and how transparent a shape can get. */
+const CORNER_RADIUS_MAX = 40;
+const OPACITY_MIN = 0.1;
 
 /** The toolbar's icon button. */
 const BUTTON_CLASS =
@@ -185,6 +190,149 @@ function ArrowStylePicker({
   );
 }
 
+/** The Style popover's slider: a labelled range that reads its own value out. */
+function StyleSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  format,
+  onPreview,
+  onCommit,
+  onDragStart,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (value: number) => string;
+  onPreview: (value: number) => void;
+  onCommit: (value: number) => void;
+  onDragStart: () => void;
+}) {
+  const dragging = useRef(false);
+
+  return (
+    <label className="flex flex-col gap-1 px-1 py-1">
+      <span className="flex items-center justify-between text-[11px] font-medium text-white/60">
+        {label}
+        <span className="tabular-nums text-white/80">{format(value)}</span>
+      </span>
+      <input
+        type="range"
+        aria-label={label}
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        // A drag is one edit: the entry goes in when the thumb is grabbed and
+        // every frame after it is transient. A change that arrives without a
+        // pointer — the arrow keys, or a test setting the value — is a discrete
+        // edit of its own and commits on the spot.
+        onPointerDown={() => {
+          dragging.current = true;
+          onDragStart();
+        }}
+        onPointerUp={() => {
+          dragging.current = false;
+        }}
+        onLostPointerCapture={() => {
+          dragging.current = false;
+        }}
+        onChange={(e) => {
+          const next = Number(e.target.value);
+          if (dragging.current) onPreview(next);
+          else onCommit(next);
+        }}
+        className="h-1.5 w-40 cursor-pointer appearance-none rounded-full bg-white/15 accent-accent-500"
+      />
+    </label>
+  );
+}
+
+/**
+ * Corner radius, opacity and the drop shadow — the three that say how a shape
+ * is drawn rather than what colour it is, and the three there is no room for on
+ * the bar itself.
+ */
+function StylePopover({
+  cornerRadius,
+  opacity,
+  shadow,
+  showCornerRadius,
+  onPreview,
+  onCommit,
+  onDragStart,
+}: {
+  cornerRadius: number;
+  opacity: number;
+  shadow: boolean;
+  showCornerRadius: boolean;
+  onPreview: (patch: Partial<ShapeData>) => void;
+  onCommit: (patch: Partial<ShapeData>) => void;
+  onDragStart: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Tooltip label="Style" side="top">
+        <Popover.Trigger asChild>
+          <button aria-label="Style" className={BUTTON_CLASS}>
+            <SlidersHorizontal size={16} />
+          </button>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          sideOffset={10}
+          aria-label="Style"
+          className="panel-in z-50 flex w-52 flex-col gap-1 rounded-xl bg-ink-950 p-2 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          {showCornerRadius && (
+            <StyleSlider
+              label="Corner radius"
+              value={cornerRadius}
+              min={0}
+              max={CORNER_RADIUS_MAX}
+              step={1}
+              format={(v) => `${v}px`}
+              onDragStart={onDragStart}
+              onPreview={(v) => onPreview({ cornerRadius: v })}
+              onCommit={(v) => onCommit({ cornerRadius: v })}
+            />
+          )}
+          <StyleSlider
+            label="Opacity"
+            value={opacity}
+            min={OPACITY_MIN}
+            max={1}
+            step={0.05}
+            format={(v) => `${Math.round(v * 100)}%`}
+            onDragStart={onDragStart}
+            onPreview={(v) => onPreview({ opacity: v })}
+            onCommit={(v) => onCommit({ opacity: v })}
+          />
+          <button
+            onClick={() => onCommit({ shadow: !shadow })}
+            className={clsx(
+              'mt-0.5 flex items-center justify-between rounded-lg px-2 py-1.5 text-[12px] font-medium text-white/85 transition hover:bg-white/10',
+              shadow && 'bg-accent-500/90 text-white hover:bg-accent-500',
+            )}
+          >
+            Drop shadow
+            <span className="text-[11px] text-white/60">{shadow ? 'On' : 'Off'}</span>
+          </button>
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 /**
  * Redraws the selection as a different kind of shape. The trigger wears the
  * kind it would change *away* from, so the button reads as the current shape
@@ -246,6 +394,8 @@ export function FloatingToolbar() {
   const updateSelectedEdgesStyle = useDiagramStore((s) => s.updateSelectedEdgesStyle);
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const updateSelectedNodesData = useDiagramStore((s) => s.updateSelectedNodesData);
+  const updateSelectedNodesDataTransient = useDiagramStore((s) => s.updateSelectedNodesDataTransient);
+  const beginInteraction = useDiagramStore((s) => s.beginInteraction);
   const setSelectedShapeKind = useDiagramStore((s) => s.setSelectedShapeKind);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
@@ -450,6 +600,17 @@ export function FloatingToolbar() {
                 verticalAlign: styleableNodes[0].data.verticalAlign ?? 'middle',
               }}
               onChange={updateSelectedNodesData}
+            />
+            <StylePopover
+              cornerRadius={styleableNodes[0].data.cornerRadius ?? 0}
+              opacity={styleableNodes[0].data.opacity ?? 1}
+              shadow={styleableNodes[0].data.shadow ?? false}
+              // Only offered when every shape in the selection has corners to
+              // round; an ellipse in the mix would sit through the whole drag.
+              showCornerRadius={styleableNodes.every((n) => canRoundCorners(n.data.shape))}
+              onDragStart={beginInteraction}
+              onPreview={updateSelectedNodesDataTransient}
+              onCommit={updateSelectedNodesData}
             />
           </>
         )}

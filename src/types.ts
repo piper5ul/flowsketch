@@ -84,6 +84,15 @@ export interface ShapeData {
   textColor?: string;
   textAlign?: TextAlign;
   verticalAlign?: VerticalAlign;
+  /**
+   * How far the corners are rounded, in px. Only the kinds CSS draws as a box
+   * with corners have any — `canRoundCorners` is the list.
+   */
+  cornerRadius?: number;
+  /** 0.1–1. Absent is fully opaque, which is what every older shape wants. */
+  opacity?: number;
+  /** Whether the shape casts a drop shadow. */
+  shadow?: boolean;
   link?: string;
   locked?: boolean;
   imageSrc?: string;

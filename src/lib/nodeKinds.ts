@@ -45,6 +45,18 @@ export function isAnchorNode(data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>)
 }
 
 /**
+ * True for the shapes with corners to round.
+ *
+ * A radius is a property of a CSS box: an ellipse and a pill are already as
+ * round as they go, a silhouette's corners belong to its path, and a text shape
+ * draws no outline to round at all. That leaves the two rectangles — plain and
+ * sticky — which is exactly where the control is offered.
+ */
+export function canRoundCorners(shape: ShapeKind): boolean {
+  return shape === 'rectangle' || shape === 'sticky';
+}
+
+/**
  * True for the shapes whose kind the toolbar can swap.
  *
  * An image *is* its bytes and a text shape draws no outline at all while sizing

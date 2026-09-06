@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canSwapShapeKind, isAnchorNode } from './nodeKinds';
-import type { ShapeData } from '../types';
+import { canRoundCorners, canSwapShapeKind, isAnchorNode } from './nodeKinds';
+import type { ShapeData, ShapeKind } from '../types';
 
 const data = (patch: Partial<ShapeData>): ShapeData => ({
   label: '',
@@ -55,5 +55,17 @@ describe('canSwapShapeKind', () => {
   it('refuses the anchor nodes a floating arrow hangs off', () => {
     // Redrawing one as a star would give a 1×1 invisible endpoint a silhouette.
     expect(canSwapShapeKind(data({ fill: 'transparent', stroke: 'transparent' }))).toBe(false);
+  });
+});
+
+describe('canRoundCorners', () => {
+  it('is true for the two shapes drawn as a box with corners', () => {
+    expect(canRoundCorners('rectangle')).toBe(true);
+    expect(canRoundCorners('sticky')).toBe(true);
+  });
+
+  it('is false for everything already round, drawn as a path, or drawn as nothing', () => {
+    const others: ShapeKind[] = ['ellipse', 'pill', 'cylinder', 'star', 'diamond', 'text', 'image'];
+    for (const kind of others) expect(canRoundCorners(kind), kind).toBe(false);
   });
 });

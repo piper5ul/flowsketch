@@ -267,6 +267,8 @@ interface DiagramState {
   sendBackward: () => void;
   toggleLock: () => void;
   updateSelectedNodesData: (patch: Partial<ShapeData>) => void;
+  /** `updateSelectedNodesData` without the history entry, for a slider drag. */
+  updateSelectedNodesDataTransient: (patch: Partial<ShapeData>) => void;
   /** Redraws the selection as another kind of shape, keeping everything else. */
   setSelectedShapeKind: (kind: ShapeKind) => void;
 
@@ -951,6 +953,17 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // so they sit it out rather than collecting data nothing will ever render.
   updateSelectedNodesData: (patch) => {
     pushHistory(get());
+    set((s) => ({
+      nodes: s.nodes.map((n) =>
+        n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
+      ),
+    }));
+  },
+
+  // The same patch, mid-gesture. A slider is a drag like any other: one entry
+  // up front from `beginInteraction`, then a frame's worth of change per move,
+  // none of which the user would want to undo one at a time.
+  updateSelectedNodesDataTransient: (patch) => {
     set((s) => ({
       nodes: s.nodes.map((n) =>
         n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,

@@ -1037,6 +1037,18 @@ describe('updateSelectedNodesData', () => {
     });
   });
 
+  it('carries the box styling a shape can wear', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesData({ cornerRadius: 24, opacity: 0.5, shadow: true });
+
+    expect(store().nodes.find((n) => n.id === a)!.data).toMatchObject({
+      cornerRadius: 24,
+      opacity: 0.5,
+      shadow: true,
+    });
+  });
+
   it('hands the label back to auto-contrast when the colour is cleared', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     select(a);
@@ -1343,5 +1355,32 @@ describe('image placeholders', () => {
     });
     expect(store().nodes).toHaveLength(0);
     expect(store().canUndo).toBe(false);
+  });
+});
+
+describe('updateSelectedNodesDataTransient', () => {
+  it('applies the patch without spending a history entry', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+
+    // What a slider does on every frame of a drag: the entry was pushed once
+    // by `beginInteraction`, so the frames themselves must not push more.
+    store().beginInteraction();
+    store().updateSelectedNodesDataTransient({ opacity: 0.8 });
+    store().updateSelectedNodesDataTransient({ opacity: 0.5 });
+    expect(store().nodes.find((n) => n.id === a)!.data.opacity).toBe(0.5);
+
+    store().undo();
+    expect(store().nodes.find((n) => n.id === a)!.data.opacity).toBeUndefined();
+  });
+
+  it('leaves an image alone, as the committing version does', () => {
+    const shape = store().addShape('rectangle', { x: 0, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 64, height: 64, position: { x: 200, y: 0 } });
+    select(shape, image);
+    store().updateSelectedNodesDataTransient({ opacity: 0.5 });
+
+    expect(store().nodes.find((n) => n.id === shape)!.data.opacity).toBe(0.5);
+    expect(store().nodes.find((n) => n.id === image)!.data.opacity).toBeUndefined();
   });
 });
