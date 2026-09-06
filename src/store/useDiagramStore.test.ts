@@ -1984,3 +1984,130 @@ describe('containers and the rest of the store', () => {
     expect(store().nodes.map((n) => n.id)).toEqual([group, a, b, outside]);
   });
 });
+
+describe('addFrame', () => {
+  it('draws a titled frame at its default size', () => {
+    const id = store().addFrame({ x: 40, y: 60 });
+    expect(store().nodes.find((n) => n.id === id)).toMatchObject({
+      type: 'frame',
+      position: { x: 40, y: 60 },
+      width: 480,
+      height: 320,
+      data: { label: 'Frame' },
+    });
+  });
+
+  it('goes to the start of the array, behind everything already drawn', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const frame = store().addFrame({ x: 0, y: 0 });
+    expect(store().nodes.map((n) => n.id)).toEqual([frame, a]);
+  });
+});
+
+describe('reparentByPosition', () => {
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  /** One frame at the origin with a rectangle dropped in the middle of it. */
+  function frameAndShape() {
+    const frame = store().addFrame({ x: 0, y: 0 });
+    const shape = store().addShape('rectangle', { x: 100, y: 100 });
+    return { frame, shape };
+  }
+
+  it('adopts a shape dropped inside a frame, converting its position', () => {
+    const { frame, shape } = frameAndShape();
+    store().reparentByPosition([shape]);
+
+    expect(nodeOf(shape)).toMatchObject({ parentId: frame, position: { x: 100, y: 100 } });
+  });
+
+  it('keeps the shape where it is on the board when the frame is not at the origin', () => {
+    const frame = store().addFrame({ x: 500, y: 200 });
+    const shape = store().addShape('rectangle', { x: 600, y: 250 });
+    store().reparentByPosition([shape]);
+
+    // 100 px right and 50 px down from the frame's own corner.
+    expect(nodeOf(shape)).toMatchObject({ parentId: frame, position: { x: 100, y: 50 } });
+  });
+
+  it('lets go of a shape dragged out of a frame, restoring absolute position', () => {
+    const { shape } = frameAndShape();
+    store().reparentByPosition([shape]);
+
+    // Dragged clear of the frame: React Flow reports a position relative to it.
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => (n.id === shape ? { ...n, position: { x: 900, y: 100 } } : n)),
+    }));
+    store().reparentByPosition([shape]);
+
+    expect(nodeOf(shape).parentId).toBeUndefined();
+    expect(nodeOf(shape).position).toEqual({ x: 900, y: 100 });
+  });
+
+  it('picks the innermost of two nested frames', () => {
+    const outer = store().addFrame({ x: 0, y: 0 });
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => (n.id === outer ? { ...n, width: 2000, height: 2000 } : n)),
+    }));
+    const inner = store().addFrame({ x: 100, y: 100 });
+    store().reparentByPosition([inner]);
+    expect(nodeOf(inner).parentId).toBe(outer);
+
+    const shape = store().addShape('rectangle', { x: 150, y: 150 });
+    store().reparentByPosition([shape]);
+
+    expect(nodeOf(shape).parentId).toBe(inner);
+    // Relative to the inner frame, which is itself relative to the outer one.
+    expect(nodeOf(shape).position).toEqual({ x: 50, y: 50 });
+  });
+
+  it('only adopts a shape the frame holds whole', () => {
+    const frame = store().addFrame({ x: 0, y: 0 });
+    // 180 wide, so it hangs 60 px past the frame's right edge.
+    const shape = store().addShape('rectangle', { x: 360, y: 100 });
+    store().reparentByPosition([shape]);
+    expect(nodeOf(shape).parentId).toBeUndefined();
+    expect(frame).toBeTruthy();
+  });
+
+  it('never makes a frame a child of itself or of its own contents', () => {
+    const { frame, shape } = frameAndShape();
+    store().reparentByPosition([shape]);
+    store().reparentByPosition([frame]);
+    expect(nodeOf(frame).parentId).toBeUndefined();
+  });
+
+  it('leaves a group member in its group, whatever it was dropped on', () => {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 150, y: 150 });
+    select(a, b);
+    store().groupSelected();
+    const group = store().nodes.find((n) => n.type === 'group')!.id;
+
+    store().addFrame({ x: 0, y: 0 });
+    store().reparentByPosition([a]);
+
+    expect(nodeOf(a).parentId).toBe(group);
+  });
+
+  it('keeps the frame ahead of what it just adopted', () => {
+    const { frame, shape } = frameAndShape();
+    store().reparentByPosition([shape]);
+    const ids = store().nodes.map((n) => n.id);
+    expect(ids.indexOf(frame)).toBeLessThan(ids.indexOf(shape));
+  });
+
+  it('records one history entry, and none when nothing changed hands', () => {
+    const { shape } = frameAndShape();
+    store().reparentByPosition([shape]);
+    store().undo();
+    expect(nodeOf(shape).parentId).toBeUndefined();
+    expect(nodeOf(shape).position).toEqual({ x: 100, y: 100 });
+
+    store().redo();
+    // A second drop in the same place changes nothing, so it costs nothing.
+    const before = store().nodes;
+    store().reparentByPosition([shape]);
+    expect(store().nodes).toBe(before);
+  });
+});

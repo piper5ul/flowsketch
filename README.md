@@ -95,6 +95,7 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `Y` | Cylinder |
 | `S` / `N` | Sticky note |
 | `T` | Text |
+| `F` | Frame |
 | `A` / `L` | Connector |
 
 Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.

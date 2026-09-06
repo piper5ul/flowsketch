@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useState, useRef } from 'react';
-import { getNodesBounds, useReactFlow, useViewport } from '@xyflow/react';
+import { useReactFlow, useViewport } from '@xyflow/react';
 import * as Popover from '@radix-ui/react-popover';
 import {
   Trash2,
@@ -22,7 +22,6 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { canGroupSelection, useDiagramStore } from '../store/useDiagramStore';
-import { absolutePosition } from '../lib/nodeTree';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
 import { TextFormatControls } from './TextFormatControls';
@@ -409,7 +408,10 @@ export function FloatingToolbar() {
   const bringForward = useDiagramStore((s) => s.bringForward);
   const sendBackward = useDiagramStore((s) => s.sendBackward);
   const viewport = useViewport();
-  const { screenToFlowPosition } = useReactFlow();
+  // The hook's `getNodesBounds`, not the bare export: only this one can see the
+  // node lookup, and a node inside a container holds a position relative to it —
+  // the bare one would park the toolbar near the origin instead of over the shape.
+  const { screenToFlowPosition, getNodesBounds } = useReactFlow();
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const linkInputRef = useRef<HTMLInputElement>(null);
@@ -460,14 +462,7 @@ export function FloatingToolbar() {
 
   const anchor = useMemo(() => {
     if (selectedNodes.length > 0) {
-      // A node inside a container holds a position relative to it, and the
-      // toolbar is placed on the board — so the bounds are taken over absolute
-      // positions, or selecting a shape in a frame would park the toolbar near
-      // the origin instead of over the shape.
-      const byId = new Map(nodes.map((n) => [n.id, n]));
-      const bounds = getNodesBounds(
-        selectedNodes.map((n) => ({ ...n, position: absolutePosition(n, byId) })),
-      );
+      const bounds = getNodesBounds(selectedNodes);
       return { x: bounds.x + bounds.width / 2, y: bounds.y };
     }
     if (selectedEdges.length > 0) {
@@ -485,7 +480,7 @@ export function FloatingToolbar() {
       }
     }
     return null;
-  }, [selectedNodes, selectedEdges, nodes, edgePathTopFlowY]);
+  }, [selectedNodes, selectedEdges, nodes, edgePathTopFlowY, getNodesBounds]);
 
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const editingEdgeId = useDiagramStore((s) => s.editingEdgeId);
