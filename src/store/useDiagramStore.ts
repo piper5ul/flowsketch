@@ -186,7 +186,7 @@ interface DiagramState {
   canRedo: boolean;
 
   loadDiagram: (id: string, title: string, starred: boolean, data: { nodes: unknown[]; edges: unknown[] }) => void;
-  saveDiagram: () => Promise<void>;
+  saveDiagram: (options?: { keepalive?: boolean }) => Promise<void>;
   setTitle: (title: string) => void;
   setStarred: (starred: boolean) => void;
   setEditingNodeId: (id: string | null) => void;
@@ -348,15 +348,16 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     });
   },
 
-  saveDiagram: async () => {
+  saveDiagram: async (options) => {
     const { diagramId, title, nodes, edges } = get();
     if (!diagramId) return;
     set({ saveStatus: 'saving' });
     try {
-      await api.saveDiagram(diagramId, {
-        title,
-        data: { nodes: serializeNodes(nodes), edges: serializeEdges(edges) },
-      });
+      await api.saveDiagram(
+        diagramId,
+        { title, data: { nodes: serializeNodes(nodes), edges: serializeEdges(edges) } },
+        options,
+      );
       set({ saveStatus: 'saved' });
     } catch {
       set({ saveStatus: 'error' });

@@ -5,6 +5,9 @@ import { Canvas } from '../components/Canvas';
 import { TooltipProvider } from '../components/Tooltip';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { api } from '../lib/api';
+import { createAutosaver } from '../lib/autosave';
+
+const AUTOSAVE_DELAY_MS = 2000;
 
 export function CanvasPage() {
   const { id } = useParams<{ id: string }>();
@@ -30,18 +33,31 @@ export function CanvasPage() {
   useEffect(() => {
     if (loading || !id) return;
 
-    let timer: ReturnType<typeof setTimeout>;
-    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
-      if (state.nodes === prev.nodes && state.edges === prev.edges && state.title === prev.title) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => {
-        useDiagramStore.getState().saveDiagram();
-      }, 2000);
+    const autosaver = createAutosaver({
+      save: () => useDiagramStore.getState().saveDiagram(),
+      delayMs: AUTOSAVE_DELAY_MS,
     });
 
+    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
+      if (state.nodes === prev.nodes && state.edges === prev.edges && state.title === prev.title) return;
+      autosaver.schedule();
+    });
+
+    // The tab can go away without unmounting the page (close, back/forward
+    // cache, mobile app switch). `pagehide` is the reliable hook there, and the
+    // save must be keepalive so the browser lets it finish during unload.
+    const onPageHide = () => {
+      if (!autosaver.isPending()) return;
+      autosaver.cancel();
+      void useDiagramStore.getState().saveDiagram({ keepalive: true });
+    };
+    window.addEventListener('pagehide', onPageHide);
+
     return () => {
-      clearTimeout(timer);
+      window.removeEventListener('pagehide', onPageHide);
       unsubscribe();
+      // Navigating away inside the debounce window must not drop the edit.
+      void autosaver.flush();
     };
   }, [loading, id]);
 
