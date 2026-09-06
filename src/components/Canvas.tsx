@@ -8,7 +8,7 @@ import {
   type FinalConnectionState,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { computeMarkers, useDiagramStore, type ShapeNode, type ConnectorEdge } from '../store/useDiagramStore';
+import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import type { ConnectorData } from '../types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
@@ -229,7 +229,7 @@ export function Canvas() {
   );
 
   useEffect(() => {
-    let clipboard: { nodes: unknown[]; edges: unknown[] } | null = null;
+    let clipboard: ClipboardPayload | null = null;
 
     function onPaste(e: ClipboardEvent) {
       if (isTypingTarget(e.target)) return;
@@ -397,31 +397,7 @@ export function Canvas() {
       // Duplicate
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
         e.preventDefault();
-        const state = useDiagramStore.getState();
-        const selNodes = state.nodes.filter((n) => n.selected);
-        if (selNodes.length === 0) return;
-        const selNodeIds = new Set(selNodes.map((n) => n.id));
-        const selEdges = state.edges.filter((ed) => selNodeIds.has(ed.source) && selNodeIds.has(ed.target));
-        const idMap = new Map<string, string>();
-        const offset = 30;
-        const newNodes = (selNodes as ShapeNode[]).map((n) => {
-          const newId = nanoid(8);
-          idMap.set(n.id, newId);
-          return { ...n, id: newId, position: { x: n.position.x + offset, y: n.position.y + offset }, selected: true };
-        });
-        const newEdges = (selEdges as ConnectorEdge[]).map((ed) => ({
-          ...ed,
-          id: nanoid(8),
-          source: idMap.get(ed.source) ?? ed.source,
-          target: idMap.get(ed.target) ?? ed.target,
-          selected: true,
-        }));
-        const deselectedNodes = state.nodes.map((n) => ({ ...n, selected: false }));
-        const deselectedEdges = state.edges.map((ed) => ({ ...ed, selected: false }));
-        useDiagramStore.setState({
-          nodes: [...deselectedNodes, ...newNodes],
-          edges: [...deselectedEdges, ...newEdges],
-        });
+        useDiagramStore.getState().duplicateSelection();
         return;
       }
 
@@ -429,31 +405,8 @@ export function Canvas() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v') {
         if (!clipboard || clipboard.nodes.length === 0) return;
         e.preventDefault();
-        const idMap = new Map<string, string>();
-        const offset = 30;
-        const newNodes = (clipboard.nodes as ShapeNode[]).map((n) => {
-          const newId = nanoid(8);
-          idMap.set(n.id, newId);
-          return { ...n, id: newId, position: { x: n.position.x + offset, y: n.position.y + offset }, selected: true };
-        });
-        const newEdges = (clipboard.edges as ConnectorEdge[]).map((ed) => ({
-          ...ed,
-          id: nanoid(8),
-          source: idMap.get(ed.source) ?? ed.source,
-          target: idMap.get(ed.target) ?? ed.target,
-          selected: true,
-        }));
-        const state = useDiagramStore.getState();
-        const deselectedNodes = state.nodes.map((n) => ({ ...n, selected: false }));
-        const deselectedEdges = state.edges.map((ed) => ({ ...ed, selected: false }));
-        useDiagramStore.setState({
-          nodes: [...deselectedNodes, ...newNodes],
-          edges: [...deselectedEdges, ...newEdges],
-        });
-        clipboard = {
-          nodes: newNodes.map((n) => ({ ...n, selected: false })),
-          edges: newEdges.map((ed) => ({ ...ed, selected: false })),
-        };
+        // Paste again from what was just pasted, so repeats keep stepping away.
+        clipboard = useDiagramStore.getState().pasteClipboard(clipboard);
         return;
       }
 
@@ -520,18 +473,12 @@ export function Canvas() {
       // Arrow keys to nudge selected shapes
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         const state = useDiagramStore.getState();
-        const selNodes = state.nodes.filter((n) => n.selected);
-        if (selNodes.length === 0) return;
+        if (!state.nodes.some((n) => n.selected)) return;
         e.preventDefault();
         const step = e.shiftKey ? 10 : 1;
         const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
         const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
-        const selIds = new Set(selNodes.map((n) => n.id));
-        useDiagramStore.setState({
-          nodes: state.nodes.map((n) =>
-            selIds.has(n.id) ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } } : n,
-          ),
-        });
+        state.nudgeSelected(dx, dy);
         return;
       }
 

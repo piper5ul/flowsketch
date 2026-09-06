@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, useDiagramStore } from './useDiagramStore';
 
 const store = () => useDiagramStore.getState();
@@ -76,15 +76,204 @@ describe('undo / redo', () => {
     expect(store().nodes).toHaveLength(0);
   });
 
-  // Roadmap item "undo-coverage": updateNodeData does not push history yet, so
-  // undoing after a text edit reverts the *previous* change (the add) instead.
-  // This test is expected to fail today; remove `.fails` when the fix lands.
-  it.fails('reverts a label edit made through updateNodeData', () => {
+  it('reverts a label edit made through updateNodeData', () => {
     const id = store().addShape('rectangle', { x: 0, y: 0 });
     store().updateNodeData(id, { label: 'hello' });
     store().undo();
     expect(store().nodes).toHaveLength(1);
     expect(store().nodes[0].data.label).toBe('');
+  });
+
+  it('does not record an entry for an update that changes nothing', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(id, { label: 'hello' });
+    // A contentEditable blur commits the same text again — that must not
+    // cost the user an extra ⌘Z.
+    store().updateNodeData(id, { label: 'hello' });
+
+    store().undo();
+    expect(store().nodes[0].data.label).toBe('');
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('reverts a connector label edit made through updateEdgeData', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const edgeId = store().edges[0].id;
+
+    store().updateEdgeData(edgeId, { label: 'yes' });
+    expect(store().edges[0].data!.label).toBe('yes');
+
+    store().undo();
+    expect(store().edges[0].data!.label).toBe('');
+  });
+
+  it('records exactly one entry for a drag of transient edge updates', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const edgeId = store().edges[0].id;
+
+    store().beginInteraction();
+    for (const x of [10, 20, 30]) {
+      store().updateEdgeDataTransient(edgeId, { waypoint: { x, y: 0 } });
+    }
+    expect(store().edges[0].data!.waypoint).toEqual({ x: 30, y: 0 });
+
+    store().undo();
+    expect(store().edges[0].data!.waypoint).toBeUndefined();
+    // One entry only: the two shapes from before the drag are still there.
+    expect(store().nodes).toHaveLength(2);
+  });
+
+  it('does not record an entry for transient node moves', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().moveNodesTransient({ [a]: { x: 50, y: 50 } });
+    expect(store().nodes[0].position).toEqual({ x: 50, y: 50 });
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+});
+
+describe('nudgeSelected', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('moves only the selected nodes', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addShape('rectangle', { x: 100, y: 100 });
+    select(a);
+    store().nudgeSelected(1, -1);
+
+    expect(store().nodes[0].position).toEqual({ x: 1, y: -1 });
+    expect(store().nodes[1].position).toEqual({ x: 100, y: 100 });
+  });
+
+  it('coalesces consecutive nudges into a single history entry', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+
+    store().nudgeSelected(1, 0);
+    vi.advanceTimersByTime(200);
+    store().nudgeSelected(1, 0);
+    vi.advanceTimersByTime(200);
+    store().nudgeSelected(1, 0);
+    expect(store().nodes[0].position.x).toBe(3);
+
+    store().undo();
+    expect(store().nodes[0].position.x).toBe(0);
+  });
+
+  it('starts a new history entry after a pause', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+
+    store().nudgeSelected(1, 0);
+    vi.advanceTimersByTime(600);
+    store().nudgeSelected(1, 0);
+    expect(store().nodes[0].position.x).toBe(2);
+
+    store().undo();
+    expect(store().nodes[0].position.x).toBe(1);
+    store().undo();
+    expect(store().nodes[0].position.x).toBe(0);
+  });
+
+  it('does nothing without a selection', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    store().nudgeSelected(1, 0);
+    expect(store().nodes[0].position).toEqual({ x: 0, y: 0 });
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+});
+
+describe('duplicateSelection', () => {
+  it('offsets the clones, gives them fresh ids and remaps the edges between them', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addConnectedShape(a, 'right')!;
+    const originalEdgeId = store().edges[0].id;
+    select(a, b);
+    store().duplicateSelection();
+
+    expect(store().nodes).toHaveLength(4);
+    expect(store().edges).toHaveLength(2);
+    expect(new Set(store().nodes.map((n) => n.id)).size).toBe(4);
+
+    const clones = store().nodes.filter((n) => n.selected);
+    expect(clones).toHaveLength(2);
+    expect(clones.some((n) => n.position.x === 30 && n.position.y === 30)).toBe(true);
+
+    const cloneIds = new Set(clones.map((n) => n.id));
+    const clonedEdge = store().edges.find((e) => e.id !== originalEdgeId)!;
+    expect(cloneIds.has(clonedEdge.source)).toBe(true);
+    expect(cloneIds.has(clonedEdge.target)).toBe(true);
+  });
+
+  it('is undoable', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().duplicateSelection();
+    expect(store().nodes).toHaveLength(2);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(1);
+  });
+});
+
+describe('pasteClipboard', () => {
+  /** Build a clipboard payload the way Canvas's ⌘C handler does. */
+  function clipOf(...ids: string[]) {
+    const set = new Set(ids);
+    return {
+      nodes: store().nodes.filter((n) => set.has(n.id)).map((n) => ({ ...n, selected: false })),
+      edges: store()
+        .edges.filter((e) => set.has(e.source) && set.has(e.target))
+        .map((e) => ({ ...e, selected: false })),
+    };
+  }
+
+  it('pastes fresh ids at an offset with edges remapped, and is undoable', () => {
+    const a = store().addShape('rectangle', { x: 10, y: 10 });
+    const b = store().addConnectedShape(a, 'right')!;
+    const originalEdgeId = store().edges[0].id;
+    const clip = clipOf(a, b);
+
+    store().pasteClipboard(clip);
+
+    expect(store().nodes).toHaveLength(4);
+    expect(store().edges).toHaveLength(2);
+    const pasted = store().nodes.filter((n) => n.selected);
+    expect(pasted).toHaveLength(2);
+    expect(pasted.some((n) => n.id === a || n.id === b)).toBe(false);
+    expect(pasted.some((n) => n.position.x === 40 && n.position.y === 40)).toBe(true);
+
+    const pastedIds = new Set(pasted.map((n) => n.id));
+    const pastedEdge = store().edges.find((e) => e.id !== originalEdgeId)!;
+    expect(pastedIds.has(pastedEdge.source)).toBe(true);
+    expect(pastedIds.has(pastedEdge.target)).toBe(true);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(2);
+    expect(store().edges).toHaveLength(1);
+  });
+
+  it('returns the pasted content so a repeated paste keeps stepping away', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+
+    const next = store().pasteClipboard(clipOf(a));
+    expect(next.nodes[0].position).toEqual({ x: 30, y: 30 });
+
+    store().pasteClipboard(next);
+    expect(store().nodes.map((n) => n.position.x).sort((x, y) => x - y)).toEqual([0, 30, 60]);
   });
 });
 

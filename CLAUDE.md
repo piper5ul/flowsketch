@@ -14,7 +14,7 @@ Whimsical-style diagramming app. Single-user today; sharing and realtime are on 
 
 ## Architecture (read this instead of re-reading the files)
 
-- `src/store/useDiagramStore.ts` — single Zustand store: nodes, edges, tool, defaults, undo/redo. **Undo history is module-level (`past`/`future`), snapshot-based, and only pushed by actions that call `pushHistory`.** `updateNodeData` / `updateEdgeData` do NOT push (known bug, roadmap `undo-coverage`). `loadDiagram` resets history.
+- `src/store/useDiagramStore.ts` — single Zustand store: nodes, edges, tool, defaults, undo/redo. **Undo history is module-level (`past`/`future`), snapshot-based, and only pushed by actions that call `pushHistory`** — kept out of the store so it is never serialized; `canUndo`/`canRedo` mirror it for the UI. Discrete edits (`updateNodeData`, `updateEdgeData`) push, but skip no-op patches. A pointer drag pushes once via `beginInteraction()` and then uses a transient action (`updateEdgeDataTransient`, `moveNodesTransient`, `reconnectEdgeEndpoint`). `nudgeSelected` coalesces entries within 500 ms. `loadDiagram` resets history.
 - `src/components/Canvas.tsx` — React Flow wrapper plus a ~300-line keyboard-shortcut `if` chain in one `useEffect` (roadmap: replace with a command registry). Clipboard for copy/paste is a closure variable there.
 - `src/nodes/ShapeNode.tsx` — one component renders all 9 shape kinds. Diamond/triangle/hexagon/cylinder are inline SVG; others are CSS. Text editing is a `contentEditable` div committed on blur.
 - **Floating arrows are a hack:** an edge whose source and target are both 1×1 nodes with `fill: 'transparent', stroke: 'transparent'`. `isAnchor` checks in ShapeNode/Canvas detect these. Don't "fix" transparent fills without checking this.
