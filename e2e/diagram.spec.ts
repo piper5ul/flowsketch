@@ -691,3 +691,33 @@ test('the colour palette hides for an image-only selection and comes back for a 
   await page.keyboard.press('ControlOrMeta+a');
   await expect(page.getByRole('button', { name: 'Color' })).toBeVisible();
 });
+
+test('a shape can be swapped from the toolbar and a new kind drawn from the rail', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  const rect = page.locator('.react-flow__node').first();
+  await expect(rect).toBeVisible();
+
+  // The floating toolbar's Shape button redraws what is already there. The
+  // rail carries the same labels, so the popover has to be the scope.
+  await rect.click();
+  await page.getByRole('button', { name: 'Shape', exact: true }).click();
+  const picker = page.getByRole('dialog', { name: 'Shape picker' });
+  await picker.getByRole('button', { name: 'Star' }).click();
+
+  const star = rect.locator('[data-shape="star"]');
+  await expect(star).toHaveCount(1);
+  // A star is one of the shapes drawn as a filled outline rather than a box.
+  await expect(star.locator('svg path')).toHaveCount(1);
+
+  // The rail's "More shapes" menu picks a tool, which then draws on click.
+  await page.getByRole('button', { name: 'More shapes' }).click();
+  await page.getByRole('dialog', { name: 'More shapes' }).getByRole('button', { name: 'Cloud' }).click();
+  await pane.click({ position: { x: 900, y: 300 } });
+
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__node [data-shape="cloud"]')).toHaveCount(1);
+});
