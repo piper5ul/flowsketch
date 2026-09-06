@@ -1094,3 +1094,94 @@ test('dark mode follows the system, can be pinned, and never repaints the diagra
   await expect(html).toHaveAttribute('data-theme', 'dark');
   await expect(body).toHaveCSS('background-color', DARK_CANVAS);
 });
+
+test('a comment pinned to a shape can be replied to, resolved, and found again', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const node = await drawLabelledShape(page, pane, 'Checkout');
+
+  // Right-clicking the shape offers "Comment" alongside the editing actions.
+  await node.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Comment' }).click();
+
+  const panel = page.getByRole('dialog', { name: 'Comments' });
+  await expect(panel).toBeVisible();
+  // The composer is already focused, so the remark can just be typed.
+  await page.keyboard.type('Looks off');
+  await panel.getByRole('button', { name: 'Comment', exact: true }).click();
+
+  // The pin lands on the shape, and the button counts the open thread.
+  const pin = page.getByRole('button', { name: 'Comment thread 1' });
+  await expect(pin).toBeVisible();
+  await expect(page.getByLabel('1 open thread')).toBeVisible();
+
+  // Collapse the thread, then reopen it from the pin.
+  await panel.getByRole('button', { name: /Checkout/ }).click();
+  await pin.click();
+  await expect(panel.getByText('Looks off')).toBeVisible();
+
+  await panel.getByLabel('Reply').fill('Fixed');
+  await panel.getByRole('button', { name: 'Reply', exact: true }).click();
+  await expect(panel.getByText('Fixed')).toBeVisible();
+
+  // Exact, or it also matches the "Resolved" filter tab.
+  await panel.getByRole('button', { name: 'Resolve', exact: true }).click();
+
+  // Resolved: no pin on the board, nothing under Open, no count on the button.
+  await expect(pin).toHaveCount(0);
+  await expect(page.getByLabel('1 open thread')).toHaveCount(0);
+  await expect(panel.getByText('No comments yet.')).toBeVisible();
+
+  await panel.getByRole('button', { name: 'Resolved', exact: true }).click();
+  await expect(panel.getByText('Looks off')).toBeVisible();
+  // And with the resolved threads showing, its pin is back on the board.
+  await expect(page.getByRole('button', { name: 'Comment thread 1' })).toBeVisible();
+});
+
+test('an invited viewer can join the discussion but not call it settled', async ({ page, browser }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const node = await drawLabelledShape(page, pane, 'Owner shape');
+
+  await node.click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Comment' }).click();
+  const ownerPanel = page.getByRole('dialog', { name: 'Comments' });
+  await page.keyboard.type('Is this right?');
+  await ownerPanel.getByRole('button', { name: 'Comment', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Comment thread 1' })).toBeVisible();
+  // The sheet covers the top bar's right-hand buttons, Share included.
+  await ownerPanel.getByRole('button', { name: 'Close comments' }).click();
+
+  // A second account, in its own context so the two sessions never mix.
+  const reviewer = await browser.newContext();
+  const reviewerPage = await reviewer.newPage();
+  const reviewerEmail = await signUp(reviewerPage);
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(reviewerEmail);
+  await dialog.getByLabel('Invite as').selectOption('viewer');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(reviewerEmail)).toBeVisible();
+
+  await reviewerPage.goto('/');
+  await reviewerPage.getByText('Untitled').first().click();
+  await expect(reviewerPage).toHaveURL(/\/d\/[^/]+$/);
+  await expect(reviewerPage.getByText('View only')).toBeVisible();
+
+  // Reading a board they cannot edit, they can still say something about it —
+  // a reviewer who cannot write anything down is not reviewing.
+  await reviewerPage.getByRole('button', { name: 'Comments' }).click();
+  const reviewerPanel = reviewerPage.getByRole('dialog', { name: 'Comments' });
+  await reviewerPanel.getByRole('button', { name: /Owner shape/ }).click();
+  await expect(reviewerPanel.getByText('Is this right?')).toBeVisible();
+
+  await reviewerPanel.getByLabel('Reply').fill('No, the arrow is backwards');
+  await reviewerPanel.getByRole('button', { name: 'Reply', exact: true }).click();
+  await expect(reviewerPanel.getByText('No, the arrow is backwards')).toBeVisible();
+
+  // What they may not do is call somebody else's thread settled.
+  await expect(reviewerPanel.getByRole('button', { name: 'Resolve', exact: true })).toHaveCount(0);
+
+  await reviewer.close();
+});
