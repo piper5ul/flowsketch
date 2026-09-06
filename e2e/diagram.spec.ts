@@ -1198,9 +1198,13 @@ test('a public link opens the diagram read-only, and revoking it kills the URL',
     .poll(
       async () => {
         await visitorPage.reload();
+        // The board is only drawn once `GET /api/shared/:token` has answered,
+        // so counting before the pane is there counts a page that has not
+        // rendered rather than a snapshot that has not caught up.
+        await visitorPage.locator('.react-flow__pane').waitFor();
         return visitorPage.locator('.react-flow__node', { hasText: 'Public shape' }).count();
       },
-      { timeout: 20_000 },
+      { intervals: [500, 1000, 2000, 2000, 4000], timeout: 30_000 },
     )
     .toBe(1);
   await expect(visitorPage.getByText('View only')).toBeVisible();
