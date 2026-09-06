@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
+import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 import type { Direction, VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
@@ -52,6 +53,9 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   // string so a shape the search never matched does not re-render as it is
   // typed. The ring itself is CSS — see `[data-search-hit]` in `index.css`.
   const searchHit = useSearchHighlight('node', id);
+  // The collaborator holding this shape, if anyone is. Drawn as an outline in
+  // their own colour — see `[data-peer-selected]` in `index.css`.
+  const peerSelection = usePeerSelection(id);
   // Holding ⇧ while dragging a corner locks the aspect ratio, as in every
   // other design tool. Image nodes are locked whether or not it is held.
   const shiftHeld = useShiftKey();
@@ -125,6 +129,8 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
         data-node-type="shape"
         data-parent-id={parentId}
         data-search-hit={searchHit}
+        data-peer-selected={peerSelection?.name}
+        style={peerOutlineStyle(peerSelection)}
         className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       >
         <img
@@ -216,6 +222,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   // through its alpha with a filter instead of a rectangle nothing drew.
   const wrapperStyle: React.CSSProperties = {
     opacity: data.opacity,
+    ...peerOutlineStyle(peerSelection),
     ...(data.shadow
       ? hasClipShape || isCylinder
         ? { filter: SHAPE_SHADOW_FILTER }
@@ -247,6 +254,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
       data-node-type="shape"
       data-parent-id={parentId}
       data-search-hit={searchHit}
+      data-peer-selected={peerSelection?.name}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       style={wrapperStyle}
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}

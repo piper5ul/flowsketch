@@ -5,6 +5,7 @@ import { Canvas } from '../components/Canvas';
 import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
+import { useCollabStore } from '../store/useCollabStore';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
@@ -107,6 +108,23 @@ export function CanvasPage() {
 
     return () => { cancelled = true; };
   }, [id, loadDiagram, navigate]);
+
+  // Presence, for as long as this diagram is open. Not gated on `readOnly`: a
+  // viewer is entitled to see who else is here and to be seen, which is what
+  // the server means by connecting them read-only rather than refusing them.
+  // The public `/s/:token` page never reaches this component, so an anonymous
+  // reader is left out by construction — there is no session to name them by.
+  //
+  // Depends on the two fields rather than on `session.user`, which better-auth
+  // hands back as a fresh object on every render: the identity of that object
+  // changing would tear the socket down and open another one.
+  const userId = session?.user.id;
+  const userName = session?.user.name;
+  useEffect(() => {
+    if (loading || loadError || !id || !userId || !userName) return;
+    useCollabStore.getState().connect(id, { id: userId, name: userName }, window.location.origin);
+    return () => useCollabStore.getState().disconnect();
+  }, [loading, loadError, id, userId, userName]);
 
   useEffect(() => {
     if (loading || loadError || !id || readOnly) return;

@@ -4,6 +4,7 @@ import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { consumeSuppressBlur, useDiagramStore } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
+import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 
 /**
  * A frame: a titled section of the board that owns whatever is dropped inside
@@ -26,6 +27,9 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
   const searchHit = useSearchHighlight('node', id);
+  // The collaborator holding this frame, if anyone is — outlined in their own
+  // colour, exactly as a shape is. See `[data-peer-selected]` in `index.css`.
+  const peerSelection = usePeerSelection(id);
   const titleRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,9 +52,11 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
     <div
       data-node-type="frame"
       data-search-hit={searchHit}
+      data-peer-selected={peerSelection?.name}
       className="shape-wrapper relative h-full w-full rounded-xl"
       onDoubleClick={() => { if (!editing && !data.locked) setEditingNodeId(id); }}
       style={{
+        ...peerOutlineStyle(peerSelection),
         background: 'var(--panel)',
         border: '1.5px solid var(--line)',
         boxShadow: selected ? '0 0 0 1.5px var(--color-accent-500)' : undefined,

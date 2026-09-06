@@ -6,6 +6,7 @@ import { Tooltip } from './Tooltip';
 import { HistoryPanel } from './HistoryPanel';
 import { CommentsPanel } from './CommentsPanel';
 import { ShareDialog } from './ShareDialog';
+import { PresenceStrip } from './PresenceStrip';
 import { openThreadCount } from '../lib/comments';
 import { useCommentStore } from '../store/useCommentStore';
 import { useDiagramStore, serializeDiagram, type SaveStatus } from '../store/useDiagramStore';
@@ -67,6 +68,10 @@ export function TopBar() {
           </Tooltip>
         )}
         {readOnly ? <ViewOnlyPill /> : <SaveIndicator status={saveStatus} />}
+        {/* Next to the save indicator because it answers the neighbouring
+            question: not "where are my edits going" but "who else is making
+            them". Shown to viewers too — being in the room is not an edit. */}
+        <PresenceStrip />
       </div>
 
       <div className="flex items-center gap-2">

@@ -13,6 +13,15 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
       },
+      // The collaboration socket. `ws` makes the proxy forward the upgrade
+      // rather than answering it; without `changeOrigin`, so the request
+      // reaches the API with the origin the browser sent — which is what the
+      // session cookie is scoped to. In production one process serves both and
+      // there is nothing to proxy.
+      '/collab': {
+        target: 'ws://localhost:3001',
+        ws: true,
+      },
     },
   },
 })
