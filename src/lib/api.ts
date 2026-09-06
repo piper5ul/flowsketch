@@ -1,4 +1,7 @@
 import type {
+  CommentInfo,
+  CommentThreadFilter,
+  CommentThreadInfo,
   DiagramData,
   DiagramMemberInfo,
   DiagramMemberRole,
@@ -220,4 +223,65 @@ export const api = {
       `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
       { method: 'POST' },
     ),
+
+  /**
+   * The diagram's comment threads, newest first, each with its whole
+   * conversation nested — one request for the panel, not one per pin. Readable
+   * by anyone who can read the diagram, viewers included; `filter` defaults to
+   * the open threads, which is what the canvas draws.
+   */
+  listThreads: (id: string, filter: CommentThreadFilter = 'open') =>
+    request<CommentThreadInfo[]>(`/api/diagrams/${id}/threads?resolved=${filter}`),
+
+  /**
+   * Starts a thread, pinned either to a shape (`nodeId`) or to a point on the
+   * canvas (`x`+`y`) — the server refuses both and neither. The returned thread
+   * already carries the comment that started it. Viewer+: a reviewer who cannot
+   * write anything down is not reviewing.
+   */
+  createThread: (
+    id: string,
+    anchor: { nodeId: string } | { x: number; y: number },
+    body: string,
+  ) =>
+    request<CommentThreadInfo>(`/api/diagrams/${id}/threads`, {
+      method: 'POST',
+      body: JSON.stringify({ ...anchor, body }),
+    }),
+
+  /** Replies to a thread. Viewer+, like starting one. */
+  addComment: (id: string, threadId: string, body: string) =>
+    request<CommentInfo>(
+      `/api/diagrams/${id}/threads/${encodeURIComponent(threadId)}/comments`,
+      { method: 'POST', body: JSON.stringify({ body }) },
+    ),
+
+  /** Resolves a thread or reopens it. Editor+, or whoever opened it. */
+  setThreadResolved: (id: string, threadId: string, resolved: boolean) =>
+    request<CommentThreadInfo>(`/api/diagrams/${id}/threads/${encodeURIComponent(threadId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ resolved }),
+    }),
+
+  /** Rewrites a comment. The author alone; the response carries `editedAt`. */
+  editComment: (id: string, threadId: string, commentId: string, body: string) =>
+    request<CommentInfo>(
+      `/api/diagrams/${id}/threads/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: 'PATCH', body: JSON.stringify({ body }) },
+    ),
+
+  /**
+   * Removes a comment — the author, the thread's opener, or the diagram's
+   * owner. Deleting the last comment in a thread deletes the thread too, so
+   * refetch rather than assuming the pin is still there.
+   */
+  deleteComment: (id: string, threadId: string, commentId: string) =>
+    request(
+      `/api/diagrams/${id}/threads/${encodeURIComponent(threadId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: 'DELETE' },
+    ),
+
+  /** Removes a whole thread, comments and all. The owner, or whoever opened it. */
+  deleteThread: (id: string, threadId: string) =>
+    request(`/api/diagrams/${id}/threads/${encodeURIComponent(threadId)}`, { method: 'DELETE' }),
 };
