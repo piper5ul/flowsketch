@@ -340,6 +340,46 @@ export function isDocumentBound(): boolean {
   return flushDocument !== null;
 }
 
+/**
+ * Undo, for a diagram that lives in a shared document.
+ *
+ * Phase 3 of `docs/realtime.md`: a `Y.UndoManager` scoped to this browser's
+ * transaction origin, so ⌘Z reverts *your* edits and never a collaborator's.
+ * The snapshot stacks below stay exactly as they were for a diagram with no
+ * document behind it — a socket that was refused, an older deployment — and
+ * this store dispatches to whichever of the two is in force.
+ *
+ * Registered from outside rather than imported, for the reason
+ * `setDocumentFlush` is: the binding reads this store, and an import the other
+ * way would be a cycle.
+ */
+export interface DocumentHistory {
+  undo: () => void;
+  redo: () => void;
+  /**
+   * Where the snapshot history would have pushed an entry: the next edit
+   * starts a new undo step rather than joining the one before it.
+   *
+   * The document has no snapshots to push, so what the two models share is not
+   * the entry but the *boundary* — which is why every `pushHistory` call site
+   * still marks exactly the right place and none of them had to be visited.
+   */
+  beginEntry: () => void;
+  /** Forget both stacks — a different diagram, or one restored over this one. */
+  clear: () => void;
+}
+
+let documentHistory: DocumentHistory | null = null;
+
+export function setDocumentHistory(history: DocumentHistory | null): void {
+  documentHistory = history;
+}
+
+/** True while ⌘Z is the document's per-user undo rather than the snapshot stack. */
+export function hasDocumentHistory(): boolean {
+  return documentHistory !== null;
+}
+
 /** Where the row actually is, once a save has been refused as stale. */
 export interface SaveConflict {
   /** The `updatedAt` the server reports — i.e. what another tab wrote. */
@@ -584,8 +624,13 @@ export interface DiagramState {
 }
 
 // ---- tiny undo/redo history (snapshot-based, good enough for a diagram tool) ----
+// **This is the history of a diagram with no shared document behind it.** When
+// one is bound, `documentHistory` above takes every call below over and these
+// stacks stay empty; see the undo model in CLAUDE.md.
+//
 // The stacks stay module-level so they never reach the serialized diagram; the
-// `canUndo` / `canRedo` booleans in the store are the UI's view of them.
+// `canUndo` / `canRedo` booleans in the store are the UI's view of them — of
+// these stacks, or of the document's, whichever is in force.
 type Snapshot = { nodes: ShapeNode[]; edges: ConnectorEdge[] };
 let past: Snapshot[] = [];
 let future: Snapshot[] = [];
@@ -605,6 +650,13 @@ function historyFlags() {
 
 function pushSnapshot(snapshot: Snapshot) {
   if (suppressHistory) return;
+  // A bound diagram keeps its history in the document. What the call site meant
+  // still applies — "everything from here is a new undo step" — so the boundary
+  // is passed on and the snapshot is dropped on the floor.
+  if (documentHistory) {
+    documentHistory.beginEntry();
+    return;
+  }
   past = [...past.slice(-49), snapshot];
   future = [];
   useDiagramStore.setState(historyFlags());
@@ -813,6 +865,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     past = [];
     future = [];
+    // Whichever history is in force, a load is where it starts again: the board
+    // being opened is not one the entries on the stack describe. For a bound
+    // diagram this is a version restore or a reload of the same document, and
+    // the edit the load then pushes into it is one step of its own.
+    documentHistory?.clear();
     suppressHistory = false;
     lastNudgeAt = 0;
     set({
@@ -1757,7 +1814,14 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     });
   },
 
+  // Both of these are the *diagram's* undo, not the store's: a bound diagram's
+  // history is per person and lives in the document, and the snapshot stacks
+  // are what a diagram with no document behind it still uses.
   undo: () => {
+    if (documentHistory) {
+      documentHistory.undo();
+      return;
+    }
     if (past.length === 0) return;
     const state = get();
     const previous = past[past.length - 1];
@@ -1770,6 +1834,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   redo: () => {
+    if (documentHistory) {
+      documentHistory.redo();
+      return;
+    }
     if (future.length === 0) return;
     const state = get();
     const next = future[0];

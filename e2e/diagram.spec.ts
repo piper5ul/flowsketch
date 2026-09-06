@@ -1013,6 +1013,59 @@ test('two people edit one diagram at once and both windows end up identical', as
   await guest.close();
 });
 
+test('⌘Z takes back your own move and leaves your collaborator’s where they put it', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  const mine = await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await drawShapeIn(page, pane, { x: 400, y: 560 });
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  const guestEmail = await signUp(guestPage, 'Grace Hopper');
+
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(guestEmail);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(guestEmail)).toBeVisible();
+  await page.getByRole('button', { name: 'Close share dialog' }).click();
+
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2);
+  await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+
+  const [first, second] = Object.keys(await nodePositions(page));
+
+  // Ada moves one shape, Grace moves the other, and both windows agree.
+  await dragBy(page, mine, 150, 0);
+  await dragBy(guestPage, guestPage.locator(`.react-flow__node[data-id="${second}"]`), 0, -120);
+  await expectSameBoard(page, guestPage);
+  const moved = await nodePositions(page);
+
+  // Ada presses ⌘Z. Her shape goes back — in Grace's window too, because
+  // undoing an edit is an edit — and Grace's shape is not Ada's to take back.
+  await pane.click({ position: { x: 60, y: 60 } });
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect.poll(async () => (await nodePositions(page))[first], { timeout: 15_000 })
+    .not.toBe(moved[first]);
+  await expectSameBoard(page, guestPage);
+
+  const afterUndo = await nodePositions(page);
+  expect(afterUndo[second]).toBe(moved[second]);
+
+  // And ⌘⇧Z puts Ada's own move back, still without touching Grace's.
+  await page.keyboard.press('ControlOrMeta+Shift+z');
+  await expect.poll(async () => (await nodePositions(page))[first], { timeout: 15_000 })
+    .toBe(moved[first]);
+  await expectSameBoard(page, guestPage);
+  expect((await nodePositions(page))[second]).toBe(moved[second]);
+
+  await guest.close();
+});
+
 test('a public link opens the diagram read-only, and revoking it kills the URL', async ({ page, browser }) => {
   await signUp(page);
   const pane = await newDiagram(page);

@@ -22,7 +22,12 @@ import {
   type PresenceUser,
 } from '../lib/collab/presence';
 import { bindDocToStore, type DocBinding } from '../lib/collab/binding';
-import { serializeDiagram, setDocumentFlush, useDiagramStore } from './useDiagramStore';
+import {
+  serializeDiagram,
+  setDocumentFlush,
+  setDocumentHistory,
+  useDiagramStore,
+} from './useDiagramStore';
 
 interface CollabState {
   /** Everyone here but you, in a stable order. Empty when not connected. */
@@ -86,8 +91,10 @@ function teardown() {
   binding?.destroy();
   binding = null;
   // The diagram is not collaborative any more, so the JSON save is the only
-  // thing that could write it — which is what an unbound store already does.
+  // thing that could write it — which is what an unbound store already does,
+  // and ⌘Z goes back to the snapshot stack for the same reason.
   setDocumentFlush(null);
+  setDocumentHistory(null);
   connection?.destroy();
   connection = null;
 }
@@ -125,9 +132,14 @@ export const useCollabStore = create<CollabState>((set, get) => ({
           readOnly: options?.readOnly ?? false,
           baseline,
         });
-        // From here "Saved" means "the document reached the server", and the
-        // JSON `PUT` stops carrying diagram data at all.
-        if (!options?.readOnly) setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
+        // From here the document is the save, the JSON `PUT` stops carrying
+        // diagram data at all, and ⌘Z is the document's per-user undo rather
+        // than the snapshot stack. A viewer gets neither: they write nothing,
+        // so there is nothing of theirs to flush or to take back.
+        if (!options?.readOnly) {
+          setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
+          setDocumentHistory(binding.history);
+        }
       },
       // Guarded on the diagram id: a callback from the connection being torn
       // down can still land after the next one has been opened, and it must not

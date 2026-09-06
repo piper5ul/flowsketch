@@ -12,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { docToDiagramData } from '../../../server/collab/render';
 import { edgeEntries, nodeEntries } from '../../../shared/collabDoc';
-import { serializeDiagram, setDocumentFlush, useDiagramStore } from '../../store/useDiagramStore';
+import {
+  serializeDiagram,
+  setDocumentFlush,
+  setDocumentHistory,
+  useDiagramStore,
+} from '../../store/useDiagramStore';
 import { api } from '../api';
 import { bindDocToStore, pushDiagramToDoc, TRANSIENT_COMMIT_MS, type DocBinding } from './binding';
 
@@ -35,6 +40,16 @@ let binding: DocBinding | null = null;
 function bind(doc: Y.Doc, options: { readOnly?: boolean } = {}) {
   binding = bindDocToStore(doc, useDiagramStore, LOCAL, options);
   return binding;
+}
+
+/**
+ * `bind`, plus the registration `useCollabStore` makes for an editor: ⌘Z is
+ * the document's per-user history rather than the snapshot stack.
+ */
+function bindWithHistory(doc: Y.Doc, options: { readOnly?: boolean } = {}) {
+  const made = bind(doc, options);
+  setDocumentHistory(made.history);
+  return made;
 }
 
 /** The diagram exactly as an autosave would have written it. */
@@ -60,6 +75,7 @@ afterEach(() => {
   binding?.destroy();
   binding = null;
   setDocumentFlush(null);
+  setDocumentHistory(null);
   saveDiagram.mockClear();
   vi.useRealTimers();
 });
@@ -447,6 +463,206 @@ describe('doc -> store', () => {
     // not be seeded.
     expect(store().nodes.map((n) => n.id)).toEqual(['loaded']);
     expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['loaded']);
+  });
+});
+
+/**
+ * Undo, once the diagram lives in a document: `Y.UndoManager` scoped to this
+ * browser's origin, dispatched to by the store's `undo` / `redo`. What the
+ * snapshot stack could not promise is the first test here — ⌘Z takes back what
+ * *you* did and never what somebody else did.
+ */
+describe('undo', () => {
+  /** A second browser on the same document, holding the same board. */
+  function peerOf(doc: Y.Doc) {
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    return peer;
+  }
+
+  /** Exchange every update both ways, as the server fans them out. */
+  function converge(a: Y.Doc, b: Y.Doc) {
+    Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+    Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+  }
+
+  /** The other browser moves a shape, with no store of its own to do it through. */
+  function moveOnPeer(doc: Y.Doc, id: string, position: { x: number; y: number }) {
+    const data = docToDiagramData(doc);
+    pushDiagramToDoc(
+      doc,
+      { ...data, nodes: data.nodes.map((node) => (node.id === id ? { ...node, position } : node)) },
+      'peer',
+    );
+  }
+
+  const positionOf = (doc: Y.Doc, id: string) =>
+    docToDiagramData(doc).nodes.find((node) => node.id === id)!.position;
+
+  const selectedIds = () => store().nodes.filter((node) => node.selected).map((node) => node.id);
+
+  it('takes back this browser’s move on both documents and leaves a collaborator’s alone', () => {
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const mine = store().addShape('rectangle', { x: 0, y: 0 });
+    const theirs = store().addShape('ellipse', { x: 200, y: 0 });
+    const peer = peerOf(doc);
+
+    // Both of us move a shape, at the same time, on different shapes.
+    moveOnPeer(peer, theirs, { x: 260, y: 40 });
+    select(mine);
+    store().nudgeSelected(10, 0);
+    converge(doc, peer);
+    expect(positionOf(doc, mine)).toEqual({ x: 10, y: 0 });
+    expect(positionOf(doc, theirs)).toEqual({ x: 260, y: 40 });
+
+    store().undo();
+    converge(doc, peer);
+
+    // Mine went back — in their window as well as mine, because undoing an
+    // edit is itself an edit — and theirs was never mine to take back.
+    expect(store().nodes.find((node) => node.id === mine)!.position).toEqual({ x: 0, y: 0 });
+    expect(positionOf(doc, mine)).toEqual({ x: 0, y: 0 });
+    expect(positionOf(peer, mine)).toEqual({ x: 0, y: 0 });
+    expect(positionOf(doc, theirs)).toEqual({ x: 260, y: 40 });
+    expect(positionOf(peer, theirs)).toEqual({ x: 260, y: 40 });
+  });
+
+  it('re-applies it on redo, again for everybody', () => {
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    const peer = peerOf(doc);
+
+    select(id);
+    store().nudgeSelected(10, 0);
+    store().undo();
+    store().redo();
+    converge(doc, peer);
+
+    expect(store().nodes[0].position).toEqual({ x: 10, y: 0 });
+    expect(positionOf(peer, id)).toEqual({ x: 10, y: 0 });
+  });
+
+  it('has nothing to undo after a collaborator’s edit, and ⌘Z leaves it standing', () => {
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const peer = peerOf(doc);
+    pushDiagramToDoc(
+      peer,
+      {
+        version: 3,
+        nodes: [{ id: 'theirs', type: 'shape', position: { x: 0, y: 0 }, data: {} }],
+        edges: [],
+      },
+      'peer',
+    );
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+    expect(store().nodes).toHaveLength(1);
+    expect(store().canUndo).toBe(false);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(1);
+  });
+
+  it('makes a drag one step, even one the user paused in the middle of', () => {
+    vi.useFakeTimers();
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+
+    // React Flow reports a frame at a time and the release last.
+    store().onNodesChange([{ id, type: 'position', position: { x: 30, y: 0 }, dragging: true }]);
+    // Long enough that the trailing flush writes the frames so far — the pause
+    // must not become an undo step of its own.
+    vi.advanceTimersByTime(TRANSIENT_COMMIT_MS * 2);
+    store().onNodesChange([{ id, type: 'position', position: { x: 60, y: 0 }, dragging: true }]);
+    store().onNodesChange([{ id, type: 'position', position: { x: 90, y: 0 }, dragging: false }]);
+    expect(store().nodes[0].position).toEqual({ x: 90, y: 0 });
+
+    store().undo();
+    expect(store().nodes[0].position).toEqual({ x: 0, y: 0 });
+    // Drawing the shape was a step of its own, so it is still on the board.
+    expect(store().nodes).toHaveLength(1);
+  });
+
+  it('coalesces arrow-key nudges the way the snapshot history did', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+
+    // Three presses inside the 500 ms window are one edit...
+    store().nudgeSelected(1, 0);
+    vi.advanceTimersByTime(200);
+    store().nudgeSelected(1, 0);
+    vi.advanceTimersByTime(200);
+    store().nudgeSelected(1, 0);
+    // ...and one after the keyboard has gone quiet is another.
+    vi.advanceTimersByTime(600);
+    store().nudgeSelected(1, 0);
+    expect(store().nodes[0].position).toEqual({ x: 4, y: 0 });
+
+    store().undo();
+    expect(store().nodes[0].position).toEqual({ x: 3, y: 0 });
+    store().undo();
+    expect(store().nodes[0].position).toEqual({ x: 0, y: 0 });
+  });
+
+  it('mirrors the document’s stacks onto canUndo / canRedo', () => {
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    expect(store().canUndo).toBe(false);
+    expect(store().canRedo).toBe(false);
+
+    store().addShape('rectangle', { x: 0, y: 0 });
+    expect(store().canUndo).toBe(true);
+    expect(store().canRedo).toBe(false);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
+    expect(store().canRedo).toBe(true);
+
+    store().redo();
+    expect(store().nodes).toHaveLength(1);
+    expect(store().canUndo).toBe(true);
+    expect(store().canRedo).toBe(false);
+  });
+
+  it('puts the selection back on what the undo changed', () => {
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('ellipse', { x: 300, y: 0 });
+    select(a);
+    store().nudgeSelected(10, 0);
+    // The user has clicked something else by the time they press ⌘Z; the shape
+    // that moves back is off screen unless the selection follows it.
+    select(b);
+
+    store().undo();
+    expect(selectedIds()).toEqual([a]);
+  });
+
+  it('forgets the old board when one is restored over it, and makes the restore one step', () => {
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    store().addShape('rectangle', { x: 0, y: 0 });
+    store().addShape('ellipse', { x: 300, y: 0 });
+    expect(store().canUndo).toBe(true);
+
+    // What a version restore does: the board becomes something else entirely.
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] });
+    expect(store().nodes).toHaveLength(0);
+
+    // The two shapes went with the board they were drawn on; the one thing left
+    // to take back is the restore, and taking it back is all one step.
+    store().undo();
+    expect(store().nodes).toHaveLength(2);
+    expect(store().canUndo).toBe(false);
   });
 });
 
