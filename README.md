@@ -54,6 +54,7 @@ A full-featured diagramming app inspired by Whimsical, built with React Flow, Zu
 - Drag connector endpoints to reconnect them to other shapes
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
+- Find shapes and connectors by their labels with `⌘F`: every match is ringed on the board, `Enter` / `⇧Enter` cycle through them, and each one is selected and framed as you reach it. Available on read-only and publicly shared boards too
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
 - Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
 - Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
@@ -156,6 +157,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `1` | Fit all shapes in view |
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
+| `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
 | `?` | Show the keyboard shortcut cheat sheet |
 

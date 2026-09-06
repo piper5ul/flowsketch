@@ -3,6 +3,7 @@ import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
+import { useSearchHighlight } from '../store/useSearchStore';
 import type { Direction, VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
@@ -46,6 +47,11 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
+  // `undefined` unless a search is running and this shape is one of its hits;
+  // `'active'` on the one the find bar is currently pointing at. Read as a
+  // string so a shape the search never matched does not re-render as it is
+  // typed. The ring itself is CSS — see `[data-search-hit]` in `index.css`.
+  const searchHit = useSearchHighlight('node', id);
   // Holding ⇧ while dragging a corner locks the aspect ratio, as in every
   // other design tool. Image nodes are locked whether or not it is held.
   const shiftHeld = useShiftKey();
@@ -115,7 +121,10 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   // same handles every other shape uses.
   if (isImageNode) {
     return (
-      <div className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}>
+      <div
+        data-search-hit={searchHit}
+        className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
+      >
         <img
           src={data.imageSrc}
           alt=""
@@ -230,6 +239,7 @@ export function ShapeNode({ id, data, width, height, selected }: NodeProps<Shape
   return (
     <div
       data-shape={data.shape}
+      data-search-hit={searchHit}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       style={wrapperStyle}
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}

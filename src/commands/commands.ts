@@ -1,4 +1,5 @@
 import { renderDiagramPng } from '../lib/exportImage';
+import { useSearchStore } from '../store/useSearchStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import { nextFontSize } from '../lib/text';
@@ -481,6 +482,17 @@ export const commandDeclarations: Command[] = [
     run: (ctx) => ctx.pan.begin(),
   },
   {
+    id: 'view.find',
+    title: 'Find on canvas',
+    group: 'view',
+    // No `when`: finding something is looking, not editing, so this is offered
+    // on a read-only board and on the public share page as well. The bar takes
+    // its own Escape and Enter — it is a field, which the canvas's keyboard
+    // handler steps aside for — so nothing here needs a gate.
+    shortcut: { key: 'f', meta: true },
+    run: () => useSearchStore.getState().openSearch(),
+  },
+  {
     id: 'view.shortcuts',
     title: 'Keyboard shortcuts',
     group: 'view',
@@ -551,6 +563,7 @@ const READ_ONLY_COMMAND_IDS = new Set<string>([
   'view.zoomReset',
   'view.fitView',
   'view.fitSelection',
+  'view.find',
   'view.pan',
   'view.shortcuts',
   'view.toggleMinimap',
