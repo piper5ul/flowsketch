@@ -22,6 +22,7 @@ model User {
   sessions Session[]
   accounts Account[]
   diagrams Diagram[]
+  images   Image[]
 }
 
 model Session {
@@ -81,4 +82,20 @@ model Diagram {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, updatedAt(sort: Desc)])
+}
+
+/// Metadata for an uploaded image. The bytes live on disk under
+/// `UPLOAD_DIR/<userId>/<id>.<ext>`; the extension is derived from `mime`.
+model Image {
+  id        String   @id @default(cuid())
+  userId    String
+  mime      String
+  size      Int
+  width     Int?
+  height    Int?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
