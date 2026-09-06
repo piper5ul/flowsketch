@@ -332,8 +332,14 @@ function findRoute(
     d.angle = normalizeAngle(new Pt(0, 0).theta(p2));
   }
 
-  const startPoints = getRectPoints(sa, sourceBBox, opt.startDirections, grid, opt).filter(p => !isPointObstacle(p));
-  const endPoints = getRectPoints(ta, targetBBox, opt.endDirections, grid, opt).filter(p => !isPointObstacle(p));
+  // A zero-size bbox is a user waypoint, not an element: route to the point
+  // itself (as JointJS does for vertices) instead of looking for border
+  // intersections that a degenerate rect can never produce.
+  const isPoint = (r: Rt) => r.width === 0 && r.height === 0;
+  const startPoints = (isPoint(sourceBBox) ? [sa] : getRectPoints(sa, sourceBBox, opt.startDirections, grid, opt))
+    .filter(p => !isPointObstacle(p));
+  const endPoints = (isPoint(targetBBox) ? [ta] : getRectPoints(ta, targetBBox, opt.endDirections, grid, opt))
+    .filter(p => !isPointObstacle(p));
 
   if (startPoints.length === 0 || endPoints.length === 0) return null;
 

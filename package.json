@@ -15,7 +15,13 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "prepare": "simple-git-hooks"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
@@ -39,6 +45,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/vite": "^4.3.3",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -47,13 +54,20 @@
     "@types/pg": "^8.20.4",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "@types/supertest": "^7.2.1",
     "@vitejs/plugin-react": "^6.0.4",
     "concurrently": "^10.0.4",
     "oxlint": "^1.75.0",
     "prisma": "^7.9.1",
+    "simple-git-hooks": "^2.14.0",
+    "supertest": "^7.2.2",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.23.6",
     "typescript": "~6.0.2",
-    "vite": "^8.2.0"
+    "vite": "^8.2.0",
+    "vitest": "^5.0.0"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npm run check"
   }
 }

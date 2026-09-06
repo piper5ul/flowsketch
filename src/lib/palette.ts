@@ -1,7 +1,9 @@
 import type { SwatchColor } from '../types';
 
 // 8 hue families × 4 lightness tiers, matching Whimsical's palette structure.
-// Tier 1–2: light pastels (dark text). Tier 3–4: saturated/deep fills (white text).
+// Tier 1–2: light pastels (dark text). Tier 4: deep fills (white text).
+// Tier 3 is saturated and sits near the luminance threshold; `isDarkFill`
+// decides per swatch (e.g. yellow-3 keeps dark text, blue-3 gets white).
 export const PALETTE: SwatchColor[] = [
   // ── Tier 1: lightest pastels ──────────────────────────────────────
   { id: 'gray-1',   fill: '#F3F4F6', stroke: '#D1D5DB' },

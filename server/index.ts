@@ -17,6 +17,11 @@ app.use(cors({
   credentials: true,
 }));
 
+// Liveness probe for uptime checks and the e2e harness. Deliberately DB-free.
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
+});
+
 app.all('/api/auth/*splat', toNodeHandler(auth));
 
 app.use('/api', express.json({ limit: '5mb' }));

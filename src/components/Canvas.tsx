@@ -70,8 +70,8 @@ export function Canvas() {
   }, [tool]);
 
   const onNodeDragStart = useCallback(
-    (_event: React.MouseEvent, _node: ShapeNode) => {
-      if (!_event.altKey) return;
+    (event: MouseEvent | TouchEvent) => {
+      if (!('altKey' in event) || !event.altKey) return;
       useDiagramStore.getState().duplicateSelectedInPlace();
     },
     [],
@@ -586,7 +586,7 @@ export function Canvas() {
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('paste', onPaste);
     };
-  }, [deleteSelection, undo, redo, setTool, zoomIn, zoomOut, zoomTo, fitView, screenToFlowPosition, addNodes]);
+  }, [deleteSelection, undo, redo, setTool, setEditingNodeId, setEditingEdgeId, zoomIn, zoomOut, zoomTo, fitView, screenToFlowPosition, addNodes]);
 
   return (
     <div ref={wrapperRef} className="relative h-full w-full" onDoubleClick={onCanvasDoubleClick}>

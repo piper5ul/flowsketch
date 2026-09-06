@@ -255,18 +255,22 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   const sourceNode = nodes.find((n) => n.id === source);
   const targetNode = nodes.find((n) => n.id === target);
-  if (!sourceNode || !targetNode) return null;
 
-  const isFloatingArrow = sourceNode.data.fill === 'transparent' && sourceNode.data.stroke === 'transparent' &&
-    targetNode.data.fill === 'transparent' && targetNode.data.stroke === 'transparent';
+  // Primitive deps so the hook can be declared unconditionally (rules-of-hooks)
+  // even when one endpoint node is missing during a delete/undo transition.
+  const srcX = sourceNode?.position.x;
+  const srcY = sourceNode?.position.y;
+  const tgtX = targetNode?.position.x;
+  const tgtY = targetNode?.position.y;
 
   const onEdgeDragDown = useCallback(
     (e: React.PointerEvent<SVGPathElement>) => {
+      if (srcX === undefined || srcY === undefined || tgtX === undefined || tgtY === undefined) return;
       e.stopPropagation();
       e.preventDefault();
       const startPos = screenToFlowPosition({ x: e.clientX, y: e.clientY });
-      const srcPos = { ...sourceNode.position };
-      const tgtPos = { ...targetNode.position };
+      const srcPos = { x: srcX, y: srcY };
+      const tgtPos = { x: tgtX, y: tgtY };
 
       const onMove = (ev: PointerEvent) => {
         const pos = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
@@ -287,9 +291,13 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [source, target, sourceNode.position.x, sourceNode.position.y, targetNode.position.x, targetNode.position.y, screenToFlowPosition],
+    [source, target, srcX, srcY, tgtX, tgtY, screenToFlowPosition],
   );
+
+  if (!sourceNode || !targetNode) return null;
+
+  const isFloatingArrow = sourceNode.data.fill === 'transparent' && sourceNode.data.stroke === 'transparent' &&
+    targetNode.data.fill === 'transparent' && targetNode.data.stroke === 'transparent';
 
   const floating = floatingEdgeSides(rectOfNode(sourceNode), rectOfNode(targetNode));
   const sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };

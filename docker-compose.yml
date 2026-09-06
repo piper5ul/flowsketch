@@ -1,0 +1,29 @@
+# Local development services. Start with `docker compose up -d`, then point
+# .env at them (the defaults in .env.example already do).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      # Local-only database bound to localhost; no password by design.
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_DB: flowsketch
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d flowsketch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Catches verification / reset emails. Web UI on http://localhost:1080.
+  maildev:
+    image: maildev/maildev
+    ports:
+      - "1080:1080"
+      - "1025:1025"
+
+volumes:
+  pgdata:

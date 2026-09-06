@@ -17,7 +17,10 @@ export const auth = betterAuth({
     },
   },
   trustedOrigins: [
-    process.env.BETTER_AUTH_URL || 'http://localhost:5173',
+    process.env.BETTER_AUTH_URL || 'http://localhost:5199',
     'https://whimsical.vedalogy.com',
+    // The Vite dev server origin, so local sign-in works regardless of what
+    // BETTER_AUTH_URL points at (it is often the public tunnel URL).
+    ...(process.env.NODE_ENV === 'production' ? [] : ['http://localhost:5199', 'http://127.0.0.1:5199']),
   ],
 });

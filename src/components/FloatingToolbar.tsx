@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import { useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { getNodesBounds, useReactFlow, useViewport } from '@xyflow/react';
 import {
   Trash2,

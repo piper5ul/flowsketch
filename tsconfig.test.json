@@ -1,21 +1,22 @@
 {
   "compilerOptions": {
-    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo",
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
     "target": "es2023",
     "lib": ["ES2023"],
     "types": ["node"],
     "skipLibCheck": true,
+
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
-    "outDir": "./dist-server",
-    "rootDir": ".",
+    "noEmit": true,
+
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["server", "shared"],
-  "exclude": ["server/**/*.test.ts"]
+  "include": ["server/**/*.test.ts", "e2e", "vitest.config.ts", "playwright.config.ts"]
 }
