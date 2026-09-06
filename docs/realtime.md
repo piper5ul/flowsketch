@@ -1,6 +1,6 @@
 # Real-time collaboration
 
-Status: **design accepted 2026-09-06; phase 1 in progress.** Tracked on the FlowSketch Roadmap as `realtime-p1` … `realtime-p4`.
+Status: **design accepted 2026-09-06; phases 1 and 2 shipped.** Tracked on the FlowSketch Roadmap as `realtime-p1` … `realtime-p4`.
 
 ## Why
 
@@ -38,10 +38,25 @@ Considered and rejected: Server-Sent Events + POST for presence only (cheap, but
 
 ## Phases (each shippable alone, one PR each, test-first)
 
-1. **`realtime-p1` Infra + presence.** Hocuspocus attached to Express with cookie auth and role checks; awareness-based cursors, selections and "who's here"; no document sync yet (the doc is connected but empty — nothing reads it). Deliverable: two users see each other live. *No data-model change.*
-2. **`realtime-p2` Document sync.** `DiagramDoc` table + migration, database extension with lazy upgrade, the client binding, JSON snapshot rendering, `syncDiagramImages` on store; simultaneous editing works; the conflict banner and `ifUnmodifiedSince` are bypassed for collaborative diagrams. Import/restore/backfill write through the doc.
+1. ✅ **`realtime-p1` Infra + presence.** Hocuspocus attached to Express with cookie auth and role checks; awareness-based cursors, selections and "who's here"; no document sync yet (the doc is connected but empty — nothing reads it). Deliverable: two users see each other live. *No data-model change.*
+2. ✅ **`realtime-p2` Document sync.** `DiagramDoc` table + migration, database extension with lazy upgrade, the client binding, JSON snapshot rendering, `syncDiagramImages` on store; simultaneous editing works; the conflict banner and `ifUnmodifiedSince` are bypassed for collaborative diagrams. Import/restore/backfill write through the doc.
 3. **`realtime-p3` Undo + cleanup.** `Y.UndoManager`, removal of the now-dead autosave/retry/conflict code paths and their tests, connection-status indicator, docs (README, CLAUDE.md, DEPLOYMENT.md: nothing to deploy beyond the app, but note the WebSocket upgrade path if a reverse proxy is ever put in front).
 4. **`realtime-p4` Offline (optional).** `y-indexeddb` so a dropped connection keeps working and merges on reconnect.
+
+## What phase 2 did differently
+
+Three departures from the plan above, all made while building it:
+
+- **store → doc is one diffing subscription, not a call in each of the ~25 mutating actions.** Every action ends in one synchronous `set`, so a single store subscription is still exactly one `doc.transact` per action — and because what it compares is the *serialized* diagram, a change that leaves the saved JSON identical (a selection, a measured size) writes nothing, which a per-action hook would have had to know about action by action. An action added tomorrow is covered without being told to be.
+- **A gesture is committed on a trailing flush (150 ms), not on a release event.** The design says transient drags "commit on release"; there is no release for all of them — a text shape's height follows what is being typed and never commits — so the store marks per-frame writes with a `transientSeq` and the binding holds them until they stop, rather than dropping them and waiting for a commit that may not come.
+- **The save indicator still says "Saved".** Rewording it as connection status is listed under phase 3 here, and doing it in phase 2 would have changed what a dozen end-to-end tests wait on for no gain. For a collaborative diagram "Saved" now means "the provider reports this browser's edits have reached the server", which is the same claim it always made.
+
+One thing the design left open: the **viewport** is written into the document's `meta` (the snapshot needs it, so a diagram reopens where it was left) but is deliberately never read back out, because a peer scrolling their own window must not move yours.
+
+Two limitations phase 2 ships with, both listed against later phases:
+
+- **Undo is still the snapshot stack**, so ⌘Z can walk back over a collaborator's edit. That is phase 3's `Y.UndoManager`.
+- **A diagram whose socket will not open cannot be edited.** The document is the save, so a browser that reaches `/api` but not `/collab` (a proxy that will not upgrade, say) falls back to the JSON `PUT`, which the server refuses with `409` once the diagram has a document — the conflict banner's "Reload" is the way out, and the edits made in the meantime are lost. Making that survivable is phase 4's `y-indexeddb`.
 
 ## Risks
 

@@ -22,7 +22,7 @@ import {
   type PresenceUser,
 } from '../lib/collab/presence';
 import { bindDocToStore, type DocBinding } from '../lib/collab/binding';
-import { setDocumentFlush, useDiagramStore } from './useDiagramStore';
+import { serializeDiagram, setDocumentFlush, useDiagramStore } from './useDiagramStore';
 
 interface CollabState {
   /** Everyone here but you, in a stable order. Empty when not connected. */
@@ -103,6 +103,13 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     teardown();
     set({ diagramId, peers: [], selectionOwners: new Map(), status: 'connecting' });
 
+    // The board as the page loaded it, kept until the document arrives. The
+    // canvas is interactive the whole time the socket is opening, and the
+    // binding needs to know which of the shapes on it are *this* browser's
+    // work — see `BindDocOptions.baseline`.
+    const { nodes, edges, viewport } = useDiagramStore.getState();
+    const baseline = serializeDiagram(nodes, edges, viewport);
+
     connection = connectPresence({
       diagramId,
       user,
@@ -116,6 +123,7 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         if (useDiagramStore.getState().diagramId !== diagramId) return;
         binding = bindDocToStore(connection.document, useDiagramStore, LOCAL_ORIGIN, {
           readOnly: options?.readOnly ?? false,
+          baseline,
         });
         // From here "Saved" means "the document reached the server", and the
         // JSON `PUT` stops carrying diagram data at all.

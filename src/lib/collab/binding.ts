@@ -72,6 +72,18 @@ export interface BindDocOptions {
    * writes anyway (`connectionConfig.readOnly`), so this is about not asking.
    */
   readOnly?: boolean;
+  /**
+   * The diagram as it was loaded, before the socket was open.
+   *
+   * The board is interactive from the moment the JSON arrives over HTTP, and
+   * the document lands a beat later — so anything drawn in between exists only
+   * in this browser. Replacing the canvas with the document would throw it
+   * away, and pushing the whole canvas over the document would undo whatever a
+   * collaborator did in the same beat. The baseline is what tells those two
+   * apart: an element that differs from it was edited here and is written to
+   * the document; an element that matches it is the document's business.
+   */
+  baseline?: DiagramData;
 }
 
 export interface DocBinding {
@@ -147,6 +159,50 @@ export function pushDiagramToDoc(doc: Y.Doc, data: DiagramData, origin: unknown)
 }
 
 /**
+ * Write the edits made between `baseline` and `current` into the document,
+ * leaving everything else to it.
+ *
+ * The three cases, per element: changed or added here since the load, so it is
+ * written; gone here since the load, so it is deleted; untouched here, so
+ * whatever the document holds — a collaborator's newer version of it, very
+ * possibly — is left exactly as it is.
+ *
+ * The array index counts as part of the element: a `bringToFront` moves a shape
+ * without changing a byte of it, and reading only the values would lose that.
+ */
+export function applyLocalEditsSince(
+  doc: Y.Doc,
+  baseline: DiagramData,
+  current: DiagramData,
+  origin: unknown,
+): void {
+  doc.transact(() => {
+    mergeSince(nodeEntries(doc), baseline.nodes, current.nodes);
+    mergeSince(edgeEntries(doc), baseline.edges, current.edges);
+  }, origin);
+}
+
+function mergeSince<T extends { id: string }>(
+  map: Y.Map<DocEntry<T>>,
+  before: T[],
+  after: T[],
+): void {
+  const wasValue = new Map(before.map((element) => [element.id, element]));
+  const wasOrder = new Map(before.map((element, order) => [element.id, order]));
+
+  after.forEach((element, order) => {
+    const was = wasValue.get(element.id);
+    if (was && wasOrder.get(element.id) === order && same(was, element)) return;
+    map.set(element.id, { order, value: plain(element) });
+  });
+
+  const present = new Set(after.map((element) => element.id));
+  for (const element of before) {
+    if (!present.has(element.id)) map.delete(element.id);
+  }
+}
+
+/**
  * The document's nodes as store nodes, with this browser's own state kept.
  *
  * Selection, what React Flow measured and whether a node is mid-drag are all
@@ -197,14 +253,21 @@ function diagramOf(state: DiagramState): DiagramData {
  * Bind `doc` and `store` together for as long as a diagram is open.
  *
  * Call it once the provider reports `synced`: the document is the source of
- * truth, so what is on screen is replaced by what the document holds rather
- * than merged into it — the store was filled from the JSON snapshot, which is
- * the document's *output* and may be a couple of seconds behind it.
+ * truth, and the store was filled from the JSON snapshot, which is the
+ * document's *output* and may be a couple of seconds behind it.
  *
- * The one exception is a document that has never been written. The server seeds
- * it from `Diagram.data` on the first collaborative open, so this only happens
- * when that could not run at all; pushing the loaded board into it then is
- * better than emptying the canvas in front of the user.
+ * "Source of truth" is not quite "replace the canvas", though, because the
+ * board is interactive while the socket is opening — so anything drawn in that
+ * window would be thrown away. `options.baseline` (the diagram as the page
+ * loaded it) is what separates the two: what differs from it was done here and
+ * is written to the document; what matches it is left to the document, so a
+ * collaborator's newer version of an untouched shape survives. Without a
+ * baseline the document simply wins.
+ *
+ * A document that has never been written is the other way round. The server
+ * seeds one from `Diagram.data` on the first collaborative open, so this only
+ * happens when that could not run at all; writing the loaded board in is better
+ * than emptying the canvas in front of the user.
  */
 export function bindDocToStore(
   doc: Y.Doc,
@@ -218,15 +281,33 @@ export function bindDocToStore(
   /** A gesture whose last frame has not been written yet. */
   let transientTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
+  /**
+   * The diagram the store is known to be holding, as JSON.
+   *
+   * A remote transaction is not necessarily a remote *edit* — a peer's viewport
+   * lands in the same document, and so does an update that says only what this
+   * client already had. Rebuilding every node object for one of those would
+   * re-render the whole canvas, and would blur a label somebody is in the
+   * middle of typing into.
+   */
+  let rendered: string | null = null;
+
+  const contentOf = (data: DiagramData) => JSON.stringify([data.nodes, data.edges]);
 
   const pull = () => {
+    const nodes = nodesOf(doc);
+    const edges = edgesOf(doc);
+    const next = JSON.stringify([nodes, edges]);
+    if (next === rendered) return;
+    rendered = next;
+
     const state = store.getState();
     applyingRemote = true;
     try {
       // The viewport is deliberately not read back — see `pushDiagramToDoc`.
       store.setState({
-        nodes: docNodesOntoStore(nodesOf(doc), state.nodes),
-        edges: docEdgesOntoStore(edgesOf(doc), state.edges),
+        nodes: docNodesOntoStore(nodes, state.nodes),
+        edges: docEdgesOntoStore(edges, state.edges),
       });
     } finally {
       applyingRemote = false;
@@ -235,7 +316,9 @@ export function bindDocToStore(
 
   const push = (state: DiagramState) => {
     if (readOnly) return;
-    pushDiagramToDoc(doc, diagramOf(state), origin);
+    const data = diagramOf(state);
+    pushDiagramToDoc(doc, data, origin);
+    rendered = contentOf(data);
   };
 
   const cancelTransient = () => {
@@ -244,8 +327,27 @@ export function bindDocToStore(
     transientTimer = null;
   };
 
-  if (isSeeded(doc)) pull();
-  else if (!readOnly) writeDiagramIntoDoc(doc, diagramOf(store.getState()), origin);
+  const local = diagramOf(store.getState());
+  if (!isSeeded(doc)) {
+    // Nothing has ever been written here — the server seeds a document on the
+    // first collaborative open, so this is a document that could not be seeded
+    // at all. Emptying the canvas in front of the user is the wrong answer, so
+    // the loaded board is written in as the seed instead.
+    if (!readOnly) {
+      writeDiagramIntoDoc(doc, local, origin);
+      rendered = contentOf(local);
+    }
+  } else {
+    // Anything drawn between the page load and this moment is a local edit, and
+    // has to reach the document before the document is rendered over it.
+    if (!readOnly && options.baseline) {
+      applyLocalEditsSince(doc, options.baseline, local, origin);
+    }
+    // Seeded with what the store already holds, so a document that agrees with
+    // the canvas costs no re-render at all.
+    rendered = contentOf(local);
+    pull();
+  }
 
   // ---- doc -> store --------------------------------------------------------
   // The three observers all fire inside one transaction, so they only mark the

@@ -332,6 +332,109 @@ describe('doc -> store', () => {
     expect(store().nodes.map((n) => n.id)).toEqual(['fresh']);
   });
 
+  it('keeps a shape drawn while the socket was still opening', () => {
+    // The board as the page loaded it over HTTP.
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [{ id: 'loaded', type: 'shape', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    });
+    const baseline = snapshot();
+
+    // The document, as the server holds it — the same board.
+    const doc = new Y.Doc();
+    pushDiagramToDoc(doc, baseline, 'server');
+    doc.getMap('meta').set('seeded', true);
+
+    // The user draws before the socket has finished opening.
+    const drawn = store().addShape('rectangle', { x: 200, y: 200 });
+
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    // Both are there: the document did not roll the canvas back, and the
+    // canvas did not overwrite the document.
+    expect(store().nodes.map((n) => n.id)).toEqual(['loaded', drawn]);
+    expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['loaded', drawn]);
+  });
+
+  it('leaves a collaborator’s newer version of an untouched shape alone', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [
+        { id: 'theirs', type: 'shape', position: { x: 0, y: 0 }, data: { label: 'old' } },
+        { id: 'mine', type: 'shape', position: { x: 0, y: 0 }, data: { label: 'mine' } },
+      ],
+      edges: [],
+    });
+    const baseline = snapshot();
+
+    // The document has moved on since the snapshot the page loaded: a
+    // collaborator relabelled a shape, and deleted nothing.
+    const doc = new Y.Doc();
+    pushDiagramToDoc(
+      doc,
+      {
+        ...baseline,
+        nodes: [{ ...baseline.nodes[0], data: { label: 'new' } }, baseline.nodes[1]],
+      },
+      'peer',
+    );
+    doc.getMap('meta').set('seeded', true);
+
+    // Meanwhile this browser edited the *other* shape.
+    store().updateNodeData('mine', { label: 'edited' });
+
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    const merged = docToDiagramData(doc);
+    // Not touched here, so the document's version of it stands…
+    expect(merged.nodes[0].data.label).toBe('new');
+    // …and the one that was is written over it.
+    expect(merged.nodes[1].data.label).toBe('edited');
+    expect(store().nodes.map((n) => n.data.label)).toEqual(['new', 'edited']);
+  });
+
+  it('carries a pre-sync deletion into the document rather than undoing it', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [
+        { id: 'a', type: 'shape', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'shape', position: { x: 0, y: 0 }, data: {} },
+      ],
+      edges: [],
+    });
+    const baseline = snapshot();
+    const doc = new Y.Doc();
+    pushDiagramToDoc(doc, baseline, 'server');
+    doc.getMap('meta').set('seeded', true);
+
+    select('a');
+    store().deleteSelection();
+
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['b']);
+    expect(store().nodes.map((n) => n.id)).toEqual(['b']);
+  });
+
+  it('does not replace a single node object when the document agrees with the canvas', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [{ id: 'a', type: 'shape', position: { x: 0, y: 0 }, data: {} }],
+      edges: [],
+    });
+    const baseline = snapshot();
+    const doc = new Y.Doc();
+    pushDiagramToDoc(doc, baseline, 'server');
+    doc.getMap('meta').set('seeded', true);
+
+    // Identity, not equality: re-rendering every shape would blur a label
+    // somebody is in the middle of typing into.
+    const before = store().nodes;
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+    expect(store().nodes).toBe(before);
+  });
+
   it('pushes the loaded board into a document nothing has ever written', () => {
     store().loadDiagram('test', 'Test', false, {
       nodes: [{ id: 'loaded', type: 'shape', position: { x: 0, y: 0 }, data: {} }],

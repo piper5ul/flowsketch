@@ -73,8 +73,11 @@ npm run db:migrate:deploy      # or: npx prisma migrate deploy
 | `20260906132915_comments` | Adds the `CommentThread` and `Comment` tables, indexed by `(diagramId, resolved)` and `(threadId, createdAt)`; `ON DELETE CASCADE` from `Diagram`, from the thread, and from `User` — a comment is a person speaking, so it goes when the account does |
 | `20260906154210_image_refs_index` | Adds the `DiagramImage` join table — which images each live diagram draws — keyed on `(diagramId, imageId)` and indexed by `imageId`; `ON DELETE CASCADE` from both sides. **Needs the one-time backfill below.** |
 | `20260906170500_folders` | Adds the `Folder` table (personal, one flat level), indexed by `userId`, and `Diagram.folderId` with its index; `ON DELETE CASCADE` from `User`, `ON DELETE SET NULL` from `Folder` — deleting a folder unfiles its diagrams rather than taking them with it |
+| `20260906190000_collab_document` | Adds the `DiagramDoc` table — the Yjs document behind a diagram, `state bytea` keyed by `diagramId`; `ON DELETE CASCADE` from `Diagram`. Created empty and filled lazily, one diagram at a time, the first time each is opened. **No backfill.** |
 
 Every migration after `init` is additive — new nullable columns and new tables — so they apply to a populated database without a backfill and without downtime, with the one exception noted next. Existing diagrams come out unshared (`shareToken IS NULL`), with no members, with an empty history, with no comment threads and unfiled (`folderId IS NULL`); their first data-changing save records the state they were already in.
+
+The one *new* thing `collab_document` needs no window for: an existing diagram has no `DiagramDoc` row and is saved exactly as it always was, until somebody opens it — at which point the collaboration server seeds the document from its JSON and writes the row. Rolling back to a build without realtime is likewise safe: the rows are simply ignored, and `Diagram.data` is current as of the last time the document was stored.
 
 ### Backfilling the image index (one-time, required)
 
@@ -85,6 +88,12 @@ npx tsx scripts/reindex-images.ts            # --dry-run to see the counts first
 ```
 
 It reads diagrams a page at a time and makes each one's index rows match its JSON, so it is idempotent — a second run is a no-op, and an interrupted run can simply be repeated. Run it once per database (the shared dev database and the production LXC's both qualify). A database created empty after this migration needs nothing.
+
+### The collaborative document and storage
+
+`DiagramDoc.state` is `Y.encodeStateAsUpdate(doc)` — the whole Yjs document as one binary update, not a log this server replays — and it is rewritten in place on a debounce while people are editing (2 s, 10 s at the outside). It **grows with editing activity**, because a CRDT keeps a little metadata about who wrote what and a tombstone for what has been deleted; Yjs garbage-collects overwritten and deleted content on its own, so the state stays roughly proportional to the board rather than to the number of edits ever made to it. In practice a document is a small multiple of the diagram's JSON, well inside the same order of magnitude as the `DiagramVersion` rows below.
+
+**There is nothing to do about it and nothing to tune.** A row is removed with its diagram (`ON DELETE CASCADE`), it is in the same database as everything else so a Postgres backup already covers it, and there is no separate store, port or process — see `docs/realtime.md` for why Hocuspocus is attached to the Express server rather than run beside it. A document is only ever created by somebody opening a diagram, so the table has a row per *opened* diagram, not per diagram.
 
 ### Version history and storage
 

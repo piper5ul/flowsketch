@@ -33,6 +33,7 @@ import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { recordVersionIfDue } from './versions.js';
 import { docToDiagramData, seedDocFromDiagramData } from './collab/render.js';
+import { setLiveDiagramReader } from './collab/live.js';
 import type { DiagramRole } from '../shared/types.js';
 
 /** The path the browser opens its collaboration socket on. */
@@ -298,6 +299,14 @@ export function attachCollab(
   hocuspocus: Hocuspocus<CollabContext> = createCollabServer(),
 ): Hocuspocus<CollabContext> {
   const wss = new WebSocketServer({ noServer: true });
+
+  // Version history asks this instance what an open diagram really looks like,
+  // rather than reading a JSON column that is up to a debounce behind it. The
+  // document name is built here so the format stays in one place.
+  setLiveDiagramReader((diagramId) => {
+    const document = hocuspocus.documents.get(`diagram:${diagramId}`);
+    return document ? docToDiagramData(document) : null;
+  });
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`).pathname;
