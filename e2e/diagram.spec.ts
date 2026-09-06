@@ -1081,6 +1081,11 @@ test('dark mode follows the system, can be pinned, and never repaints the diagra
   await expect(html).toHaveAttribute('data-theme', 'dark');
   await expect(body).toHaveCSS('background-color', DARK_CANVAS);
 
+  // The rectangle above was drawn inside the autosave debounce, so the reload
+  // has to wait for it the way every other reload test does — otherwise the
+  // shape this test goes on to read the fill of may never have been written.
+  await expect(page.getByText('Saved')).toBeVisible();
+
   await page.reload();
   await expect(page.locator('.react-flow__pane')).toBeVisible();
   await expect(html).toHaveAttribute('data-theme', 'dark');
