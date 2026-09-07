@@ -2705,3 +2705,164 @@ describe('layoutSelected', () => {
     expect(posOf(a).y).toBeLessThan(posOf(c).y);
   });
 });
+
+describe('pasteAsStickies', () => {
+  const origin = { x: 200, y: 120 };
+  const stickies = () => store().nodes.filter((n) => n.data.shape === 'sticky');
+
+  it('makes one selected note per line, at the sticky note\'s own size and colour', () => {
+    const ids = store().pasteAsStickies('- milk\n- eggs\n- bread', origin);
+
+    expect(ids).toHaveLength(3);
+    expect(stickies()).toHaveLength(3);
+    for (const node of stickies()) {
+      expect(node).toMatchObject({
+        type: 'shape',
+        width: 160,
+        height: 160,
+        selected: true,
+        data: { shape: 'sticky', fill: '#FBF3D0', stroke: '#E9B10A' },
+      });
+    }
+    expect(stickies().map((n) => n.data.label)).toEqual(['milk', 'eggs', 'bread']);
+  });
+
+  it('lays them out from the origin, in rows with a gap', () => {
+    store().pasteAsStickies('a\nb\nc\nd', origin);
+    expect(stickies().map((n) => n.position)).toEqual([
+      { x: 200, y: 120 },
+      { x: 384, y: 120 },
+      { x: 200, y: 304 },
+      { x: 384, y: 304 },
+    ]);
+  });
+
+  it('deselects whatever was selected before, so the paste is the selection', () => {
+    const existing = store().addShape('rectangle', { x: 0, y: 0 });
+    select(existing);
+
+    store().pasteAsStickies('one', origin);
+    expect(store().nodes.find((n) => n.id === existing)!.selected).toBe(false);
+    expect(stickies()[0].selected).toBe(true);
+  });
+
+  it('is one history entry however many notes it made', () => {
+    store().pasteAsStickies('a\nb\nc', origin);
+    expect(stickies()).toHaveLength(3);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+    store().redo();
+    expect(stickies()).toHaveLength(3);
+  });
+
+  it('records nothing at all when there is no line to make a note of', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+
+    expect(store().pasteAsStickies('\n   \n', origin)).toEqual([]);
+    expect(store().nodes).toHaveLength(1);
+    // The only undo available is the one `addShape` recorded.
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+});
+
+describe('pasteMermaid', () => {
+  const origin = { x: 400, y: 300 };
+  const shapes = () => store().nodes.filter((n) => n.type === 'shape');
+  const labelled = (label: string) => shapes().find((n) => n.data.label === label)!;
+
+  it('is null for text that is not a Mermaid flowchart, and changes nothing', async () => {
+    expect(await store().pasteMermaid('just some notes', origin)).toBeNull();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('builds a shape per node and a connector per link', async () => {
+    const ids = await store().pasteMermaid(
+      'flowchart TD\n  A[Start] -->|go| B{Choose}\n  B -.-> C((Done))',
+      origin,
+    );
+
+    expect(ids).toHaveLength(3);
+    expect(shapes().map((n) => [n.data.shape, n.data.label])).toEqual([
+      ['rectangle', 'Start'],
+      ['diamond', 'Choose'],
+      ['ellipse', 'Done'],
+    ]);
+    expect(store().edges).toHaveLength(2);
+    expect(store().edges[0].data).toMatchObject({ label: 'go', strokeStyle: 'solid' });
+    expect(store().edges[1].data).toMatchObject({ label: '', strokeStyle: 'dashed' });
+    // The connectors join the shapes that were just made, not the source's ids.
+    expect(store().edges[0].source).toBe(labelled('Start').id);
+    expect(store().edges[0].target).toBe(labelled('Choose').id);
+    // Both ends carry an arrowhead def, the way every other new connector does.
+    expect(store().edges[0].markerEnd).toBeTruthy();
+  });
+
+  it('gives each shape its kind\'s own default size', async () => {
+    await store().pasteMermaid('flowchart TD\n  A[box] --> B((circle))', origin);
+    expect(labelled('box')).toMatchObject({ width: 180, height: 100 });
+    expect(labelled('circle')).toMatchObject({ width: 120, height: 120 });
+  });
+
+  it('lays a TD chain out downwards from the origin', async () => {
+    await store().pasteMermaid('flowchart TD\n  A --> B --> C', origin);
+
+    const [a, b, c] = shapes();
+    expect(a.position.y).toBeLessThan(b.position.y);
+    expect(b.position.y).toBeLessThan(c.position.y);
+    // The flow's own top-left corner lands where it was asked for.
+    expect(Math.min(...shapes().map((n) => n.position.x))).toBe(origin.x);
+    expect(Math.min(...shapes().map((n) => n.position.y))).toBe(origin.y);
+    // Laid out means re-pinned: a vertical flow leaves the bottom and arrives
+    // at the top.
+    expect(store().edges[0].data).toMatchObject({
+      sourceAnchor: { side: 'bottom', t: 0.5 },
+      targetAnchor: { side: 'top', t: 0.5 },
+    });
+  });
+
+  it('lays an LR chain out across', async () => {
+    await store().pasteMermaid('flowchart LR\n  A --> B --> C', origin);
+
+    const [a, b, c] = shapes();
+    expect(a.position.x).toBeLessThan(b.position.x);
+    expect(b.position.x).toBeLessThan(c.position.x);
+    expect(Math.min(...shapes().map((n) => n.position.x))).toBe(origin.x);
+    expect(store().edges[0].data).toMatchObject({
+      sourceAnchor: { side: 'right', t: 0.5 },
+      targetAnchor: { side: 'left', t: 0.5 },
+    });
+  });
+
+  it('is ONE undo step — the shapes and the layout together', async () => {
+    await store().pasteMermaid('flowchart TD\n  A --> B --> C', origin);
+    expect(shapes()).toHaveLength(3);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().edges).toHaveLength(0);
+
+    store().redo();
+    expect(shapes()).toHaveLength(3);
+    expect(store().edges).toHaveLength(2);
+  });
+
+  it('leaves the rest of the board alone and selects only what it pasted', async () => {
+    const existing = store().addShape('rectangle', { x: 0, y: 0 });
+    select(existing);
+
+    await store().pasteMermaid('flowchart TD\n  A --> B', origin);
+    expect(store().nodes.find((n) => n.id === existing)).toMatchObject({
+      position: { x: 0, y: 0 },
+      selected: false,
+    });
+    expect(shapes().filter((n) => n.selected)).toHaveLength(2);
+  });
+
+  it('places a chart with nothing to lay out at the origin anyway', async () => {
+    await store().pasteMermaid('flowchart TD\n  A[Alone]', origin);
+    expect(labelled('Alone').position).toEqual(origin);
+  });
+});

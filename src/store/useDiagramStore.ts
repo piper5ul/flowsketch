@@ -68,6 +68,8 @@ import {
   type LayoutDirection,
 } from '../lib/autoLayout';
 import { runElkLayout } from '../lib/elk';
+import { linesOf, stackAlong, stickyGrid } from '../lib/pasteAs';
+import { parseMermaidFlowchart } from '../lib/mermaid';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import type { ImageBackfillPatch } from '../lib/imageBackfill';
 import { toastError } from './useToastStore';
@@ -710,6 +712,23 @@ export interface DiagramState {
    */
   layoutSelected: (direction: 'vertical' | 'horizontal') => Promise<void>;
 
+  /**
+   * Turns pasted text into sticky notes — one per line, in a block whose
+   * top-left corner is `origin`. Returns the ids it made, or an empty array
+   * when the text held no lines worth a note (and then records no history).
+   */
+  pasteAsStickies: (text: string, origin: { x: number; y: number }) => string[];
+  /**
+   * Turns pasted Mermaid flowchart source into shapes and connectors, laid out
+   * in the direction the chart declared with its top-left corner at `origin`.
+   * Returns the node ids, or `null` when the text is not a Mermaid flowchart —
+   * which is what lets the caller say so.
+   *
+   * Asynchronous for the same reason `layoutSelected` is, and **one** undo step
+   * all the same: see the note at the implementation.
+   */
+  pasteMermaid: (text: string, origin: { x: number; y: number }) => Promise<string[] | null>;
+
   deleteSelection: () => void;
   undo: () => void;
   redo: () => void;
@@ -836,6 +855,79 @@ function sameAnchor(a: EdgeAnchor | null | undefined, b: EdgeAnchor): boolean {
   return a?.side === b.side && a?.t === b.t;
 }
 
+/**
+ * Auto-layout of whatever is selected, as the patch that applies it — or `null`
+ * when it would change nothing.
+ *
+ * The graph, the translation back onto the board and the connectors' new
+ * anchors are all `src/lib/autoLayout.ts`; what is here is the trip through the
+ * layout engine. It records **no** history of its own, so the two callers can
+ * each decide what one undo step is: `layoutSelected` opens a boundary around
+ * it, and `pasteMermaid` folds it into the boundary the paste already opened.
+ *
+ * Locked nodes stay where they are but still take part in the graph, exactly as
+ * they do in align and distribute: a lock means "do not move this", not
+ * "pretend it is not on the board", so the rest of the flow is laid out around
+ * the space it occupies.
+ */
+async function layoutSelectionPatch(
+  get: () => DiagramState,
+  direction: LayoutDirection,
+): Promise<Pick<DiagramState, 'nodes' | 'edges'> | null> {
+  const before = get();
+  const selectedIds = before.nodes.filter((n) => n.selected).map((n) => n.id);
+  const graph = layoutGraphFor(before.nodes, before.edges, selectedIds, direction);
+  // The selection's bounding box before the command: what the laid-out flow's
+  // own top-left corner is moved onto, so the drawing does not jump.
+  const origin = layoutOrigin(before.nodes, selectedIds);
+  if (!graph || !origin) return null;
+
+  const placed = await runElkLayout(graph);
+
+  // The board can have moved on while the engine was working — a collaborator's
+  // edit, or simply a second command — so the commit is computed against the
+  // state as it is *now*, and a node or edge that has gone in the meantime is
+  // quietly dropped.
+  const state = get();
+  const positions = applyLayout(state.nodes, placed, origin);
+  const anchors = layoutAnchors(direction);
+  const laidOutEdgeIds = new Set(graph.edges.map((e) => e.id));
+
+  const moved = new Map<string, { x: number; y: number }>();
+  for (const node of state.nodes) {
+    const next = positions[node.id];
+    if (!next || node.data.locked) continue;
+    if (next.x !== node.position.x || next.y !== node.position.y) moved.set(node.id, next);
+  }
+  const rerouted = new Set(
+    state.edges.filter((e) => laidOutEdgeIds.has(e.id) && needsReroute(e, anchors)).map((e) => e.id),
+  );
+  if (moved.size === 0 && rerouted.size === 0) return null;
+
+  return {
+    nodes: state.nodes.map((n) => {
+      const position = moved.get(n.id);
+      return position ? { ...n, position } : n;
+    }),
+    edges: state.edges.map((e) =>
+      rerouted.has(e.id)
+        ? {
+            ...e,
+            data: {
+              ...e.data!,
+              // Cleared through the same key the toolbar's "Reset route" writes,
+              // so an elbow re-routes rather than keeping the bends the user
+              // dragged into a layout that no longer exists.
+              waypoints: [],
+              sourceAnchor: anchors.source,
+              targetAnchor: anchors.target,
+            },
+          }
+        : e,
+    ),
+  };
+}
+
 /** The `ConnectorData` fields `computeMarkers` reads. */
 const MARKER_KEYS = [
   'stroke',
@@ -950,6 +1042,36 @@ export function serializeDiagram(
 /** A sticky note's own colours, which no swatch and no board default supplies. */
 const STICKY_FILL = '#FBF3D0';
 const STICKY_STROKE = '#E9B10A';
+
+/**
+ * How big a new shape of each kind is.
+ *
+ * Size is deliberately not part of a board default (Whimsical's is not either),
+ * so this table is the whole of how big a freshly drawn shape starts out — and
+ * the whole of how big one pasted from text starts out too, which is why it is
+ * out here rather than inside `addShape`.
+ */
+export const SHAPE_SIZES: Record<ShapeKind, { width: number; height: number }> = {
+  rectangle: { width: 180, height: 100 },
+  ellipse: { width: 120, height: 120 },
+  diamond: { width: 180, height: 120 },
+  sticky: { width: 160, height: 160 },
+  text: { width: 160, height: 40 },
+  pill: { width: 180, height: 70 },
+  triangle: { width: 140, height: 120 },
+  hexagon: { width: 160, height: 100 },
+  cylinder: { width: 120, height: 130 },
+  parallelogram: { width: 190, height: 100 },
+  document: { width: 170, height: 120 },
+  cloud: { width: 190, height: 130 },
+  star: { width: 140, height: 140 },
+  callout: { width: 180, height: 120 },
+  arrow: { width: 170, height: 90 },
+  // Never used in practice: images are inserted through `addImageNode`, which
+  // always knows the real pixel size. Present so the table stays exhaustive
+  // over ShapeKind.
+  image: { width: 240, height: 180 },
+};
 
 /**
  * The `data` a new shape starts with **before** any board default is laid over
@@ -1297,34 +1419,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     pushHistory(get());
     const id = nanoid(8);
     const { defaults, lastStyle } = get();
-    const sizeByShape: Record<ShapeKind, { width: number; height: number }> = {
-      rectangle: { width: 180, height: 100 },
-      ellipse: { width: 120, height: 120 },
-      diamond: { width: 180, height: 120 },
-      sticky: { width: 160, height: 160 },
-      text: { width: 160, height: 40 },
-      pill: { width: 180, height: 70 },
-      triangle: { width: 140, height: 120 },
-      hexagon: { width: 160, height: 100 },
-      cylinder: { width: 120, height: 130 },
-      parallelogram: { width: 190, height: 100 },
-      document: { width: 170, height: 120 },
-      cloud: { width: 190, height: 130 },
-      star: { width: 140, height: 140 },
-      callout: { width: 180, height: 120 },
-      arrow: { width: 170, height: 90 },
-      // Never used in practice: images are inserted through `addImageNode`,
-      // which always knows the real pixel size. Present so the table stays
-      // exhaustive over ShapeKind.
-      image: { width: 240, height: 180 },
-    };
     const node: ShapeNode = {
       id,
       type: 'shape',
       position,
-      ...sizeByShape[shape],
-      // Size is deliberately not part of a default (Whimsical's is not either),
-      // so the table above is the whole of how big a new shape is.
+      ...SHAPE_SIZES[shape],
       data: shapeDataWithDefaults(shape, defaults, lastStyle),
     };
     set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'text' ? id : null }));
@@ -2045,61 +2144,115 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // "pretend it is not on the board", so the rest of the flow is laid out
   // around the space it occupies.
   layoutSelected: async (direction) => {
-    const elkDirection: LayoutDirection = direction === 'vertical' ? 'DOWN' : 'RIGHT';
-    const before = get();
-    const selectedIds = before.nodes.filter((n) => n.selected).map((n) => n.id);
-    const graph = layoutGraphFor(before.nodes, before.edges, selectedIds, elkDirection);
-    // The selection's bounding box before the command: what the laid-out flow's
-    // own top-left corner is moved onto, so the drawing does not jump.
-    const origin = layoutOrigin(before.nodes, selectedIds);
-    if (!graph || !origin) return;
-
-    const placed = await runElkLayout(graph);
-
-    // The board can have moved on while the engine was working — a
-    // collaborator's edit, or simply a second command — so the commit is
-    // computed against the state as it is *now*, and a node or edge that has
-    // gone in the meantime is quietly dropped.
-    const state = get();
-    const positions = applyLayout(state.nodes, placed, origin);
-    const anchors = layoutAnchors(elkDirection);
-    const laidOutEdgeIds = new Set(graph.edges.map((e) => e.id));
-
-    const moved = new Map<string, { x: number; y: number }>();
-    for (const node of state.nodes) {
-      const next = positions[node.id];
-      if (!next || node.data.locked) continue;
-      if (next.x !== node.position.x || next.y !== node.position.y) moved.set(node.id, next);
-    }
-    const rerouted = new Set(
-      state.edges.filter((e) => laidOutEdgeIds.has(e.id) && needsReroute(e, anchors)).map((e) => e.id),
-    );
+    const patch = await layoutSelectionPatch(get, direction === 'vertical' ? 'DOWN' : 'RIGHT');
     // Nothing would change, so this must not cost the user a ⌘Z.
-    if (moved.size === 0 && rerouted.size === 0) return;
+    if (!patch) return;
+    pushHistory(get());
+    set(patch);
+  },
+
+  // "Paste as sticky notes". One note per line of what was on the clipboard,
+  // in a block whose top-left corner is where the user asked for it — the
+  // geometry and the line stripping are both `src/lib/pasteAs.ts`.
+  pasteAsStickies: (text, origin) => {
+    const lines = linesOf(text);
+    if (lines.length === 0) return [];
+
+    const state = get();
+    const boxes = stickyGrid(lines, origin, SHAPE_SIZES.sticky);
+    const style = shapeDataWithDefaults('sticky', state.defaults, state.lastStyle);
+    const nodes: ShapeNode[] = boxes.map((box) => ({
+      id: nanoid(8),
+      type: 'shape',
+      position: { x: box.x, y: box.y },
+      width: box.width,
+      height: box.height,
+      selected: true,
+      data: { ...style, label: box.label },
+    }));
 
     pushHistory(state);
-    set({
-      nodes: state.nodes.map((n) => {
-        const position = moved.get(n.id);
-        return position ? { ...n, position } : n;
-      }),
-      edges: state.edges.map((e) =>
-        rerouted.has(e.id)
-          ? {
-              ...e,
-              data: {
-                ...e.data!,
-                // Cleared through the same key the toolbar's "Reset route"
-                // writes, so an elbow re-routes rather than keeping the bends
-                // the user dragged into a layout that no longer exists.
-                waypoints: [],
-                sourceAnchor: anchors.source,
-                targetAnchor: anchors.target,
-              },
-            }
-          : e,
-      ),
+    set((s) => ({
+      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...nodes],
+      edges: s.edges.map((e) => ({ ...e, selected: false })),
+    }));
+    return nodes.map((n) => n.id);
+  },
+
+  // "Paste Mermaid as flowchart". The parse is `src/lib/mermaid.ts`; what is
+  // here is the shapes it becomes and the arrangement.
+  //
+  // **The whole paste is one undo step**, and that is why the layout is not
+  // `layoutSelected`: `pushHistory` is the undo *boundary* (see CLAUDE.md), so
+  // one boundary is opened here and both writes — the shapes, then the
+  // positions ELK comes back with — land inside it. The second `set` is what
+  // `layoutSelected` would have done, minus its own `pushHistory`.
+  pasteMermaid: async (text, origin) => {
+    const chart = parseMermaidFlowchart(text);
+    if (!chart) return null;
+
+    const state = get();
+    const vertical = chart.direction === 'TB' || chart.direction === 'BT';
+    const sizes = chart.nodes.map((n) => SHAPE_SIZES[n.kind]);
+    // Laid out in a plain line to begin with, so the bounding box the layout
+    // engine anchors its answer to already has its corner on `origin` — and so
+    // a chart with nothing to lay out (one shape, or shapes with no links) is
+    // still readable.
+    const positions = stackAlong(sizes, origin, vertical ? 'vertical' : 'horizontal');
+
+    const idFor = new Map<string, string>();
+    const nodes: ShapeNode[] = chart.nodes.map((parsed, i) => {
+      const id = nanoid(8);
+      idFor.set(parsed.id, id);
+      return {
+        id,
+        type: 'shape',
+        position: positions[i],
+        ...sizes[i],
+        selected: true,
+        data: {
+          ...shapeDataWithDefaults(parsed.kind, state.defaults, state.lastStyle),
+          label: parsed.label,
+        },
+      };
     });
+
+    const connectorData = connectorDataWithDefaults(state.defaults, state.lastStyle);
+    const edges: ConnectorEdge[] = chart.edges.flatMap((parsed) => {
+      const source = idFor.get(parsed.source);
+      const target = idFor.get(parsed.target);
+      if (!source || !target) return [];
+      const data: ConnectorData = {
+        ...connectorData,
+        label: parsed.label ?? '',
+        ...(parsed.dashed ? { strokeStyle: 'dashed' as const } : {}),
+        ...(parsed.thick ? { strokeWidth: 3 as const } : {}),
+      };
+      return [{
+        id: nanoid(8),
+        source,
+        target,
+        type: 'connector',
+        zIndex: 1000,
+        selected: true,
+        ...computeMarkers(data),
+        data,
+      }];
+    });
+
+    pushHistory(state);
+    set((s) => ({
+      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...nodes],
+      edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...edges],
+    }));
+
+    // BT and RL are laid out the way TB and LR are: ELK is asked for DOWN or
+    // RIGHT, which is the axis the chart declared, and reversing the flow would
+    // mean reversing every connector too — a chart that reads bottom-up on the
+    // board is not what "paste this in" is asking for.
+    const patch = await layoutSelectionPatch(get, vertical ? 'DOWN' : 'RIGHT');
+    if (patch) set(patch);
+    return nodes.map((n) => n.id);
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is

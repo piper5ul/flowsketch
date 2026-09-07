@@ -23,6 +23,7 @@ import {
   sideAnchor,
 } from '../lib/connectorGesture';
 import { useImageInsert } from '../lib/useImageInsert';
+import { parseMermaidFlowchart } from '../lib/mermaid';
 import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
 import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
@@ -118,6 +119,11 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // right-clicked, or the point on the board that was. A ref rather than state
   // because nothing renders from it — it is read once, by the command.
   const commentAnchorRef = useRef<CommentAnchor | null>(null);
+  // Where the pane's right-click menu was opened, in board coordinates — what a
+  // "paste as" drops its shapes on. Null whenever that menu is not what is
+  // running the command (⌘K, a keystroke, the browser's own paste), and then
+  // the middle of the view is used instead.
+  const paneAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -148,12 +154,22 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     if (tool !== 'connector') connectorSourceRef.current = null;
   }, [tool]);
 
+  /** The middle of what is on screen, in board coordinates. */
+  const viewCentre = useCallback(() => {
+    const box = wrapperRef.current?.getBoundingClientRect();
+    if (!box) return { x: 0, y: 0 };
+    return screenToFlowPosition({ x: box.left + box.width / 2, y: box.top + box.height / 2 });
+  }, [screenToFlowPosition]);
+
+  const dropPoint = useCallback(() => paneAnchorRef.current ?? viewCentre(), [viewCentre]);
+
   // Everything a command is allowed to reach: the store, the viewport, the two
   // clipboards, hold-to-pan and the sheet.
   const commandContext = useMemo<CommandContext>(
     () => ({
       store: useDiagramStore,
       view: { zoomIn, zoomOut, zoomTo, fitView },
+      dropPoint,
       clipboard: {
         get: () => clipboardRef.current,
         set: (value) => { clipboardRef.current = value; },
@@ -183,7 +199,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
           : undefined,
       },
     }),
-    [zoomIn, zoomOut, zoomTo, fitView, topBar],
+    [zoomIn, zoomOut, zoomTo, fitView, dropPoint, topBar],
   );
 
   const runCommand = useCallback(
@@ -209,6 +225,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       event.preventDefault();
       if (!node.selected) selectOnly('node', node.id);
       commentAnchorRef.current = { nodeId: node.id };
+      paneAnchorRef.current = null;
       setContextMenu({ x: event.clientX, y: event.clientY, target: 'node' });
     },
     [selectOnly],
@@ -229,13 +246,22 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       // Read now, while the click's screen position still means something: the
       // user can pan before picking "Comment", and the pin belongs where they
       // right-clicked, not where that pixel ends up.
-      commentAnchorRef.current = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const point = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      commentAnchorRef.current = point;
+      // The same point, for a "paste as" — kept separately because the comment
+      // anchor is also set by the *node* menu, where it is an id rather than a
+      // place, and a paste that landed on the last shape anybody right-clicked
+      // would be nowhere the user asked for.
+      paneAnchorRef.current = point;
       setContextMenu({ x: event.clientX, y: event.clientY, target: 'pane' });
     },
     [screenToFlowPosition],
   );
 
-  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+  const closeContextMenu = useCallback(() => {
+    paneAnchorRef.current = null;
+    setContextMenu(null);
+  }, []);
   const closeShortcuts = useCallback(() => setShortcutsOpen(false), []);
 
   const onNodeDragStart = useCallback(
@@ -615,31 +641,50 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     [screenToFlowPosition, createShapeWithConnector],
   );
 
-  // Pasted images are uploaded and referenced by URL. Inlining them as
-  // base64 used to blow a screenshot-sized paste past the 5 MB limit on the
-  // diagram's JSON body, which failed the save rather than the paste.
+  // What the browser's own paste brings, for the two things ⌘V can mean that
+  // our clipboard cannot answer for. This listener only ever runs when
+  // `clipboard.paste` did *not* match — its `when` is "we have something of our
+  // own copied", and a matched command calls `preventDefault` on the keystroke —
+  // so pasting shapes from this app always wins over either branch below.
+  //
+  // Images are uploaded and referenced by URL: inlining them as base64 used to
+  // blow a screenshot-sized paste past the 5 MB limit on the diagram's JSON
+  // body, which failed the save rather than the paste.
+  //
+  // Text is offered to the Mermaid parser, and becomes a flowchart when it is
+  // one — the same thing the "Paste Mermaid as flowchart" menu item does, at
+  // the middle of the view rather than at a click. Text that is *not* a Mermaid
+  // flowchart is left alone and behaves exactly as it always has: pasting a
+  // list is still the menu item's job, since a paragraph of prose is far more
+  // often meant as words than as a wall of sticky notes.
   useEffect(() => {
     if (readOnly) return;
     function onPaste(e: ClipboardEvent) {
       if (isTypingTarget(e.target)) return;
-      const items = e.clipboardData?.items;
-      if (!items) return;
+      const data = e.clipboardData;
+      if (!data) return;
 
       const files: File[] = [];
-      for (const item of items) {
+      for (const item of data.items) {
         if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
         const file = item.getAsFile();
         if (file) files.push(file);
       }
-      if (files.length === 0) return;
+      if (files.length > 0) {
+        e.preventDefault();
+        insertImages(files);
+        return;
+      }
 
+      const text = data.getData('text/plain');
+      if (!text || !parseMermaidFlowchart(text)) return;
       e.preventDefault();
-      insertImages(files);
+      void useDiagramStore.getState().pasteMermaid(text, dropPoint());
     }
 
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [readOnly, insertImages]);
+  }, [readOnly, insertImages, dropPoint]);
 
   // Every shortcut is a command now; this handler only decides whether one
   // applies. A keystroke that matches nothing falls through untouched, which is

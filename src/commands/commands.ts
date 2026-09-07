@@ -4,7 +4,7 @@ import { isGroupNode } from '../lib/nodeKinds';
 import { subtreeIds } from '../lib/nodeTree';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
-import { toastInfo } from '../store/useToastStore';
+import { toastError, toastInfo } from '../store/useToastStore';
 import { useSearchStore } from '../store/useSearchStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
@@ -52,6 +52,42 @@ function captureSelection(ctx: CommandContext) {
     nodes: nodes.map((n) => ({ ...n, selected: false })),
     edges: connected.map((e) => ({ ...e, selected: false })),
   });
+}
+
+/**
+ * The clipboard's text, or `null` when the browser would not hand it over.
+ *
+ * Reading the system clipboard needs the user's permission, and a refusal is
+ * not an error to swallow: the user pressed a menu item and nothing happened,
+ * so it is said out loud. (Our *own* ⌘C clipboard is a ref in `Canvas` and
+ * needs none of this — a "paste as" is about text that came from another app.)
+ */
+async function clipboardText(): Promise<string | null> {
+  try {
+    return await navigator.clipboard.readText();
+  } catch {
+    toastError('Clipboard access was refused');
+    return null;
+  }
+}
+
+/** "Paste as sticky notes": one note per line of whatever is on the clipboard. */
+async function pasteAsStickies(ctx: CommandContext) {
+  const origin = ctx.dropPoint();
+  const text = await clipboardText();
+  if (text === null) return;
+  if (ctx.store.getState().pasteAsStickies(text, origin).length === 0) {
+    toastError('There are no lines of text on the clipboard');
+  }
+}
+
+/** "Paste Mermaid as flowchart": the clipboard's source, parsed and laid out. */
+async function pasteMermaid(ctx: CommandContext) {
+  const origin = ctx.dropPoint();
+  const text = await clipboardText();
+  if (text === null) return;
+  const pasted = await ctx.store.getState().pasteMermaid(text, origin);
+  if (pasted === null) toastError("That isn't a Mermaid flowchart");
 }
 
 function stepFontSize(ctx: CommandContext, delta: 1 | -1) {
@@ -275,6 +311,26 @@ export const commandDeclarations: Command[] = [
       // Paste again from what was just pasted, so repeats keep stepping away.
       ctx.clipboard.set(ctx.store.getState().pasteClipboard(clip));
     },
+  },
+  // The two "paste as" commands — text on the system clipboard, turned into
+  // objects. Neither carries a keystroke: what they read is only known once the
+  // user has asked (reading the clipboard is a permissioned, asynchronous call),
+  // so both are gated on nothing but being able to edit and say what went wrong
+  // afterwards rather than being quietly withdrawn beforehand. Plain ⌘V pastes
+  // Mermaid too — see the paste listener in `Canvas.tsx`.
+  {
+    id: 'clipboard.pasteAsStickies',
+    title: 'Paste as sticky notes',
+    group: 'clipboard',
+    contextMenu: 'pane',
+    run: (ctx) => { void pasteAsStickies(ctx); },
+  },
+  {
+    id: 'clipboard.pasteMermaid',
+    title: 'Paste Mermaid as flowchart',
+    group: 'clipboard',
+    contextMenu: 'pane',
+    run: (ctx) => { void pasteMermaid(ctx); },
   },
   {
     id: 'clipboard.copyAsImage',
