@@ -81,6 +81,8 @@ Whimsical-style diagramming app. Sharing (public read-only links, per-user invit
 
 ## Deployment (DEPLOYMENT.md is the full guide)
 
+**A second, separate instance for public demos** lives in `deploy/oracle/`: one Docker image (`Dockerfile`, multi-arch, serves client + API + realtime from one process, runs `prisma migrate deploy` on start — `prisma.config.ts` must be in the image, Prisma 7 reads the datasource URL through it), a compose stack (Postgres, a MailDev sink so sign-up's verification mail has somewhere to go, the app, a cloudflared tunnel — nothing published on the host), and `setup.sh`, a one-shot for a fresh Ubuntu VM that is also the update command. It has its own database and uploads; nothing about it touches the LXC deployment below.
+
 Production is `whimsical.vedalogy.com` → cloudflared tunnel (currently running on the dev Mac) → Proxmox LXC 235 at 192.168.68.251 → `systemd whimsy.service` → `/opt/whimsy` (a manual rsync copy, no git) → Postgres 192.168.68.242. There is no CI deploy; nothing merged reaches prod without a manual copy + `systemctl restart whimsy`.
 
 ## Roadmap
