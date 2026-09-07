@@ -2964,3 +2964,59 @@ describe('pasteMermaid', () => {
     expect(labelled('Alone').position).toEqual(origin);
   });
 });
+
+describe('setSlideOrder', () => {
+  /** Three frames, top to bottom, so the unarranged deck reads a, b, c. */
+  function seedFrames() {
+    store().loadDiagram('test', 'Deck', false, {
+      nodes: ['a', 'b', 'c'].map((id, i) => ({
+        id,
+        type: 'frame' as const,
+        position: { x: 0, y: i * 1000 },
+        width: 400,
+        height: 300,
+        data: { label: id, shape: 'rectangle' as const, fill: 'transparent', stroke: 'transparent' },
+      })),
+      edges: [],
+    });
+  }
+
+  const orderOf = (id: string) => store().nodes.find((n) => n.id === id)!.data.slideOrder;
+
+  beforeEach(seedFrames);
+
+  it('writes slideOrder 0..n-1 onto the frames', () => {
+    store().setSlideOrder(['c', 'a', 'b']);
+    expect([orderOf('c'), orderOf('a'), orderOf('b')]).toEqual([0, 1, 2]);
+  });
+
+  it('is one history entry however many frames moved', () => {
+    expect(store().canUndo).toBe(false);
+    store().setSlideOrder(['c', 'b', 'a']);
+    expect(store().canUndo).toBe(true);
+
+    store().undo();
+    expect(orderOf('a')).toBeUndefined();
+    expect(orderOf('c')).toBeUndefined();
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('costs no history entry when the board is already in that order', () => {
+    store().setSlideOrder(['a', 'b', 'c']);
+    const before = store().canUndo;
+    store().setSlideOrder(['a', 'b', 'c']);
+    expect(store().canUndo).toBe(before);
+  });
+
+  it('leaves everything but slideOrder alone, the array order included', () => {
+    store().setSlideOrder(['b', 'a', 'c']);
+    expect(store().nodes.find((n) => n.id === 'b')!.data).toMatchObject({
+      label: 'b',
+      fill: 'transparent',
+      slideOrder: 0,
+    });
+    // The running order is a field on the frames, not a rearrangement of the
+    // board: a diagram's node array is its z-order and must not move with it.
+    expect(store().nodes.map((n) => n.id)).toEqual(['a', 'b', 'c']);
+  });
+});

@@ -70,6 +70,7 @@ import {
 } from '../lib/autoLayout';
 import { runElkLayout } from '../lib/elk';
 import { linesOf, stackAlong, stickyGrid } from '../lib/pasteAs';
+import { reorderSlides } from '../lib/presentation';
 import { parseMermaidFlowchart } from '../lib/mermaid';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import type { ImageBackfillPatch } from '../lib/imageBackfill';
@@ -618,6 +619,17 @@ export interface DiagramState {
    * members' shared parent if they have one, and ends up selected.
    */
   wrapSelectionInFrame: () => void;
+  /**
+   * Makes `orderedIds` the order the frames are presented in — "Arrange
+   * slides" — by writing `slideOrder` 0…n-1 onto them.
+   *
+   * The running order is part of the diagram (everybody presents the same deck),
+   * so unlike the rest of presenting it goes through the store and is undoable:
+   * **one** history entry however many frames moved, and none at all when the
+   * order asked for is the one the board already has. `reorderSlides` is what
+   * decides that; ids naming something that is not a frame are ignored there.
+   */
+  setSlideOrder: (orderedIds: readonly string[]) => void;
   setSnapOverride: (override: SnapOverride) => void;
   /**
    * Leaves exactly `ids` selected. A selection is not part of the diagram, so
@@ -1624,6 +1636,23 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set({
       nodes: [...rest.map((n) => ({ ...n, selected: false })), frame, ...moved],
       edges: state.edges.map((e) => ({ ...e, selected: false })),
+    });
+  },
+
+  setSlideOrder: (orderedIds) => {
+    const state = get();
+    const patches = reorderSlides(state.nodes, orderedIds);
+    // The order asked for is the one the board already has: no entry, the same
+    // way an already-aligned selection costs no ⌘Z.
+    if (patches.length === 0) return;
+
+    const byId = new Map(patches.map((p) => [p.id, p.data] as const));
+    pushHistory(state);
+    set({
+      nodes: state.nodes.map((n) => {
+        const patch = byId.get(n.id);
+        return patch ? { ...n, data: { ...n.data, ...patch } } : n;
+      }),
     });
   },
 
