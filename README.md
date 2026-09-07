@@ -64,15 +64,26 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
 - Find shapes and connectors by their labels with `⌘F`: every match is ringed on the board, `Enter` / `⇧Enter` cycle through them, and each one is selected and framed as you reach it. Available on read-only and publicly shared boards too
+- **Present** — every frame is a slide. Press **Present** in the top bar (or `⌘⇧P`, or **Present from this frame** on a frame's right-click menu) and the board fills the window one section at a time: the frame is fitted to the screen, everything outside it is masked out in the frame's own colour, and the chrome gets out of the way. `→` / `Space` / `PageDown` advance, `←` / `PageUp` go back, `Home` / `End` jump to either end, a click anywhere advances and `Esc` puts you back exactly where you were. Slides run top to bottom by default; the caret next to **Present** opens **Arrange slides**, where `↑` / `↓` set the running order (saved with the diagram, one `⌘Z` to undo). Presenting is looking, so a read-only board and a publicly shared link can both be presented
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
 - Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
 - Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
 - Light and dark themes, cycled from the bottom bar (system → light → dark) and remembered per browser. It ships following your OS, and only the app's own chrome changes: shapes, connectors and their labels keep the colours you gave them, and an exported PNG or SVG is captured light whichever theme you are working in
 - Auto-save to server (diagrams persist across sessions), including the pan and zoom the diagram was left at
 
+### Mind maps
+- Press `M` to drop a root node in the middle of the view, already open for typing — a mind map is typed, not drawn
+- `Tab` adds a child, `Enter` a sibling below, `⌘Enter` a sibling above and `⌥Enter` a parent, each one selected and ready to type into. All four work while you are still typing into the node before them, so a whole map goes in without touching the mouse
+- **The map lays itself out.** The root stays exactly where you put it and the tree grows to the right: siblings stacked with a 40 px gap, each parent centred on its children, each level 80 px past the last. Every change re-lays the map out at once, with no waiting on a layout engine
+- `⌘/` folds a branch away and back; a folded node wears the number of nodes hidden under it, and clicking that number unfolds it. What is stored is that the branch is folded, so it opens folded next time too
+- Dragging a node takes its whole subtree with it
+- Right-click a node for **Paste as child nodes** to turn a list on your clipboard into one child per line
+- A mind map is made of ordinary shapes and connectors — thin, curved, arrowless ones — so everything else in FlowSketch still applies to it: colours, the palette, export, comments, search, real-time collaboration and one `⌘Z` per step
+
 ### Dashboard
 - **Folders** — file your diagrams into folders from the sidebar: **New folder** names one in place, and a card's ⋯ menu offers **Move to…** (or drag the card onto a folder). Selecting a folder filters the grid, and search and sort still apply inside it. Rename a folder in place from its ⋯ menu; deleting one asks first and keeps every diagram in it — they move back to **All diagrams**. Folders are personal: a diagram somebody shared with you is never in one of yours, and yours are never visible to anyone you share with. The sidebar collapses to a **Toggle folders** button on narrow screens
 - **All diagrams / Starred** — the two standing views above your folders. Starred diagrams are also pinned to the front of every grid, whatever the sort
+- **Board thumbnail** — a card shows a picture of the whole board, unless you pick one: select a shape or a few and choose **Set as board thumbnail** from the right-click menu, and the card is drawn from those alone. **Remove from board thumbnail** (on the shape menu and on the canvas menu) puts the whole board back. It is a property of the board, so everybody working on it sees the same card; delete the shape it was set on and the card falls back to the whole board until the shape comes back
 - Search by title and sort by last edited, title or creation date, within whatever the sidebar has selected
 - Import a diagram from an exported JSON file, and duplicate, rename, star or delete one from its card
 
@@ -149,6 +160,19 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | Right-click | Open the context menu for the shape, connector or canvas under the pointer |
 | `Backspace` / `Delete` | Delete the selection |
 
+### Mind maps
+
+Every one of these also works while you are typing into a mind-map node's label.
+
+| Shortcut | Action |
+|----------|--------|
+| `M` | Start a mind map — a root node in the middle of the view |
+| `Tab` | Add a child of the selected mind-map node |
+| `Enter` | Add a sibling below it (a child, on a root) |
+| `⌘Enter` | Add a sibling above it |
+| `⌥Enter` | Add a parent above it |
+| `⌘/` | Fold the node's branch away, or unfold it |
+
 ### Selection & arrangement
 
 | Shortcut | Action |
@@ -202,6 +226,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
+| `⌘⇧P` | Present: one slide per frame; `→` / `Space` next, `←` back, `Home` / `End` for either end, `Esc` exits |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
 | `⌘K` | Command menu: every command, searchable, recents first |
 | `?` | Show the keyboard shortcut cheat sheet |

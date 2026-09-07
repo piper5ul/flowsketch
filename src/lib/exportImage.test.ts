@@ -96,26 +96,58 @@ describe('exportSubset', () => {
   ];
 
   it('is the whole board when nothing is asked of the selection', () => {
-    const all = exportSubset(nodes, edges, false);
+    const all = exportSubset(nodes, edges, { selectionOnly: false });
     expect(all.nodes.map((n) => n.id)).toEqual(['f', 'c', 'l']);
     expect([...all.edgeIds]).toEqual(['in', 'out']);
     expect(all.bounds).toEqual({ x: 100, y: 100, width: 850, height: 850 });
   });
 
   it('keeps a selected container with what is inside it, and only the connectors between them', () => {
-    const some = exportSubset(nodes, edges, true);
+    const some = exportSubset(nodes, edges, { selectionOnly: true });
     expect(some.nodes.map((n) => n.id)).toEqual(['f', 'c']);
     expect([...some.edgeIds]).toEqual(['in']);
     expect(some.bounds).toEqual({ x: 100, y: 100, width: 400, height: 300 });
   });
 
   it('frames a framed child where it really is', () => {
-    const only = exportSubset([frame, { ...child, selected: true }].map((n) => (n.id === 'f' ? { ...n, selected: false } : n)), [], true);
+    const only = exportSubset(
+      [frame, { ...child, selected: true }].map((n) => (n.id === 'f' ? { ...n, selected: false } : n)),
+      [],
+      { selectionOnly: true },
+    );
     expect(only.bounds).toEqual({ x: 120, y: 130, width: 100, height: 50 });
   });
 
   it('falls back to the whole board when selection-only is asked with nothing selected', () => {
-    expect(exportSubset([loose], [], true).nodes.map((n) => n.id)).toEqual(['l']);
-    expect(exportSubset([], [], true).bounds).toBeNull();
+    expect(exportSubset([loose], [], { selectionOnly: true }).nodes.map((n) => n.id)).toEqual(['l']);
+    expect(exportSubset([], [], { selectionOnly: true }).bounds).toBeNull();
+  });
+
+  // The board's custom thumbnail: an explicit set of ids, and nothing about
+  // what happens to be selected.
+  it('draws the ids it was given, with their subtrees, whatever is selected', () => {
+    const some = exportSubset(nodes, edges, { nodeIds: ['f'], selectionOnly: true });
+    expect(some.nodes.map((n) => n.id)).toEqual(['f', 'c']);
+    expect([...some.edgeIds]).toEqual(['in']);
+    expect(some.bounds).toEqual({ x: 100, y: 100, width: 400, height: 300 });
+  });
+
+  it('overrides the selection rather than intersecting with it', () => {
+    // `f` is the selected one; the ids ask for the other.
+    const some = exportSubset(nodes, edges, { nodeIds: ['l'], selectionOnly: true });
+    expect(some.nodes.map((n) => n.id)).toEqual(['l']);
+    expect(some.bounds).toEqual({ x: 900, y: 900, width: 50, height: 50 });
+  });
+
+  it('ignores an id that names nothing on the board', () => {
+    const some = exportSubset(nodes, edges, { nodeIds: ['l', 'gone'] });
+    expect(some.nodes.map((n) => n.id)).toEqual(['l']);
+  });
+
+  it('draws nothing when every id it was given is gone — not the whole board', () => {
+    const none = exportSubset(nodes, edges, { nodeIds: ['gone', 'also-gone'] });
+    expect(none.nodes).toEqual([]);
+    expect(none.edgeIds.size).toBe(0);
+    expect(none.bounds).toBeNull();
   });
 });

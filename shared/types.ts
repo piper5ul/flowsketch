@@ -23,6 +23,18 @@ export interface DiagramData {
    * stored `defaults` is narrowed before anything acts on it.
    */
   defaults?: DiagramDefaults;
+  /**
+   * The shapes that stand for this board on the dashboard card — what "Set as
+   * board thumbnail" saves.
+   *
+   * Absent means **automatic**: the card shows a picture of the whole board,
+   * which is what every diagram written before this existed already wants, so
+   * it needed no version bump either. The ids name nodes in `nodes`, but
+   * nothing enforces that — a shape can be deleted while its id is still here,
+   * and the renderer falls back to the whole board rather than to nothing.
+   * `src/lib/boardThumbnail.ts` is the one place a stored value is narrowed.
+   */
+  thumbnailNodeIds?: string[];
 }
 
 /**

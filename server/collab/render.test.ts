@@ -12,6 +12,7 @@ import {
   edgeEntries,
   isSeeded,
   nodeEntries,
+  THUMBNAIL_KEY,
   VIEWPORT_KEY,
 } from '../../shared/collabDoc.js';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagramMigrations.js';
@@ -141,6 +142,32 @@ describe('docToDiagramData', () => {
     const empty = new Y.Doc();
     docMeta(empty).set(DEFAULTS_KEY, { shape: { label: 'no' } });
     expect('defaults' in docToDiagramData(empty)).toBe(false);
+  });
+
+  it("round-trips the board's custom thumbnail, and omits the key when there is none", () => {
+    const withThumbnail = new Y.Doc();
+    seedDocFromDiagramData(withThumbnail, diagram({ thumbnailNodeIds: ['a'] }));
+    expect(docToDiagramData(withThumbnail).thumbnailNodeIds).toEqual(['a']);
+
+    const without = new Y.Doc();
+    seedDocFromDiagramData(without, diagram());
+    expect('thumbnailNodeIds' in docToDiagramData(without)).toBe(false);
+  });
+
+  it('narrows the thumbnail ids the document holds before writing them out', () => {
+    const doc = new Y.Doc();
+    docMeta(doc).set(THUMBNAIL_KEY, ['a', '', null, 7, 'a']);
+    expect(docToDiagramData(doc).thumbnailNodeIds).toEqual(['a']);
+  });
+
+  it('omits a thumbnail the document holds in a shape nothing could draw', () => {
+    const doc = new Y.Doc();
+    docMeta(doc).set(THUMBNAIL_KEY, 'a');
+    expect('thumbnailNodeIds' in docToDiagramData(doc)).toBe(false);
+
+    const empty = new Y.Doc();
+    docMeta(empty).set(THUMBNAIL_KEY, []);
+    expect('thumbnailNodeIds' in docToDiagramData(empty)).toBe(false);
   });
 });
 

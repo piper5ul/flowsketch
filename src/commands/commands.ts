@@ -1,12 +1,17 @@
 import { canAutoLayout } from '../lib/autoLayout';
+import { MIND_MAP_NODE_SIZE, childrenOf, mapOf } from '../lib/mindMap';
+import { linesOf } from '../lib/pasteAs';
+import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
-import { isGroupNode } from '../lib/nodeKinds';
+import { isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import { slidesOf } from '../lib/presentation';
 import { parseTableText } from '../lib/table';
 import { subtreeIds } from '../lib/nodeTree';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
 import { toastError, toastInfo } from '../store/useToastStore';
 import { useSearchStore } from '../store/useSearchStore';
+import { usePresentStore } from '../store/usePresentStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import { nextFontSize } from '../lib/text';
@@ -102,6 +107,48 @@ async function pasteAsTable(ctx: CommandContext) {
     return;
   }
   ctx.store.getState().addTable(origin, table);
+}
+
+/**
+ * The mind-map node a mind-map command acts on: the one being typed into if
+ * there is one, and otherwise the single selected node — in both cases only
+ * when it really is a mind-map node.
+ *
+ * The editing node comes first because that is the state the gesture spends
+ * most of its time in: press Tab, type, press Enter, type. Selection follows
+ * editing anyway (every mind-map action selects what it just made), so the two
+ * answers agree; the order only matters if something else moved the selection
+ * while a label was open.
+ */
+function mindMapTarget(ctx: CommandContext): string | null {
+  const state = ctx.store.getState();
+  const node = state.editingNodeId
+    ? state.nodes.find((n) => n.id === state.editingNodeId)
+    : selectedNodes(state).length === 1
+      ? selectedNodes(state)[0]
+      : undefined;
+  return node?.data.mindMap ? node.id : null;
+}
+
+/** How many children the mind-map target has — 0 when there is no target. */
+function mindMapChildCount(ctx: CommandContext): number {
+  const id = mindMapTarget(ctx);
+  if (!id) return 0;
+  const state = ctx.store.getState();
+  const root = state.nodes.find((n) => n.id === id)?.data.mindMap?.root;
+  const tree = root ? mapOf(state.nodes, state.edges, root) : null;
+  return tree ? childrenOf(tree, id).length : 0;
+}
+
+/** "Paste as child nodes": one child per line of whatever is on the clipboard. */
+async function pasteMindMapChildren(ctx: CommandContext) {
+  const id = mindMapTarget(ctx);
+  if (!id) return;
+  const text = await clipboardText();
+  if (text === null) return;
+  if (ctx.store.getState().mindMapAddChildren(id, linesOf(text)).length === 0) {
+    toastError('There are no lines of text on the clipboard');
+  }
 }
 
 function stepFontSize(ctx: CommandContext, delta: 1 | -1) {
@@ -233,6 +280,109 @@ export const commandDeclarations: Command[] = [
       deselectAll(ctx);
       ctx.store.getState().setTool('select');
     },
+  },
+
+  // ---- mind maps ---------------------------------------------------------
+  // **These come before `edit.editText` on purpose.** Enter and Tab are shared
+  // keystrokes, and a shared keystroke is settled by `when` and by order: each
+  // gate below is strictly narrower than the one it is jumping ahead of (a
+  // single selected node that is *also* a mind-map node), so Enter still opens
+  // an ordinary shape's label everywhere else. The other half of the trick is
+  // in `Canvas`'s keyboard handler, which lets exactly these commands through
+  // from inside an open label — a mind map is typed, not clicked, and the label
+  // is still open when the next node is asked for.
+  {
+    id: 'mindmap.addRoot',
+    title: 'Mind map',
+    group: 'mindmap',
+    // Whimsical's M. The root lands in the middle of the view, or where the
+    // canvas menu was opened.
+    shortcut: { key: 'm' },
+    contextMenu: 'pane',
+    when: (ctx) => {
+      const state = ctx.store.getState();
+      return !state.editingNodeId && !state.editingEdgeId;
+    },
+    run: (ctx) => {
+      const point = ctx.dropPoint();
+      ctx.store.getState().mindMapAddRoot({
+        x: point.x - MIND_MAP_NODE_SIZE.width / 2,
+        y: point.y - MIND_MAP_NODE_SIZE.height / 2,
+      });
+    },
+  },
+  {
+    id: 'mindmap.addChild',
+    title: 'Add child',
+    group: 'mindmap',
+    shortcut: { key: 'Tab' },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddChild(id);
+    },
+  },
+  {
+    id: 'mindmap.addSibling',
+    title: 'Add sibling',
+    group: 'mindmap',
+    shortcut: { key: 'Enter' },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddSibling(id);
+    },
+  },
+  {
+    id: 'mindmap.addSiblingAbove',
+    title: 'Add sibling above',
+    group: 'mindmap',
+    shortcut: { key: 'Enter', meta: true },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddSibling(id, true);
+    },
+  },
+  {
+    id: 'mindmap.addParent',
+    title: 'Add parent',
+    group: 'mindmap',
+    shortcut: { key: 'Enter', alt: true },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddParent(id);
+    },
+  },
+  {
+    id: 'mindmap.toggleCollapse',
+    title: 'Collapse / expand branch',
+    group: 'mindmap',
+    shortcut: { key: '/', meta: true },
+    contextMenu: 'node',
+    // A leaf has nothing to fold, and the action refuses one anyway; gating on
+    // it here is what keeps the entry off the menu of a node with no branch.
+    when: (ctx) => mindMapChildCount(ctx) > 0,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapToggleCollapse(id);
+    },
+  },
+  {
+    id: 'mindmap.pasteChildren',
+    title: 'Paste as child nodes',
+    group: 'mindmap',
+    // No keystroke, for the reason the other two "paste as" commands have
+    // none: what is on the system clipboard cannot be known until the user has
+    // already asked for it.
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => { void pasteMindMapChildren(ctx); },
   },
 
   // ---- editing -----------------------------------------------------------
@@ -637,6 +787,45 @@ export const commandDeclarations: Command[] = [
     shortcut: { key: 'f', meta: true },
     run: () => useSearchStore.getState().openSearch(),
   },
+  // ---- presenting --------------------------------------------------------
+  // One slide per frame (`src/lib/presentation.ts`). Both commands are on
+  // `READ_ONLY_COMMAND_IDS`: presenting is looking, so a viewer's board and the
+  // public `/s/:token` page can both be presented. Neither writes anything —
+  // the running order is the one thing here that does, and that is the store's
+  // `setSlideOrder`, reached from the Present button rather than from a
+  // keystroke.
+  {
+    id: 'view.present',
+    title: 'Present',
+    group: 'view',
+    // ⌘⇧P is free (P alone is the parallelogram tool, and no other binding
+    // uses it with modifiers).
+    shortcut: { key: 'p', meta: true, shift: true },
+    // A board with no sections has no deck, and an empty presentation is not
+    // worth offering. `some` rather than `slidesOf`, because this runs on every
+    // render of the ⌘K menu and the answer is the same.
+    when: (ctx) => ctx.store.getState().nodes.some((n) => isFrameNode(n)),
+    run: () => usePresentStore.getState().start(),
+  },
+  {
+    id: 'view.presentFromFrame',
+    title: 'Present from this frame',
+    group: 'view',
+    // No keystroke: it is about the frame under the pointer, which is what the
+    // right-click menu says and a keystroke cannot.
+    contextMenu: 'node',
+    when: (ctx) => {
+      const selected = selectedNodes(ctx.store.getState());
+      return selected.length === 1 && isFrameNode(selected[0]);
+    },
+    run: (ctx) => {
+      const [node] = selectedNodes(ctx.store.getState());
+      if (!node) return;
+      const index = slidesOf(ctx.store.getState().nodes).findIndex((slide) => slide.id === node.id);
+      if (index >= 0) usePresentStore.getState().start(index);
+    },
+  },
+
   {
     id: 'view.commandMenu',
     title: 'Command menu',
@@ -670,6 +859,46 @@ export const commandDeclarations: Command[] = [
   // are per-browser preferences, not part of any diagram. None takes a
   // keystroke — the letters left are worth more to a tool — so they reach the
   // user through the bottom bar, and through here for the sake of one list.
+  // ---- view: the board's thumbnail ---------------------------------------
+  // Whimsical's "Set as board thumbnail": the dashboard card shows these shapes
+  // instead of a picture of the whole board. Both are edits — the ids are saved
+  // with the diagram and shared with everybody on it — so neither is on
+  // `READ_ONLY_COMMAND_IDS`. Neither takes a keystroke: this is a rare decision
+  // about how a board is filed, and the letters left are worth more elsewhere.
+  {
+    id: 'view.setThumbnail',
+    title: 'Set as board thumbnail',
+    group: 'view',
+    contextMenu: 'node',
+    // Something to make a picture of, and something to change: offering it for
+    // a selection that is already exactly the thumbnail would be an action with
+    // no effect.
+    when: (ctx) => {
+      const state = ctx.store.getState();
+      const selected = selectedNodes(state).map((n) => n.id);
+      if (selected.length === 0) return false;
+      return !isSameThumbnail(state.thumbnailNodeIds, selected);
+    },
+    run: (ctx) => {
+      const state = ctx.store.getState();
+      state.setThumbnailNodeIds(selectedNodes(state).map((n) => n.id));
+      toastInfo('Board thumbnail set');
+    },
+  },
+  {
+    id: 'view.clearThumbnail',
+    title: 'Remove from board thumbnail',
+    group: 'view',
+    // On the pane menu as well: undoing this is not something the user should
+    // have to find the right shape to do, least of all when the shape it was
+    // set on has since been deleted.
+    contextMenu: ['node', 'pane'],
+    when: (ctx) => ctx.store.getState().thumbnailNodeIds !== null,
+    run: (ctx) => {
+      ctx.store.getState().setThumbnailNodeIds(null);
+      toastInfo('Board thumbnail cleared');
+    },
+  },
   {
     id: 'view.toggleMinimap',
     title: 'Show minimap',
@@ -719,6 +948,10 @@ const READ_ONLY_COMMAND_IDS = new Set<string>([
   'view.fitView',
   'view.fitSelection',
   'view.find',
+  // Presenting is looking: a viewer's board and the public share page both
+  // have a deck, and neither command writes anything.
+  'view.present',
+  'view.presentFromFrame',
   'view.pan',
   'view.shortcuts',
   'view.toggleMinimap',
@@ -760,6 +993,7 @@ export const GROUP_LABELS: { group: Command['group']; label: string }[] = [
   // Nothing in this group carries a keystroke yet, so the sheet drops the
   // section; it is named here so that the first one to get one turns up.
   { group: 'comments', label: 'Comments' },
+  { group: 'mindmap', label: 'Mind map' },
   { group: 'edit', label: 'Editing' },
   { group: 'select', label: 'Selection' },
   { group: 'arrange', label: 'Arrange' },

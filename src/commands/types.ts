@@ -19,6 +19,7 @@ export interface Keybinding {
 export type CommandGroup =
   | 'tools'
   | 'comments'
+  | 'mindmap'
   | 'edit'
   | 'select'
   | 'arrange'

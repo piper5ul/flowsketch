@@ -48,14 +48,17 @@ import {
   isSeeded,
   nodeEntries,
   nodesOf,
+  THUMBNAIL_KEY,
+  thumbnailNodeIdsOf,
   VIEWPORT_KEY,
   writeDiagramIntoDoc,
   type DocEntry,
 } from '../../../shared/collabDoc';
 import type { ConnectorEdge, DiagramState, DocumentHistory, ShapeNode } from '../../store/useDiagramStore';
-import { hasDocumentHistory, serializeDiagram } from '../../store/useDiagramStore';
+import { deriveMindMapHidden, hasDocumentHistory, serializeDiagram } from '../../store/useDiagramStore';
 import { normalizeParentage } from '../nodeTree';
 import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
+import { sanitizeThumbnailIds } from '../boardThumbnail';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -186,6 +189,11 @@ export function pushDiagramToDoc(doc: Y.Doc, data: DiagramData, origin: unknown)
     // style that was saved. Written when they differ, deleted when the board
     // has none, so a diagram nobody has set one on holds no key at all.
     changed = syncDefaults(meta, data.defaults as BoardDefaults | undefined) || changed;
+
+    // And so is the board's own thumbnail: the dashboard card is the same card
+    // in every window, so which shapes stand for the board has to be shared the
+    // way the defaults are and not the way the camera is.
+    changed = syncThumbnail(meta, data.thumbnailNodeIds) || changed;
   }, origin);
   return changed;
 }
@@ -201,6 +209,20 @@ function syncDefaults(meta: Y.Map<unknown>, defaults: BoardDefaults | undefined)
   }
   if (same(current, value)) return false;
   meta.set(DEFAULTS_KEY, plain(value));
+  return true;
+}
+
+/** The same, for the ids the dashboard card is drawn from. */
+function syncThumbnail(meta: Y.Map<unknown>, ids: readonly string[] | undefined): boolean {
+  const value = ids && ids.length > 0 ? ids : undefined;
+  const current = meta.get(THUMBNAIL_KEY);
+  if (value === undefined) {
+    if (current === undefined) return false;
+    meta.delete(THUMBNAIL_KEY);
+    return true;
+  }
+  if (same(current, value)) return false;
+  meta.set(THUMBNAIL_KEY, plain([...value]));
   return true;
 }
 
@@ -230,6 +252,10 @@ export function applyLocalEditsSince(
     // one that has not changed since the load is the document's business.
     if (!same(baseline.defaults, current.defaults)) {
       syncDefaults(docMeta(doc), current.defaults as BoardDefaults | undefined);
+    }
+    // Same rule again for the board's thumbnail.
+    if (!same(baseline.thumbnailNodeIds, current.thumbnailNodeIds)) {
+      syncThumbnail(docMeta(doc), current.thumbnailNodeIds);
     }
   }, origin);
 }
@@ -298,7 +324,7 @@ export function docEdgesOntoStore(
 
 /** The store's diagram, in the form the document holds it. */
 function diagramOf(state: DiagramState): DiagramData {
-  return serializeDiagram(state.nodes, state.edges, state.viewport, state.defaults);
+  return serializeDiagram(state.nodes, state.edges, state.viewport, state.defaults, state.thumbnailNodeIds);
 }
 
 /**
@@ -362,22 +388,36 @@ export function bindDocToStore(
     // here acts on it — `sanitizeDefaults` is the same gate a stored row goes
     // through on load.
     const defaults = sanitizeDefaults(defaultsOf(doc)) ?? {};
+    // Narrowed for the same reason, and through the same gate a stored row goes
+    // through: it is another browser's list of ids.
+    const thumbnailNodeIds = sanitizeThumbnailIds(thumbnailNodeIdsOf(doc));
 
     const state = store.getState();
     const elementsChanged = next !== rendered;
     const defaultsChanged = !same(defaults, state.defaults);
-    if (!elementsChanged && !defaultsChanged) return;
+    const thumbnailChanged = !same(thumbnailNodeIds, state.thumbnailNodeIds);
+    if (!elementsChanged && !defaultsChanged && !thumbnailChanged) return;
 
     const patch: Partial<DiagramState> = {};
     if (elementsChanged) {
       rendered = next;
-      patch.nodes = docNodesOntoStore(nodes, state.nodes);
-      patch.edges = docEdgesOntoStore(edges, state.edges);
+      // `hidden` is not in the document — it is derived from the mind maps'
+      // `collapsed` flags, the same way `loadDiagram` derives it — so a
+      // collaborator folding a branch away folds it here too.
+      const derived = deriveMindMapHidden(
+        docNodesOntoStore(nodes, state.nodes),
+        docEdgesOntoStore(edges, state.edges),
+      );
+      patch.nodes = derived.nodes;
+      patch.edges = derived.edges;
     }
     // The one thing in `meta` that *is* read back: a default is a property of
     // the board, not of the window it was set in. The viewport is not — see
     // `pushDiagramToDoc`.
     if (defaultsChanged) patch.defaults = defaults;
+    // Read back for the same reason: the dashboard card is the board's, not
+    // this window's.
+    if (thumbnailChanged) patch.thumbnailNodeIds = thumbnailNodeIds;
 
     applyingRemote = true;
     try {
@@ -588,7 +628,8 @@ export function bindDocToStore(
       state.nodes === previous.nodes &&
       state.edges === previous.edges &&
       state.viewport === previous.viewport &&
-      state.defaults === previous.defaults
+      state.defaults === previous.defaults &&
+      state.thumbnailNodeIds === previous.thumbnailNodeIds
     ) {
       return;
     }

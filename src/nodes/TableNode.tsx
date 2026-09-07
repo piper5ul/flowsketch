@@ -80,20 +80,30 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   const canEdit = !readOnly && !data.locked;
   const fontSize = resolveFontSize(data.fontSize);
 
+  /**
+   * Opens one cell — and says so in the store.
+   *
+   * `editingNodeId` is what the rest of the app means by "a text editor is open
+   * on this node", and a cell editor is one: without it a plain letter typed
+   * into a cell would still reach the keyboard handler's mind-map escape hatch
+   * and drop a map on the board (`mindmap.addRoot` is bound to `m`, gated on
+   * nothing being edited). It is also what Enter comes in through — see below.
+   */
   const openCell = useCallback(
     (cell: CellRef) => {
       if (!canEdit) return;
       setActiveTableCell({ nodeId: id, ...cell });
       setDraft(tableRef.current.rows[cell.row]?.cells[cell.col] ?? '');
       setEditing(cell);
+      setEditingNodeId(id);
     },
-    [canEdit, id, setActiveTableCell],
+    [canEdit, id, setActiveTableCell, setEditingNodeId],
   );
 
   const stopEditing = useCallback(() => {
     setEditing(null);
-    setEditingNodeId(null);
-  }, [setEditingNodeId]);
+    if (useDiagramStore.getState().editingNodeId === id) setEditingNodeId(null);
+  }, [id, setEditingNodeId]);
 
   /** The current draft into the grid, and whatever else the caller wants doing to it. */
   const commit = useCallback(
@@ -114,6 +124,13 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
     const cell = active?.nodeId === id ? { row: active.row, col: active.col } : { row: 0, col: 0 };
     openCell(cell);
   }, [editingNodeId, id, editing, openCell]);
+
+  // Something else took the editing cursor — a click on the pane, or a label
+  // opened on another node. The cell closes; committing is the blur's job, and
+  // a real focus change always fires one before the click that caused it.
+  useEffect(() => {
+    if (editing && editingNodeId !== id) setEditing(null);
+  }, [editing, editingNodeId, id]);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -247,7 +264,7 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
                           aria-label={`Row ${rowIndex + 1} column ${col + 1}`}
                           value={draft}
                           onChange={(e) => setDraft(e.target.value)}
-                          onBlur={() => { commit({ row: rowIndex, col }, draft); setEditing(null); }}
+                          onBlur={() => { commit({ row: rowIndex, col }, draft); stopEditing(); }}
                           onKeyDown={(e) => {
                             if (e.key === 'Tab') {
                               e.preventDefault();

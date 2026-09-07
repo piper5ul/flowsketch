@@ -87,6 +87,13 @@ export type VerticalAlign = 'top' | 'middle' | 'bottom';
  */
 export type FillStyle = 'filled' | 'outline';
 
+// `.js` on purpose: the server compiles this file under `nodenext`, where an
+// extensionless relative import is not a legal specifier — see the note on
+// `src/lib/diagramMigrations.ts` in CLAUDE.md.
+import type { MindMapNodeData } from './lib/mindMap.js';
+
+export type { MindMapNodeData };
+
 /**
  * The grid inside a `table` node: what is in each cell, how wide each column
  * is, and whether the first row is a header.
@@ -146,8 +153,24 @@ export interface ShapeData {
   opacity?: number;
   /** Whether the shape casts a drop shadow. */
   shadow?: boolean;
+  /**
+   * Present on a **mind-map node** and absent on every other shape — which is
+   * the whole of what makes a shape part of a map. `root` names the map (the
+   * root's own entry points at itself) and `collapsed` folds its descendants
+   * away; the parent/child structure is the connectors, not this. See
+   * `src/lib/mindMap.ts`.
+   */
+  mindMap?: MindMapNodeData;
   link?: string;
   locked?: boolean;
+  /**
+   * Where this frame sits in the running order when the diagram is presented —
+   * one slide per frame, see `src/lib/presentation.ts`. Only a frame carries
+   * one, and **absent means "not ordered"**: such a frame is presented after
+   * every ordered one, in reading order, so a section added to an arranged deck
+   * joins the end instead of shuffling into the middle of it.
+   */
+  slideOrder?: number;
   imageSrc?: string;
   /** Set on an `image` node whose bytes are still uploading. */
   uploading?: boolean;
@@ -166,8 +189,17 @@ export interface EdgeAnchor {
   t: number;
 }
 
+/**
+ * What a connector *is for*, where that is more than a line between two shapes.
+ * Absent on every connector anyone has ever drawn, which is what "no role" is.
+ * `'mindmap'` makes it a branch of a mind map, running parent → child.
+ */
+export type ConnectorRole = 'mindmap';
+
 export interface ConnectorData {
   connectorType: ConnectorKind;
+  /** See `ConnectorRole`. Absent on an ordinary connector. */
+  role?: ConnectorRole;
   stroke: string;
   strokeStyle: StrokeStyle;
   /** Absent on connectors saved before widths existed; they read as regular. */

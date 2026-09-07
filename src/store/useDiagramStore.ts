@@ -39,6 +39,7 @@ const SIDE_IDS: readonly string[] = ['top', 'right', 'bottom', 'left'];
 function isSideId(id: string | null | undefined): id is Direction {
   return typeof id === 'string' && SIDE_IDS.includes(id);
 }
+import { sanitizeThumbnailIds } from '../lib/boardThumbnail';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode, isTableNode } from '../lib/nodeKinds';
 import { emptyTable, normalizeTable, tableSize } from '../lib/table';
@@ -70,7 +71,17 @@ import {
   type LayoutDirection,
 } from '../lib/autoLayout';
 import { runElkLayout } from '../lib/elk';
+import {
+  MIND_MAP_NODE_SIZE,
+  childrenOf,
+  hiddenMindMapIds,
+  layoutMindMap,
+  mapOf,
+  parentEdgeIndex,
+  subtreePositionChanges,
+} from '../lib/mindMap';
 import { linesOf, stackAlong, stickyGrid } from '../lib/pasteAs';
+import { reorderSlides } from '../lib/presentation';
 import { parseMermaidFlowchart } from '../lib/mermaid';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import type { ImageBackfillPatch } from '../lib/imageBackfill';
@@ -575,6 +586,16 @@ export interface DiagramState {
    * more recent word, and must not be overruled by a swatch picked earlier.
    */
   lastStyle: BoardDefaults;
+  /**
+   * The shapes that stand for this board on the dashboard card — what "Set as
+   * board thumbnail" saves, written into `DiagramData.thumbnailNodeIds` and
+   * into the collaborative document's `meta` map beside the defaults.
+   *
+   * `null` on a board nobody has set one on, which means the card is a picture
+   * of the whole diagram — every diagram written before this existed, and every
+   * one "Remove from board thumbnail" puts back.
+   */
+  thumbnailNodeIds: string[] | null;
   /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
   canUndo: boolean;
   canRedo: boolean;
@@ -663,6 +684,17 @@ export interface DiagramState {
    * members' shared parent if they have one, and ends up selected.
    */
   wrapSelectionInFrame: () => void;
+  /**
+   * Makes `orderedIds` the order the frames are presented in — "Arrange
+   * slides" — by writing `slideOrder` 0…n-1 onto them.
+   *
+   * The running order is part of the diagram (everybody presents the same deck),
+   * so unlike the rest of presenting it goes through the store and is undoable:
+   * **one** history entry however many frames moved, and none at all when the
+   * order asked for is the one the board already has. `reorderSlides` is what
+   * decides that; ids naming something that is not a frame are ignored there.
+   */
+  setSlideOrder: (orderedIds: readonly string[]) => void;
   setSnapOverride: (override: SnapOverride) => void;
   /**
    * Leaves exactly `ids` selected. A selection is not part of the diagram, so
@@ -756,6 +788,25 @@ export interface DiagramState {
    * preference about what comes next, not a mark on the diagram.
    */
   saveSelectionAsDefault: () => DefaultStyleKind | null;
+  /**
+   * "Set as board thumbnail" / "Remove from board thumbnail": the shapes the
+   * dashboard card is rendered from, or `null` for the automatic picture of the
+   * whole board.
+   *
+   * **It pushes no history entry, on purpose and in both undo models** — the
+   * same rule, and the same reason, as `saveSelectionAsDefault`: for a bound
+   * diagram this lives in the document's `meta` map, which is deliberately
+   * outside the `Y.UndoManager`'s scope, so ⌘Z could not take it back there
+   * however it were recorded and a boundary would only split the *previous*
+   * edit in two. The snapshot stacks are held to the same rule so the two
+   * histories agree. Choosing what the card shows is a decision about how the
+   * board is filed, not a mark on the drawing.
+   *
+   * Ids that name nothing on the board are kept rather than pruned: a shape can
+   * come back (an undo, a restore, a collaborator's own undo), and the renderer
+   * falls back to the whole board while it is gone.
+   */
+  setThumbnailNodeIds: (ids: readonly string[] | null) => void;
   /** The `data` a new shape of `kind` starts with, board defaults applied. */
   newShapeData: (kind: ShapeKind) => ShapeData;
   /** The `data` a new connector starts with, board defaults applied. */
@@ -804,6 +855,29 @@ export interface DiagramState {
    * all the same: see the note at the implementation.
    */
   pasteMermaid: (text: string, origin: { x: number; y: number }) => Promise<string[] | null>;
+
+  /**
+   * Mind maps. Each of these is **one** history entry: the node, its branch and
+   * the layout that follows all land inside a single `pushHistory`, because
+   * "press Tab" is one thing the user did. Every one of them ends by laying the
+   * whole map out again and leaving the new node selected and open for typing —
+   * a mind map is typed, not arranged.
+   *
+   * The structure they build is `src/lib/mindMap.ts`; nothing here is a new
+   * node type.
+   */
+  mindMapAddRoot: (position: { x: number; y: number }) => string;
+  mindMapAddChild: (id: string) => string | null;
+  /** A sibling below `id`, or above it with `before`. A root has none, so Enter there starts its first branch. */
+  mindMapAddSibling: (id: string, before?: boolean) => string | null;
+  /** Slips a node in between `id` and its parent — or above a root, which makes the new node the root. */
+  mindMapAddParent: (id: string) => string | null;
+  /** Folds a node's descendants away, or unfolds them. Does nothing to a leaf. */
+  mindMapToggleCollapse: (id: string) => void;
+  /** One child per line, appended in order. Whimsical's paste-a-list-into-a-node. */
+  mindMapAddChildren: (id: string, labels: readonly string[]) => string[];
+  /** Lays the map out again, costing no history entry when nothing moves. */
+  mindMapRelayout: (rootId: string) => void;
 
   deleteSelection: () => void;
   undo: () => void;
@@ -1079,6 +1153,181 @@ function cloneSubgraph(
   return { nodes: sortParentsFirst(clonedNodes), edges: clonedEdges };
 }
 
+// ---------------------------------------------------------------------------
+// Mind maps
+//
+// The structure is `src/lib/mindMap.ts` and is pure; what is here is how a map
+// becomes shapes and connectors. A mind-map node is an ordinary rectangle whose
+// `data.mindMap` names its map, and a branch is an ordinary curved connector
+// whose `data.role` is `'mindmap'`, running parent -> child.
+// ---------------------------------------------------------------------------
+
+/** A new mind-map node: the board's shape style, this map's badge, nothing else. */
+function newMindMapNode(
+  id: string,
+  rootId: string,
+  position: { x: number; y: number },
+  state: Pick<DiagramState, 'defaults' | 'lastStyle'>,
+  options: { label?: string; parentId?: string } = {},
+): ShapeNode {
+  return {
+    id,
+    type: 'shape',
+    position,
+    ...MIND_MAP_NODE_SIZE,
+    selected: true,
+    ...(options.parentId !== undefined ? { parentId: options.parentId } : {}),
+    data: {
+      ...shapeDataWithDefaults('rectangle', state.defaults, state.lastStyle),
+      label: options.label ?? '',
+      mindMap: { root: rootId },
+    },
+  };
+}
+
+/**
+ * A branch. Thin, curved and bare at both ends — Whimsical's mind-map line —
+ * and deliberately *not* built from the board's connector default: a branch is
+ * part of the map's furniture rather than a line the user drew, so a board
+ * whose default connector is a thick dashed elbow still gets a mind map that
+ * reads as one. Pinned right -> left, which is the direction the tree grows.
+ */
+function mindMapBranch(source: string, target: string): ConnectorEdge {
+  const data: ConnectorData = {
+    ...makeEdgeData('curved'),
+    role: 'mindmap',
+    strokeWidth: 1,
+    startArrowStyle: 'none',
+    endArrowStyle: 'none',
+    sourceAnchor: { side: 'right', t: 0.5 },
+    targetAnchor: { side: 'left', t: 0.5 },
+  };
+  return {
+    id: nanoid(8),
+    source,
+    target,
+    sourceHandle: 'right',
+    targetHandle: 'left',
+    type: 'connector',
+    zIndex: 1000,
+    ...computeMarkers(data),
+    data,
+  };
+}
+
+/**
+ * `hidden` on the nodes and edges a collapsed branch folds away, derived from
+ * the `collapsed` flags in the data.
+ *
+ * **`collapsed` is the diagram and `hidden` is the screen.** `serializeNodes`
+ * writes no `hidden` key, so this runs at every door a board comes through —
+ * `loadDiagram`, a collaborator's edit (`binding.ts`) and every mind-map action
+ * — rather than being stored and trusted. Identity is preserved wherever
+ * nothing changes, so an ordinary board pays one pass over its nodes and no
+ * re-renders at all.
+ */
+export function deriveMindMapHidden(
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+): { nodes: ShapeNode[]; edges: ConnectorEdge[] } {
+  const hidden = hiddenMindMapIds(nodes, edges);
+  return {
+    nodes: nodes.map((n) => (!!n.hidden === hidden.has(n.id) ? n : { ...n, hidden: hidden.has(n.id) })),
+    edges: edges.map((e) => {
+      const want = hidden.has(e.source) || hidden.has(e.target);
+      return !!e.hidden === want ? e : { ...e, hidden: want };
+    }),
+  };
+}
+
+/**
+ * The map rooted at `rootId` laid out again, and every collapsed branch hidden.
+ *
+ * The positions come back in **board coordinates** (the root is anchored on its
+ * own absolute position, so the map does not jump), and are turned back into
+ * offsets from each node's parent the way `commitArrangedPositions` does — a
+ * mind map dropped into a frame lays out where it is drawn, and the JSON keeps
+ * the parent-relative form React Flow reads.
+ */
+function applyMindMapLayout(
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+  rootId: string | null,
+): { nodes: ShapeNode[]; edges: ConnectorEdge[] } {
+  let placed = nodes;
+  const tree = rootId ? mapOf(nodes, edges, rootId) : null;
+  if (tree) {
+    const byId = nodesById(nodes);
+    const sizes = new Map(
+      tree.ids.flatMap((id) => {
+        const node = byId.get(id);
+        if (!node) return [];
+        // A node React Flow has not measured yet reports 0, which would stack
+        // its siblings on top of one another; the default box is what it is
+        // about to be measured at.
+        const width = nodeWidth(node) || MIND_MAP_NODE_SIZE.width;
+        const height = nodeHeight(node) || MIND_MAP_NODE_SIZE.height;
+        return [[id, { width, height }] as const];
+      }),
+    );
+    const positions = layoutMindMap(tree, sizes, absolutePosition(byId.get(tree.rootId)!, byId));
+    placed = nodes.map((node) => {
+      const next = positions.get(node.id);
+      if (!next) return node;
+      const origin =
+        node.parentId !== undefined && byId.has(node.parentId)
+          ? absolutePosition(byId.get(node.parentId)!, byId)
+          : { x: 0, y: 0 };
+      const position = { x: next.x - origin.x, y: next.y - origin.y };
+      return position.x === node.position.x && position.y === node.position.y
+        ? node
+        : { ...node, position };
+    });
+  }
+  return deriveMindMapHidden(placed, edges);
+}
+
+/**
+ * The state patch a mind-map action commits: the map laid out again, and — when
+ * one was just added — that node alone selected and open for typing, which is
+ * the whole point of the gesture.
+ */
+function mindMapPatch(
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+  rootId: string | null,
+  focusId?: string,
+): Partial<DiagramState> {
+  const laid = applyMindMapLayout(nodes, edges, rootId);
+  if (!focusId) return laid;
+  return {
+    nodes: laid.nodes.map((n) =>
+      n.selected === (n.id === focusId) ? n : { ...n, selected: n.id === focusId },
+    ),
+    edges: laid.edges.map((e) => (e.selected ? { ...e, selected: false } : e)),
+    editingNodeId: focusId,
+    editingEdgeId: null,
+  };
+}
+
+/** The mind-map node `id` is, with the map it belongs to — or `null`. */
+function mindMapNodeOf(
+  state: DiagramState,
+  id: string,
+): { node: ShapeNode; root: string } | null {
+  const node = state.nodes.find((n) => n.id === id);
+  const root = node?.data.mindMap?.root;
+  return node && root ? { node, root } : null;
+}
+
+/** Somewhere sensible for a new node to start; the layout below moves it anyway. */
+function seedPosition(parent: ShapeNode): { x: number; y: number } {
+  return {
+    x: parent.position.x + nodeWidth(parent) + MIND_MAP_NODE_SIZE.width,
+    y: parent.position.y,
+  };
+}
+
 function serializeNodes(nodes: ShapeNode[]) {
   return nodes.map((n) => ({
     id: n.id, type: n.type, position: n.position,
@@ -1107,6 +1356,7 @@ export function serializeDiagram(
   edges: ConnectorEdge[],
   viewport?: DiagramViewport | null,
   defaults?: BoardDefaults | null,
+  thumbnailNodeIds?: readonly string[] | null,
 ): DiagramData {
   return {
     version: CURRENT_DIAGRAM_VERSION,
@@ -1119,6 +1369,11 @@ export function serializeDiagram(
     // so an older diagram's JSON is unchanged by this feature existing.
     ...(defaults && Object.keys(defaults).length > 0
       ? { defaults: defaults as DiagramData['defaults'] }
+      : {}),
+    // And again: a board whose card is the automatic picture of the whole
+    // diagram writes no `thumbnailNodeIds` key at all.
+    ...(thumbnailNodeIds && thumbnailNodeIds.length > 0
+      ? { thumbnailNodeIds: [...thumbnailNodeIds] }
       : {}),
   };
 }
@@ -1242,6 +1497,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   tool: 'select',
   defaults: {} as BoardDefaults,
   lastStyle: {} as BoardDefaults,
+  thumbnailNodeIds: null,
   canUndo: false,
   canRedo: false,
   transientSeq: 0,
@@ -1250,6 +1506,19 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     // Migrate before touching any state: a payload from a newer build throws,
     // and the store must be left as it was rather than half-loaded.
     const migrated = migrateDiagramData(data);
+
+    // `Diagram.data` is a free-form JSON column: a stored `parentId` may point
+    // at a node that is no longer there, and React Flow throws on that rather
+    // than drawing the board at all. Normalizing here is the one door every
+    // diagram comes through, migration included — and `hidden` is derived from
+    // the mind maps' `collapsed` flags in the same breath, since `hidden` is
+    // never stored (see `deriveMindMapHidden`). A stored table may be ragged for
+    // the same free-form reason, so `normalizeTableNode` squares each one up and
+    // puts its node's box back in step with its grid.
+    const opened = deriveMindMapHidden(
+      normalizeParentage(migrated.nodes as unknown as ShapeNode[]).map(normalizeTableNode),
+      migrated.edges as unknown as ConnectorEdge[],
+    );
 
     const role = options?.role ?? 'owner';
 
@@ -1276,14 +1545,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // from whatever the server just handed back.
       loadedAt: updatedAt ?? null,
       conflict: null,
-      // `Diagram.data` is a free-form JSON column: a stored `parentId` may
-      // point at a node that is no longer there, and React Flow throws on that
-      // rather than drawing the board at all. Normalizing here is the one door
-      // every diagram comes through, migration included — and a stored table
-      // may be ragged for the same reason, so `normalizeTableNode` squares it
-      // up and puts the node's box back in step with its grid.
-      nodes: normalizeParentage(migrated.nodes as unknown as ShapeNode[]).map(normalizeTableNode),
-      edges: migrated.edges as unknown as ConnectorEdge[],
+      nodes: opened.nodes,
+      edges: opened.edges,
       // Cleared, not kept: /d/A -> /d/B reuses this store, and B must not open
       // on A's camera.
       viewport: migrated.viewport ?? null,
@@ -1295,12 +1558,17 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // and carrying it into another diagram would quietly override that
       // board's own default with a swatch picked on a different board.
       lastStyle: {} as BoardDefaults,
+      // Replaced rather than kept for the reason the defaults are: the ids name
+      // shapes on *that* board, and /d/A -> /d/B must not draw B's card from
+      // A's shapes. `migrateDiagramData` has already narrowed it.
+      thumbnailNodeIds: migrated.thumbnailNodeIds ?? null,
       ...historyFlags(),
     });
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, viewport, defaults, saveStatus, loadedAt, readOnly } = get();
+    const { diagramId, title, nodes, edges, viewport, defaults, thumbnailNodeIds, saveStatus, loadedAt, readOnly } =
+      get();
     if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
@@ -1327,7 +1595,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           // The API rejects a blank title, so a diagram whose name the user
           // cleared would fail every autosave from then on.
           title: title.trim() || 'Untitled',
-          data: serializeDiagram(nodes, edges, viewport, defaults),
+          data: serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds),
           // Only sent when this client knows what version it is building on,
           // and never on an overwrite the user asked for.
           ...(loadedAt !== null && !options?.overwrite ? { ifUnmodifiedSince: loadedAt } : {}),
@@ -1394,6 +1662,18 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         return false;
       });
     }
+    // A branch travels with the node it hangs off: dragging a mind-map node
+    // moves its whole subtree. Added to the changes rather than applied here,
+    // so the alignment snap, the history boundary and the collaboration
+    // binding's transient hold all see one gesture moving several nodes — the
+    // same thing a multi-selection drag already is. Costs a board with no mind
+    // map on it nothing (`subtreePositionChanges` returns at once).
+    {
+      const state = get();
+      const extra = subtreePositionChanges(changes, state.nodes, state.edges);
+      if (extra.length > 0) changes = [...changes, ...extra];
+    }
+
     const dragEnded = changes.some((c) => c.type === 'position' && c.dragging === false);
     const isDragging = changes.some((c) => c.type === 'position' && c.dragging === true);
     const structural = changes.some((c) => c.type === 'add' || c.type === 'remove');
@@ -1679,6 +1959,23 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set({
       nodes: [...rest.map((n) => ({ ...n, selected: false })), frame, ...moved],
       edges: state.edges.map((e) => ({ ...e, selected: false })),
+    });
+  },
+
+  setSlideOrder: (orderedIds) => {
+    const state = get();
+    const patches = reorderSlides(state.nodes, orderedIds);
+    // The order asked for is the one the board already has: no entry, the same
+    // way an already-aligned selection costs no ⌘Z.
+    if (patches.length === 0) return;
+
+    const byId = new Map(patches.map((p) => [p.id, p.data] as const));
+    pushHistory(state);
+    set({
+      nodes: state.nodes.map((n) => {
+        const patch = byId.get(n.id);
+        return patch ? { ...n, data: { ...n.data, ...patch } } : n;
+      }),
     });
   },
 
@@ -2149,6 +2446,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     return kind;
   },
 
+  // No `pushHistory`, for the reason `saveSelectionAsDefault` has none: this
+  // lives in the document's `meta`, outside the undo manager's scope, and the
+  // snapshot stacks are held to the same rule so both histories agree.
+  //
+  // Narrowed even though the caller is our own command: the ids end up in a
+  // free-form JSON column and in a document other browsers read, and one place
+  // that decides what a thumbnail list is beats two.
+  setThumbnailNodeIds: (ids) => set({ thumbnailNodeIds: sanitizeThumbnailIds(ids) }),
+
   newShapeData: (kind) => shapeDataWithDefaults(kind, get().defaults, get().lastStyle),
 
   newConnectorData: () => connectorDataWithDefaults(get().defaults, get().lastStyle),
@@ -2478,6 +2784,172 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       nodes: pasted.nodes.map((n) => ({ ...n, selected: false })),
       edges: pasted.edges.map((e) => ({ ...e, selected: false })),
     };
+  },
+
+  // ---- mind maps --------------------------------------------------------
+  // Each of these is one `pushHistory` and one `set`. See the block comment
+  // above `newMindMapNode` for what a map is made of.
+
+  mindMapAddRoot: (position) => {
+    pushHistory(get());
+    const id = nanoid(8);
+    const state = get();
+    // The root points at itself: that is what makes "which map is this?" a
+    // question a single node can answer.
+    const node = newMindMapNode(id, id, position, state);
+    set(mindMapPatch([...state.nodes, node], state.edges, id, id));
+    return id;
+  },
+
+  mindMapAddChild: (id) => {
+    const state = get();
+    const target = mindMapNodeOf(state, id);
+    if (!target) return null;
+    pushHistory(state);
+
+    const childId = nanoid(8);
+    const nodes = state.nodes.map((n) =>
+      // Adding to a folded node unfolds it, or the child the user just asked
+      // for would be created out of sight.
+      n.id === id && n.data.mindMap?.collapsed
+        ? { ...n, data: { ...n.data, mindMap: { ...n.data.mindMap, collapsed: false } } }
+        : n,
+    );
+    nodes.push(
+      newMindMapNode(childId, target.root, seedPosition(target.node), state, {
+        parentId: target.node.parentId,
+      }),
+    );
+    set(mindMapPatch(nodes, [...state.edges, mindMapBranch(id, childId)], target.root, childId));
+    return childId;
+  },
+
+  mindMapAddSibling: (id, before = false) => {
+    const state = get();
+    const target = mindMapNodeOf(state, id);
+    if (!target) return null;
+    const tree = mapOf(state.nodes, state.edges, target.root);
+    const parentId = tree?.parent.get(id);
+    // A root has no siblings. Enter on one starts its first branch instead of
+    // doing nothing, which is the only reading of the keystroke that helps.
+    if (!parentId) return get().mindMapAddChild(id);
+
+    pushHistory(state);
+    const siblingId = nanoid(8);
+    const nodes = [
+      ...state.nodes,
+      newMindMapNode(siblingId, target.root, seedPosition(target.node), state, {
+        parentId: target.node.parentId,
+      }),
+    ];
+    // Child order *is* edge order, so "above" and "below" are which side of
+    // this node's own branch the new one is spliced in on.
+    const at = parentEdgeIndex(state.edges, id);
+    const cut = at < 0 ? state.edges.length : before ? at : at + 1;
+    const edges = [
+      ...state.edges.slice(0, cut),
+      mindMapBranch(parentId, siblingId),
+      ...state.edges.slice(cut),
+    ];
+    set(mindMapPatch(nodes, edges, target.root, siblingId));
+    return siblingId;
+  },
+
+  mindMapAddParent: (id) => {
+    const state = get();
+    const target = mindMapNodeOf(state, id);
+    if (!target) return null;
+    const tree = mapOf(state.nodes, state.edges, target.root);
+    const parentId = tree?.parent.get(id);
+    pushHistory(state);
+
+    const newId = nanoid(8);
+    const seed = { x: target.node.position.x, y: target.node.position.y };
+    const options = { parentId: target.node.parentId };
+
+    if (parentId) {
+      // Slipped in between: the branch that ended here now ends at the new
+      // node, and a fresh branch carries on from it.
+      const at = parentEdgeIndex(state.edges, id);
+      const rewired = state.edges.map((e, i) => (i === at ? { ...e, target: newId } : e));
+      const edges = [
+        ...rewired.slice(0, at + 1),
+        mindMapBranch(newId, id),
+        ...rewired.slice(at + 1),
+      ];
+      const nodes = [...state.nodes, newMindMapNode(newId, target.root, seed, state, options)];
+      set(mindMapPatch(nodes, edges, target.root, newId));
+      return newId;
+    }
+
+    // Above the root: the new node *becomes* the root, so every node of the map
+    // is re-badged onto it. The map is named by one id, and this is the one
+    // operation that changes which.
+    const members = new Set(tree?.ids ?? [id]);
+    const nodes = state.nodes.map((n) =>
+      members.has(n.id) && n.data.mindMap
+        ? { ...n, data: { ...n.data, mindMap: { ...n.data.mindMap, root: newId } } }
+        : n,
+    );
+    nodes.push(newMindMapNode(newId, newId, seed, state, options));
+    set(mindMapPatch(nodes, [mindMapBranch(newId, id), ...state.edges], newId, newId));
+    return newId;
+  },
+
+  mindMapToggleCollapse: (id) => {
+    const state = get();
+    const target = mindMapNodeOf(state, id);
+    if (!target) return;
+    const tree = mapOf(state.nodes, state.edges, target.root);
+    // A leaf has nothing to fold, so this must not cost the user a ⌘Z.
+    if (!tree || childrenOf(tree, id).length === 0) return;
+
+    pushHistory(state);
+    const nodes = state.nodes.map((n) =>
+      n.id === id && n.data.mindMap
+        ? { ...n, data: { ...n.data, mindMap: { ...n.data.mindMap, collapsed: !n.data.mindMap.collapsed } } }
+        : n,
+    );
+    set(mindMapPatch(nodes, state.edges, target.root));
+  },
+
+  mindMapAddChildren: (id, labels) => {
+    const state = get();
+    const target = mindMapNodeOf(state, id);
+    if (!target || labels.length === 0) return [];
+    pushHistory(state);
+
+    const seed = seedPosition(target.node);
+    const made = labels.map((label) =>
+      newMindMapNode(nanoid(8), target.root, seed, state, {
+        label,
+        parentId: target.node.parentId,
+      }),
+    );
+    const nodes = [
+      ...state.nodes.map((n) =>
+        n.id === id && n.data.mindMap?.collapsed
+          ? { ...n, data: { ...n.data, mindMap: { ...n.data.mindMap, collapsed: false } } }
+          : n,
+      ),
+      ...made,
+    ];
+    const edges = [...state.edges, ...made.map((child) => mindMapBranch(id, child.id))];
+    set(mindMapPatch(nodes, edges, target.root));
+    return made.map((n) => n.id);
+  },
+
+  mindMapRelayout: (rootId) => {
+    const state = get();
+    const patch = applyMindMapLayout(state.nodes, state.edges, rootId);
+    // Identity is preserved where nothing moved, so an already-tidy map costs
+    // no history entry — the rule `alignSelected` follows.
+    const moved =
+      patch.nodes.some((n, i) => n !== state.nodes[i]) ||
+      patch.edges.some((e, i) => e !== state.edges[i]);
+    if (!moved) return;
+    pushHistory(state);
+    set(patch);
   },
 
   // Deleting a container deletes what is in it: a group or a frame is one

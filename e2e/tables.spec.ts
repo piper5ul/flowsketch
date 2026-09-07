@@ -65,6 +65,10 @@ test('E draws a 3×3 table, and its cells are typed into and tabbed through', as
 
   await expect(tableNode(page).getByText('Name', { exact: true })).toBeVisible();
   await expect(tableNode(page).getByText('Role', { exact: true })).toBeVisible();
+  // Nothing but the table: an open cell reports `editingNodeId`, so a letter
+  // that is also a tool key ("m", the mind map) stays in the cell it was typed
+  // into rather than reaching the canvas's keyboard handler.
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
 });
 
 test('the toolbar adds a row to the selected table', async ({ page }) => {
