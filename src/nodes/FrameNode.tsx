@@ -27,6 +27,8 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
   const searchHit = useSearchHighlight('node', id);
+  // Outlined while a connector being drawn would land here — see `connectTargetId`.
+  const isConnectTarget = useDiagramStore((s) => s.connectTargetId === id);
   // The collaborator holding this frame, if anyone is — outlined in their own
   // colour, exactly as a shape is. See `[data-peer-selected]` in `index.css`.
   const peerSelection = usePeerSelection(id);
@@ -53,6 +55,7 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
     <div
       data-node-type="frame"
       data-search-hit={searchHit}
+        data-connect-target={isConnectTarget ? 'true' : undefined}
       data-peer-selected={peerSelection?.name}
       className="shape-wrapper relative h-full w-full rounded-xl"
       onDoubleClick={() => { if (!editing && !data.locked) setEditingNodeId(id); }}

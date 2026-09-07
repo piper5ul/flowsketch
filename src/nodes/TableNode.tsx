@@ -66,6 +66,8 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   const setActiveTableCell = useDiagramStore((s) => s.setActiveTableCell);
   const readOnly = useDiagramStore((s) => s.readOnly);
   const searchHit = useSearchHighlight('node', id);
+  // Outlined while a connector being drawn would land here — see `connectTargetId`.
+  const isConnectTarget = useDiagramStore((s) => s.connectTargetId === id);
   const peerSelection = usePeerSelection(id);
 
   const [editing, setEditing] = useState<CellRef | null>(null);
@@ -214,6 +216,7 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
     <div
       data-node-type="table"
       data-search-hit={searchHit}
+        data-connect-target={isConnectTarget ? 'true' : undefined}
       data-peer-selected={peerSelection?.name}
       className="shape-wrapper relative h-full w-full overflow-hidden rounded-lg"
       style={{

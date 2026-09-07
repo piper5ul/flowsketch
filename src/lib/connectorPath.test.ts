@@ -7,6 +7,9 @@ import {
   interpolatePolyline,
   smoothStepPath,
   type Point,
+  estimateLabelWidth,
+  labelLift,
+  polylineLength,
 } from './connectorPath';
 import { manhattanRoute } from './manhattanRouter';
 
@@ -328,5 +331,20 @@ describe('smoothStepPath', () => {
     // The second leg is 6px, so its fillet has to stop at 3px, not the 12px default.
     const d = smoothStepPath([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 6 }]);
     expect(d).toBe('M 0 0 L 97 0 Q 100 0 100 3 L 100 6');
+  });
+});
+
+describe('label lift on short runs', () => {
+  it('measures a polyline', () => {
+    expect(polylineLength([{ x: 0, y: 0 }, { x: 30, y: 40 }, { x: 30, y: 50 }])).toBe(60);
+    expect(polylineLength([{ x: 0, y: 0 }])).toBe(0);
+  });
+
+  it('lifts the label only when the run cannot carry it beside the arrowheads', () => {
+    const w = estimateLabelWidth('confirm', 13);
+    expect(labelLift(300, w)).toBe(0);
+    expect(labelLift(w + 44, w)).toBe(0);
+    expect(labelLift(w + 43, w)).toBe(14);
+    expect(labelLift(60, w)).toBe(14);
   });
 });

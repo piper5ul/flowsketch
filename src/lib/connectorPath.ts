@@ -343,3 +343,25 @@ export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs)
   const mid = { x: labelX, y: labelY };
   return { d, points: [source, target], segments: [runBetween(source, target, mid)] };
 }
+
+/** The length of a polyline, in px. */
+export function polylineLength(pts: Point[]): number {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  return total;
+}
+
+/** A label's width as it will roughly render: ~0.55 em per character plus the pill's padding. */
+export function estimateLabelWidth(label: string, fontSizePx: number): number {
+  return label.length * fontSizePx * 0.55 + 12;
+}
+
+/**
+ * How far a connector's label is lifted off the line, in px: nothing on a run
+ * long enough to carry it, and one pill's height on a short run where the
+ * pill would otherwise sit on the arrowheads. `headroom` is the room the two
+ * ends need — the heads plus a little line either side of the pill.
+ */
+export function labelLift(runLength: number, labelWidth: number, headroom = 44): number {
+  return runLength < labelWidth + headroom ? 14 : 0;
+}
