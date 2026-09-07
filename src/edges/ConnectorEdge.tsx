@@ -17,7 +17,8 @@ import {
 } from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { absolutePosition } from '../lib/nodeTree';
-import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
+import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
+import { markerDepthPx } from '../lib/edgeMarkers';
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
@@ -349,17 +350,19 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const floating = floatingEdgeSides(rectOfNode(sourceNode, byId), rectOfNode(targetNode, byId));
   const sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };
   const targetAnchor: EdgeAnchor = data?.targetAnchor ?? { side: floating.targetPos, t: 0.5 };
-  // The line stops a few px clear of each shape (see `CONNECTOR_STANDOFF_PX`);
-  // a floating arrow's ends are anchors with no shape to stand clear of.
+  // The line stops a few px clear of each shape (see `CONNECTOR_STANDOFF_PX`)
+  // — a floating arrow's ends are anchors with no shape to stand clear of —
+  // and then a head's depth short of that, so the head's tip, not the line's
+  // round-capped end, is what reaches the standoff (see `MARKER_GEOMETRY`).
   const { x: sx, y: sy } = standoff(
     anchorToPoint(sourceAnchor, rectOfNode(sourceNode, byId)),
     sourceAnchor.side,
-    isAnchorNode(sourceNode.data) ? 0 : CONNECTOR_STANDOFF_PX,
+    (isAnchorNode(sourceNode.data) ? 0 : CONNECTOR_STANDOFF_PX) + markerDepthPx(data?.startArrowStyle ?? DEFAULT_START_ARROW, data?.strokeWidth),
   );
   const { x: tx, y: ty } = standoff(
     anchorToPoint(targetAnchor, rectOfNode(targetNode, byId)),
     targetAnchor.side,
-    isAnchorNode(targetNode.data) ? 0 : CONNECTOR_STANDOFF_PX,
+    (isAnchorNode(targetNode.data) ? 0 : CONNECTOR_STANDOFF_PX) + markerDepthPx(data?.endArrowStyle ?? DEFAULT_END_ARROW, data?.strokeWidth),
   );
 
   const stroke = data?.stroke ?? DEFAULT_EDGE_STROKE;

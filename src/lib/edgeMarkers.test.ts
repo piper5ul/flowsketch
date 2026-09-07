@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeMarkers, markerDefsForEdges } from './edgeMarkers';
+import { MARKER_GEOMETRY, computeMarkers, markerDepthPx, markerDefsForEdges } from './edgeMarkers';
 import { CONNECTOR_STROKE_PX, DEFAULT_STROKE_WIDTH } from './defaults';
 import type { ArrowStyle, ConnectorData } from '../types';
 
@@ -26,7 +26,7 @@ describe('computeMarkers', () => {
   });
 
   it('gives each style its own marker', () => {
-    const styles: ArrowStyle[] = ['arrow', 'open', 'circle', 'diamond'];
+    const styles: ArrowStyle[] = ['arrow', 'open', 'circle', 'diamond', 'bar', 'halfcircle', 'dot'];
     const ids = styles.map((s) => computeMarkers({ ...base, endArrowStyle: s }).markerEnd);
     expect(new Set(ids).size).toBe(styles.length);
     for (const [i, style] of styles.entries()) expect(ids[i]).toContain(style);
@@ -106,5 +106,23 @@ describe('CONNECTOR_STROKE_PX', () => {
     // existed, so changing this number restyles old diagrams — which is what
     // the Whimsical-look pass deliberately did, once. Change it knowingly.
     expect(CONNECTOR_STROKE_PX[DEFAULT_STROKE_WIDTH]).toBe(4);
+  });
+});
+
+describe('markerDepthPx', () => {
+  it('reaches nothing for no head and a bar, and a head\'s depth of its size otherwise', () => {
+    expect(markerDepthPx('none', 2)).toBe(0);
+    expect(markerDepthPx(undefined, undefined)).toBe(0);
+    expect(markerDepthPx('bar', 2)).toBe(0);
+    expect(markerDepthPx('arrow', 2)).toBeCloseTo(13 * 0.8);
+    expect(markerDepthPx('arrow', 3)).toBeCloseTo(17 * 0.8);
+    expect(markerDepthPx('diamond', 1)).toBe(10);
+  });
+
+  it('keeps every marker inside its box: the reference point plus the depth is the tip', () => {
+    for (const [style, g] of Object.entries(MARKER_GEOMETRY)) {
+      expect(g.refX + g.depth * 10, style).toBeLessThanOrEqual(10);
+      expect(g.refX, style).toBeGreaterThanOrEqual(0);
+    }
   });
 });
