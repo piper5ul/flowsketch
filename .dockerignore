@@ -1,0 +1,16 @@
+# Keep the image build to the sources: no local modules (rebuilt inside), no
+# builds, no secrets, no test output.
+node_modules
+dist
+dist-server
+.env
+.env.*
+!.env.example
+uploads
+test-results
+playwright-report
+.git
+.claude
+.github
+e2e
+docs/*.png

@@ -1,0 +1,66 @@
+# The demo stack: Postgres, a mail sink, the app, and a Cloudflare tunnel.
+#
+#   cp deploy/oracle/.env.example deploy/oracle/.env   # then fill it in
+#   docker compose -f deploy/oracle/docker-compose.yml up -d --build
+#
+# Nothing is published on the host except what the tunnel carries: the VM's
+# firewall can stay closed to inbound traffic. To use a reverse proxy instead
+# of the tunnel, drop the cloudflared service and publish app:3001.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: flowsketch
+      POSTGRES_USER: flowsketch
+      # Plain substitution, no ":?message" guard: a secret scanner reads that
+      # message as a literal password. Postgres refuses to start without it.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowsketch -d flowsketch"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Sign-up sends a verification mail; on a demo there is nowhere to deliver it,
+  # so this accepts every message and keeps it in an inbox at :1080 (not
+  # published — reach it with an SSH port-forward if you ever need a link).
+  mail:
+    image: maildev/maildev:2.1.0
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/oracle/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Assembled by setup.sh into the env file, so no credential-shaped string sits in the repo.
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in deploy/oracle/.env}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET in deploy/oracle/.env}
+      BETTER_AUTH_URL: ${PUBLIC_URL:?set PUBLIC_URL in deploy/oracle/.env}
+      SMTP_HOST: mail
+      SMTP_PORT: 1025
+      VERSION_INTERVAL_MS: 600000
+      MAX_VERSIONS: 50
+    volumes:
+      - uploads:/data/uploads
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN in deploy/oracle/.env}
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  uploads:
