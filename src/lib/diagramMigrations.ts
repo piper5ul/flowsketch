@@ -17,13 +17,18 @@
  * would be misread without one. `DiagramData.defaults` (the board's "save as
  * default style") is the same case: absent means "no board defaults" and the
  * built-in ones apply, which is what every diagram written before it already
- * wants. It is *narrowed* rather than migrated — see `sanitizeDefaults`.
+ * wants. It is *narrowed* rather than migrated — see `sanitizeDefaults`. So is
+ * `DiagramData.thumbnailNodeIds` ("set as board thumbnail"), where an absent
+ * field means the dashboard card is the automatic picture of the whole board —
+ * again what every older diagram wants — and `sanitizeThumbnailIds` is the
+ * narrowing.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';
 import { computeMarkers } from './edgeMarkers.js';
 import { DEFAULT_EDGE_STROKE } from './defaults.js';
 import { sanitizeDefaults } from './defaultStyle.js';
+import { sanitizeThumbnailIds } from './boardThumbnail.js';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 3;
@@ -213,6 +218,13 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const defaults = sanitizeDefaults(data.defaults);
   if (defaults) migrated.defaults = defaults;
   else delete migrated.defaults;
+
+  // Narrowed on the way in for the same reason: the ids decide what the
+  // dashboard card draws, and a value that is not a list of them is no
+  // thumbnail at all — which is to say the automatic one.
+  const thumbnailNodeIds = sanitizeThumbnailIds(data.thumbnailNodeIds);
+  if (thumbnailNodeIds) migrated.thumbnailNodeIds = thumbnailNodeIds;
+  else delete migrated.thumbnailNodeIds;
 
   return migrated;
 }

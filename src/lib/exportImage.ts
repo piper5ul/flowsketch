@@ -135,6 +135,14 @@ export interface CaptureOptions {
    */
   selectionOnly?: boolean;
   /**
+   * Draw exactly these nodes (with whatever is inside them) instead, whatever
+   * is selected — what the dashboard thumbnail passes when the board has a
+   * custom one. Ids naming nothing on the board are ignored; a set that names
+   * nothing at all draws nothing, and it is the caller that decides whether
+   * that means the whole board instead (`CanvasPage` does).
+   */
+  nodeIds?: readonly string[];
+  /**
    * Keeps the user's selection on screen during the capture. Clearing it is
    * right for an export the user asked for, but a background capture (the
    * dashboard thumbnail) must not make the selection ring and the floating
@@ -152,20 +160,46 @@ export interface SubsetEdge {
   selected?: boolean;
 }
 
+/** Which nodes an export draws, when it is not drawing all of them. */
+export interface ExportSubsetOptions {
+  /**
+   * The selected nodes rather than the whole board. With nothing selected it is
+   * the whole board, so a caller can pass the user's preference through without
+   * checking.
+   */
+  selectionOnly?: boolean;
+  /**
+   * An explicit set of node ids, whatever is selected — the board's custom
+   * thumbnail. It **overrides** `selectionOnly`, because it is an answer to the
+   * same question and a more specific one. An id naming nothing on the board is
+   * ignored, and a set with nothing left in it draws nothing at all: an
+   * explicit ask for two shapes that are both gone is not an ask for
+   * everything, and the caller is where that fallback belongs.
+   */
+  nodeIds?: Iterable<string>;
+}
+
 /**
- * What an export draws: every node, or — for a selection-only export with
- * something selected — the selected nodes with their subtrees, and only the
- * connectors that join two nodes in that set. `bounds` frames them in board
- * coordinates (a child's stored position is relative to its parent, so this
- * goes through `boardRect`); it is `null` when there is nothing to draw.
+ * What an export draws: every node, or — asked for a subset — the chosen nodes
+ * with their subtrees, and only the connectors that join two nodes in that set.
+ * `bounds` frames them in board coordinates (a child's stored position is
+ * relative to its parent, so this goes through `boardRect`); it is `null` when
+ * there is nothing to draw.
  */
 export function exportSubset<N extends HitNode & { selected?: boolean }, E extends SubsetEdge>(
   nodes: readonly N[],
   edges: readonly E[],
-  selectionOnly: boolean,
+  options: ExportSubsetOptions = {},
 ): { nodes: N[]; edgeIds: Set<string>; bounds: Rect | null } {
-  const selected = selectionOnly ? nodes.filter((n) => n.selected).map((n) => n.id) : [];
-  const keep = selected.length > 0 ? subtreeIds(nodes, selected) : null;
+  const explicit = options.nodeIds ? new Set(options.nodeIds) : null;
+  const roots = explicit
+    ? nodes.filter((n) => explicit.has(n.id)).map((n) => n.id)
+    : options.selectionOnly
+      ? nodes.filter((n) => n.selected).map((n) => n.id)
+      : [];
+  // An explicit set that matched nothing still means "only these" — where a
+  // selection-only export with nothing selected means the whole board.
+  const keep = roots.length > 0 ? subtreeIds(nodes, roots) : explicit ? new Set<string>() : null;
   const subset = keep ? nodes.filter((n) => keep.has(n.id)) : [...nodes];
   const ids = new Set(subset.map((n) => n.id));
   const edgeIds = new Set(edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => e.id));
@@ -213,7 +247,10 @@ type Renderer = (node: HTMLElement, options: HtmlToImageOptions) => Promise<stri
  */
 async function captureDiagram(render: Renderer, options: CaptureOptions): Promise<string | null> {
   const { nodes, edges } = useDiagramStore.getState();
-  const subset = exportSubset(nodes, edges, options.selectionOnly ?? false);
+  const subset = exportSubset(nodes, edges, {
+    selectionOnly: options.selectionOnly ?? false,
+    ...(options.nodeIds ? { nodeIds: options.nodeIds } : {}),
+  });
   if (!subset.bounds) return null;
 
   const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;

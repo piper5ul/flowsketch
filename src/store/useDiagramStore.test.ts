@@ -1275,6 +1275,92 @@ describe('setDefaultStyle', () => {
   });
 });
 
+describe('setThumbnailNodeIds', () => {
+  it('records the ids the dashboard card is drawn from, and clears them again', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 500, y: 0 });
+
+    store().setThumbnailNodeIds([a, b]);
+    expect(store().thumbnailNodeIds).toEqual([a, b]);
+
+    store().setThumbnailNodeIds(null);
+    expect(store().thumbnailNodeIds).toBeNull();
+  });
+
+  it('reads an empty list as no custom thumbnail at all', () => {
+    store().setThumbnailNodeIds([]);
+    expect(store().thumbnailNodeIds).toBeNull();
+  });
+
+  it('is not undoable, in either history — it is filing, not a mark on the board', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    const before = store().canUndo;
+
+    store().setThumbnailNodeIds([a]);
+
+    // No entry of its own: it lives in the document's `meta`, which the
+    // Y.UndoManager does not track, so the snapshot stack keeps the same rule.
+    expect(store().canUndo).toBe(before);
+    store().undo();
+    expect(store().thumbnailNodeIds).toEqual([a]);
+  });
+
+  it('round-trips through the saved JSON', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+
+    const saved = JSON.parse(
+      JSON.stringify(
+        serializeDiagram(store().nodes, store().edges, store().viewport, store().defaults, store().thumbnailNodeIds),
+      ),
+    );
+    expect(saved.thumbnailNodeIds).toEqual([a]);
+
+    store().loadDiagram('test', 'Test', false, saved);
+    expect(store().thumbnailNodeIds).toEqual([a]);
+  });
+
+  it('leaves the JSON of a board with the automatic thumbnail exactly as it was', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    const data = serializeDiagram(
+      store().nodes,
+      store().edges,
+      store().viewport,
+      store().defaults,
+      store().thumbnailNodeIds,
+    );
+    expect('thumbnailNodeIds' in data).toBe(false);
+  });
+
+  it('belongs to the board it was set on', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+    store().loadDiagram('other', 'Other', false, { nodes: [], edges: [] });
+    expect(store().thumbnailNodeIds).toBeNull();
+  });
+
+  it('drops a stored value that is not a list of ids', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [],
+      thumbnailNodeIds: ['a', '', null, 7, 'a'],
+    });
+    expect(store().thumbnailNodeIds).toEqual(['a']);
+  });
+
+  it('keeps an id whose shape has been deleted — the shape can come back', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+    select(a);
+    store().deleteSelection();
+    expect(store().thumbnailNodeIds).toEqual([a]);
+    store().undo();
+    expect(store().nodes.map((n) => n.id)).toEqual([a]);
+  });
+});
+
 describe('updateEdgeData', () => {
   /** An edge with the default styling, plus the id of its source shape. */
   function edgeId() {

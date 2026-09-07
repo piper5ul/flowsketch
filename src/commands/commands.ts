@@ -1,4 +1,5 @@
 import { canAutoLayout } from '../lib/autoLayout';
+import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
 import { isFrameNode, isGroupNode } from '../lib/nodeKinds';
 import { slidesOf } from '../lib/presentation';
@@ -687,6 +688,46 @@ export const commandDeclarations: Command[] = [
   // are per-browser preferences, not part of any diagram. None takes a
   // keystroke — the letters left are worth more to a tool — so they reach the
   // user through the bottom bar, and through here for the sake of one list.
+  // ---- view: the board's thumbnail ---------------------------------------
+  // Whimsical's "Set as board thumbnail": the dashboard card shows these shapes
+  // instead of a picture of the whole board. Both are edits — the ids are saved
+  // with the diagram and shared with everybody on it — so neither is on
+  // `READ_ONLY_COMMAND_IDS`. Neither takes a keystroke: this is a rare decision
+  // about how a board is filed, and the letters left are worth more elsewhere.
+  {
+    id: 'view.setThumbnail',
+    title: 'Set as board thumbnail',
+    group: 'view',
+    contextMenu: 'node',
+    // Something to make a picture of, and something to change: offering it for
+    // a selection that is already exactly the thumbnail would be an action with
+    // no effect.
+    when: (ctx) => {
+      const state = ctx.store.getState();
+      const selected = selectedNodes(state).map((n) => n.id);
+      if (selected.length === 0) return false;
+      return !isSameThumbnail(state.thumbnailNodeIds, selected);
+    },
+    run: (ctx) => {
+      const state = ctx.store.getState();
+      state.setThumbnailNodeIds(selectedNodes(state).map((n) => n.id));
+      toastInfo('Board thumbnail set');
+    },
+  },
+  {
+    id: 'view.clearThumbnail',
+    title: 'Remove from board thumbnail',
+    group: 'view',
+    // On the pane menu as well: undoing this is not something the user should
+    // have to find the right shape to do, least of all when the shape it was
+    // set on has since been deleted.
+    contextMenu: ['node', 'pane'],
+    when: (ctx) => ctx.store.getState().thumbnailNodeIds !== null,
+    run: (ctx) => {
+      ctx.store.getState().setThumbnailNodeIds(null);
+      toastInfo('Board thumbnail cleared');
+    },
+  },
   {
     id: 'view.toggleMinimap',
     title: 'Show minimap',
