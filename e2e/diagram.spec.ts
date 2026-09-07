@@ -2042,3 +2042,30 @@ test('export options: selection only at 1× frames just the selected shape', asy
   expect(part.width).toBeLessThan(300);
   expect(part.height).toBeLessThan(300);
 });
+
+test('Wrap in frame puts a titled frame around the selection', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 700, y: 300 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+a');
+
+  await page.locator('[data-node-type="shape"]').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Wrap in frame' }).click();
+
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  const frame = page.locator('[data-node-type="frame"]');
+  await expect(frame).toHaveCount(1);
+  await expect(frame).toContainText('Frame');
+  const frameId = await page.locator('.react-flow__node:has([data-node-type="frame"])').getAttribute('data-id');
+  for (const shape of await page.locator('[data-node-type="shape"]').all()) {
+    expect(await shape.getAttribute('data-parent-id')).toBe(frameId);
+  }
+});

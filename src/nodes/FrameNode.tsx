@@ -31,6 +31,7 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   // colour, exactly as a shape is. See `[data-peer-selected]` in `index.css`.
   const peerSelection = usePeerSelection(id);
   const titleRef = useRef<HTMLDivElement>(null);
+  const tinted = data.fill !== 'transparent' && data.stroke !== 'transparent';
 
   useEffect(() => {
     if (!editing || !titleRef.current) return;
@@ -57,8 +58,11 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
       onDoubleClick={() => { if (!editing && !data.locked) setEditingNodeId(id); }}
       style={{
         ...peerOutlineStyle(peerSelection),
-        background: 'var(--panel)',
-        border: '1.5px solid var(--line)',
+        // A frame with no colour of its own is the theme's panel and rule; one
+        // the user coloured wears a toned-down version of that colour, the way
+        // Whimsical's sections do, so the contents stay the loudest thing in it.
+        background: tinted ? `color-mix(in srgb, ${data.fill} 28%, var(--panel))` : 'var(--panel)',
+        border: `1.5px solid ${tinted ? `color-mix(in srgb, ${data.stroke} 55%, var(--line))` : 'var(--line)'}`,
         boxShadow: selected ? '0 0 0 1.5px var(--color-accent-500)' : undefined,
       }}
     >

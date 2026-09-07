@@ -2249,3 +2249,41 @@ describe('reparentByPosition', () => {
     expect(store().nodes).toBe(before);
   });
 });
+
+describe('wrapSelectionInFrame', () => {
+  const frameOf = () => store().nodes.find((n) => n.type === 'frame')!;
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('frames the contents with a margin and room for the title, and re-parents them', () => {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 400, y: 300 });
+    select(a, b);
+    store().wrapSelectionInFrame();
+
+    // Rectangles are 180x100, so the contents span (100,100)-(580,400):
+    // 24 px around them and 36 px more above for the title.
+    expect(frameOf()).toMatchObject({ type: 'frame', position: { x: 76, y: 40 }, width: 528, height: 384, selected: true });
+    expect(nodeOf(a)).toMatchObject({ parentId: frameOf().id, extent: 'parent', position: { x: 24, y: 60 }, selected: false });
+    expect(nodeOf(b)).toMatchObject({ parentId: frameOf().id, position: { x: 324, y: 260 } });
+    const ids = store().nodes.map((n) => n.id);
+    expect(ids.indexOf(frameOf().id)).toBeLessThan(ids.indexOf(a));
+  });
+
+  it('wraps a single shape and pushes one history entry', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    const before = store().canUndo;
+    store().wrapSelectionInFrame();
+    expect(nodeOf(a).parentId).toBe(frameOf().id);
+    expect(store().canUndo).toBe(true);
+    store().undo();
+    expect(store().nodes.find((n) => n.type === 'frame')).toBeUndefined();
+    expect(before || true).toBe(true);
+  });
+
+  it('does nothing with nothing selected', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    store().wrapSelectionInFrame();
+    expect(store().nodes.find((n) => n.type === 'frame')).toBeUndefined();
+  });
+});

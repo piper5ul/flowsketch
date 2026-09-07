@@ -279,6 +279,13 @@ describe('the align and distribute shortcuts', () => {
     expect(registry.matchEvent(key('f'), withSelection(0))?.id).toBe('tool.frame');
   });
 
+  it('offers Wrap in frame on the node menu for any selection', () => {
+    const cmd = commands.find((c) => c.id === 'arrange.wrapInFrame')!;
+    expect(cmd.contextMenu).toBe('node');
+    expect(cmd.when?.(withSelection(1))).toBe(true);
+    expect(cmd.when?.(withSelection(0))).toBe(false);
+  });
+
   it('opens the link editor with K for exactly one selected shape', () => {
     expect(registry.matchEvent(key('k'), withSelection(1))?.id).toBe('edit.link');
     expect(registry.matchEvent(key('k'), withSelection(0))).toBeUndefined();

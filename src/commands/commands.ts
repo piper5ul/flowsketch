@@ -380,6 +380,14 @@ export const commandDeclarations: Command[] = [
     run: (ctx) => ctx.store.getState().groupSelected(),
   },
   {
+    id: 'arrange.wrapInFrame',
+    title: 'Wrap in frame',
+    group: 'arrange',
+    contextMenu: 'node',
+    when: hasSelectedNode,
+    run: (ctx) => ctx.store.getState().wrapSelectionInFrame(),
+  },
+  {
     id: 'arrange.ungroup',
     title: 'Ungroup',
     group: 'arrange',
