@@ -23,6 +23,12 @@ import type {
 } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
+
+const SIDE_IDS: readonly string[] = ['top', 'right', 'bottom', 'left'];
+/** A React Flow handle id that names one of a shape's four sides. */
+function isSideId(id: string | null | undefined): id is Direction {
+  return typeof id === 'string' && SIDE_IDS.includes(id);
+}
 import { computeMarkers } from '../lib/edgeMarkers';
 import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode } from '../lib/nodeKinds';
 import {
@@ -1078,7 +1084,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   onConnect: (connection) => {
     pushHistory(get());
     set((s) => {
-      const data = makeEdgeData(s.defaultConnector);
+      // A connection dragged between two side handles is pinned to those
+      // sides, the way a connector drawn by hand is pinned to where it was
+      // pressed and released; one that landed on a body handle keeps the
+      // automatic side for that end.
+      const data: ConnectorData = {
+        ...makeEdgeData(s.defaultConnector),
+        ...(isSideId(connection.sourceHandle) ? { sourceAnchor: { side: connection.sourceHandle, t: 0.5 } } : {}),
+        ...(isSideId(connection.targetHandle) ? { targetAnchor: { side: connection.targetHandle, t: 0.5 } } : {}),
+      };
       return {
         edges: rfAddEdge(
           {
@@ -1383,7 +1397,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const sx = source.position.x;
     const sy = source.position.y;
 
-    const layout: Record<Direction, { position: { x: number; y: number }; sourceHandle: string; targetHandle: string }> = {
+    const layout: Record<Direction, { position: { x: number; y: number }; sourceHandle: Direction; targetHandle: Direction }> = {
       right: {
         position: { x: sx + width + gap, y: sy + height / 2 - newHeight / 2 },
         sourceHandle: 'right',
@@ -1417,7 +1431,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       selected: true,
       data: { label: '', shape: source.data.shape, fill: source.data.fill, stroke: source.data.stroke },
     };
-    const edgeData = makeEdgeData(state.defaultConnector);
+    // Pinned to the two facing sides: a quick-added shape that is later moved
+    // keeps leaving from, and arriving at, the sides it was added across.
+    const edgeData: ConnectorData = {
+      ...makeEdgeData(state.defaultConnector),
+      sourceAnchor: { side: sourceHandle, t: 0.5 },
+      targetAnchor: { side: targetHandle, t: 0.5 },
+    };
     const edge: ConnectorEdge = {
       id: nanoid(8),
       source: sourceId,
