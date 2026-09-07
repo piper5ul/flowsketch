@@ -197,7 +197,14 @@ export function resolveDefaultStyle(
   session: BoardDefaults | undefined,
   kind: DefaultStyleKind,
 ): Partial<ShapeData> | Partial<ConnectorData> {
-  return { ...board?.[kind], ...session?.[kind] };
+  // The cast is the union collapsing again, and it is only a *type* claim about
+  // a key neither whitelist admits: `ShapeData.sequence` and
+  // `ConnectorData.sequence` are two different shapes under one name, so
+  // spreading a value that could be either widens that key to their union.
+  // Nothing here can carry one — `SHAPE_STYLE_KEYS` and `CONNECTOR_STYLE_KEYS`
+  // are the whole of what a saved default holds, and `sanitizeDefaults` is what
+  // makes that true of an untrusted one too.
+  return { ...board?.[kind], ...session?.[kind] } as Partial<ShapeData> | Partial<ConnectorData>;
 }
 
 /**

@@ -87,13 +87,24 @@ async function pasteAsStickies(ctx: CommandContext) {
   }
 }
 
-/** "Paste Mermaid as flowchart": the clipboard's source, parsed and laid out. */
+/**
+ * "Paste Mermaid": the clipboard's source, parsed and laid out.
+ *
+ * **Two kinds behind one menu item**, which is why the title no longer names
+ * the flowchart: a `sequenceDiagram` becomes participants, lifelines and
+ * messages (`pasteSequence`, exact and synchronous) and a `graph` / `flowchart`
+ * becomes shapes and connectors run through the layout engine (`pasteMermaid`).
+ * The sequence parser is asked first because its header is the cheaper of the
+ * two to refuse, and neither can accept the other's source.
+ */
 async function pasteMermaid(ctx: CommandContext) {
   const origin = ctx.dropPoint();
   const text = await clipboardText();
   if (text === null) return;
-  const pasted = await ctx.store.getState().pasteMermaid(text, origin);
-  if (pasted === null) toastError("That isn't a Mermaid flowchart");
+  const store = ctx.store.getState();
+  if (store.pasteSequence(text, origin) !== null) return;
+  const pasted = await store.pasteMermaid(text, origin);
+  if (pasted === null) toastError("That isn't a Mermaid flowchart or sequence diagram");
 }
 
 /** "Paste as table": a Markdown pipe table, a TSV or a CSV, as one table node. */
@@ -526,7 +537,9 @@ export const commandDeclarations: Command[] = [
   },
   {
     id: 'clipboard.pasteMermaid',
-    title: 'Paste Mermaid as flowchart',
+    // Not "as flowchart" any more: the one item reads a `sequenceDiagram` too,
+    // and the title is the only tooltip a menu entry has.
+    title: 'Paste Mermaid (flowchart or sequence)',
     group: 'clipboard',
     contextMenu: 'pane',
     run: (ctx) => { void pasteMermaid(ctx); },

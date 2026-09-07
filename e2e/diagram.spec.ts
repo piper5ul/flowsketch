@@ -2339,7 +2339,7 @@ test('"Paste as sticky notes" turns a pasted list into one note per line', async
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
 });
 
-test('"Paste Mermaid as flowchart" builds the chart and lays it out', async ({ page, context }) => {
+test('"Paste Mermaid" builds a flowchart and lays it out', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await signUp(page);
   await openEmptyBoard(page, 'Paste Mermaid');
@@ -2347,7 +2347,7 @@ test('"Paste Mermaid as flowchart" builds the chart and lays it out', async ({ p
   await writeClipboard(page, 'flowchart TD\n  A[Start] --> B{Choose}\n  B -->|yes| C[Ship]');
 
   await page.locator('.react-flow__pane').click({ button: 'right', position: { x: 300, y: 200 } });
-  await page.getByRole('menuitem', { name: 'Paste Mermaid as flowchart' }).click();
+  await page.getByRole('menuitem', { name: 'Paste Mermaid (flowchart or sequence)' }).click();
 
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
