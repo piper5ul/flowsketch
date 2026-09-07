@@ -2582,3 +2582,138 @@ describe('wrapSelectionInFrame', () => {
     expect(store().nodes.find((n) => n.type === 'frame')).toBeUndefined();
   });
 });
+
+describe('layoutSelected', () => {
+  /** A rectangle at an explicit position and size. */
+  function rect(x: number, y: number, w = 180, h = 100) {
+    const id = store().addShape('rectangle', { x, y });
+    store().setNodeSizeTransient(id, { width: w, height: h });
+    return id;
+  }
+
+  /** A connector pinned right → left, so a vertical layout has to re-pin it. */
+  function connect(source: string, target: string) {
+    store().onConnect({ source, target, sourceHandle: 'right', targetHandle: 'left' });
+    return store().edges[store().edges.length - 1].id;
+  }
+
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+  const posOf = (id: string) => nodeOf(id).position;
+  const dataOf = (id: string) => store().edges.find((e) => e.id === id)!.data!;
+  const centreX = (id: string) => posOf(id).x + nodeOf(id).width! / 2;
+
+  /** A scrambled three-shape chain: a → b → c. */
+  function chain() {
+    const a = rect(900, 40, 180, 70);
+    const b = rect(100, 500, 120, 90);
+    const c = rect(700, 300, 200, 60);
+    const ab = connect(a, b);
+    const bc = connect(b, c);
+    select(a, b, c);
+    return { a, b, c, ab, bc };
+  }
+
+  it('stacks a connected chain into a column, in flow order', async () => {
+    const { a, b, c } = chain();
+    await store().layoutSelected('vertical');
+
+    expect(posOf(a).y).toBeLessThan(posOf(b).y);
+    expect(posOf(b).y).toBeLessThan(posOf(c).y);
+    // A chain comes out centred on one line, whatever the boxes' widths.
+    expect(Math.abs(centreX(a) - centreX(b))).toBeLessThan(2);
+    expect(Math.abs(centreX(b) - centreX(c))).toBeLessThan(2);
+  });
+
+  it('lays the same chain out left to right', async () => {
+    const { a, b, c } = chain();
+    await store().layoutSelected('horizontal');
+
+    expect(posOf(a).x).toBeLessThan(posOf(b).x);
+    expect(posOf(b).x).toBeLessThan(posOf(c).x);
+  });
+
+  it('starts the flow where the selection already was', async () => {
+    const { a, b, c } = chain();
+    // The selection spans x 100…1080 and y 40…590 before the command.
+    await store().layoutSelected('vertical');
+
+    expect(Math.min(...[a, b, c].map((id) => posOf(id).x))).toBe(100);
+    expect(Math.min(...[a, b, c].map((id) => posOf(id).y))).toBe(40);
+  });
+
+  it('re-pins the connectors between members to the facing sides and clears their bends', async () => {
+    const { ab, bc } = chain();
+    store().insertEdgeWaypoint(ab, 0, { x: 10, y: 10 });
+
+    await store().layoutSelected('vertical');
+
+    for (const id of [ab, bc]) {
+      expect(dataOf(id).sourceAnchor).toEqual({ side: 'bottom', t: 0.5 });
+      expect(dataOf(id).targetAnchor).toEqual({ side: 'top', t: 0.5 });
+      expect(dataOf(id).waypoints).toEqual([]);
+    }
+  });
+
+  it('leaves a connector reaching outside the selection alone', async () => {
+    const { a, b, c } = chain();
+    const outsider = rect(2000, 2000);
+    const out = connect(b, outsider);
+    select(a, b, c);
+
+    await store().layoutSelected('vertical');
+
+    expect(dataOf(out).sourceAnchor).toEqual({ side: 'right', t: 0.5 });
+    expect(dataOf(out).targetAnchor).toEqual({ side: 'left', t: 0.5 });
+    expect(posOf(outsider)).toEqual({ x: 2000, y: 2000 });
+  });
+
+  it('records exactly one history entry for the whole layout', async () => {
+    const { a, b, c } = chain();
+    const before = [a, b, c].map((id) => ({ ...posOf(id) }));
+    await store().layoutSelected('vertical');
+
+    store().undo();
+    expect([a, b, c].map((id) => ({ ...posOf(id) }))).toEqual(before);
+  });
+
+  it('does nothing at all without a connector between two selected shapes', async () => {
+    const a = rect(0, 0);
+    const b = rect(300, 300);
+    select(a, b);
+    await store().layoutSelected('vertical');
+
+    expect(posOf(a)).toEqual({ x: 0, y: 0 });
+    expect(posOf(b)).toEqual({ x: 300, y: 300 });
+    // Only the two addShape entries exist, so two undos empty the canvas.
+    store().undo();
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+  });
+
+  it('records no history entry when the same layout is run twice', async () => {
+    chain();
+    await store().layoutSelected('vertical');
+    const after = store().nodes.map((n) => ({ ...n.position }));
+
+    await store().layoutSelected('vertical');
+    expect(store().nodes.map((n) => ({ ...n.position }))).toEqual(after);
+
+    // One undo takes back the *first* layout: the second cost nothing.
+    store().undo();
+    expect(store().nodes.map((n) => ({ ...n.position }))).not.toEqual(after);
+  });
+
+  it('leaves a locked node where it is while laying the rest out around it', async () => {
+    const { a, b, c } = chain();
+    select(b);
+    store().toggleLock();
+    select(a, b, c);
+
+    const lockedAt = { ...posOf(b) };
+    await store().layoutSelected('vertical');
+
+    expect(posOf(b)).toEqual(lockedAt);
+    // The other two still moved, and still read in flow order down the column.
+    expect(posOf(a).y).toBeLessThan(posOf(c).y);
+  });
+});

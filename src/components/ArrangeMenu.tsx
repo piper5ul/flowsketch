@@ -16,10 +16,12 @@ import {
   Lock,
   MoveHorizontal,
   MoveVertical,
+  Network,
   Scaling,
   SendToBack,
   Ungroup,
   Unlock,
+  Workflow,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useDiagramStore } from '../store/useDiagramStore';
@@ -49,6 +51,11 @@ const MATCH_BUTTONS: [MatchDimension, LucideIcon, string][] = [
   ['both', Scaling, 'Match width and height'],
 ];
 
+const LAYOUT_BUTTONS: ['vertical' | 'horizontal', LucideIcon, string][] = [
+  ['vertical', Network, 'Lay out vertically'],
+  ['horizontal', Workflow, 'Lay out horizontally'],
+];
+
 function Row({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1">
@@ -68,17 +75,22 @@ function Row({ title, children }: { title: string; children: React.ReactNode }) 
  * dropped below two selected nodes. Distribute needs a middle node to move, so
  * its two buttons are disabled — rather than hidden — below three; the row
  * jumping in and out as the selection grows would be worse than a greyed-out
- * button.
+ * button. Auto-layout is the same: it needs a connector between two selected
+ * shapes to have a flow to lay out, and says so by greying out rather than
+ * vanishing.
  */
 export function ArrangeMenu({
   selectedCount,
   canGroup,
+  canLayout,
   hasGroup,
   locked,
 }: {
   selectedCount: number;
   /** Whether the selection is one `groupSelected` would actually make a group of. */
   canGroup: boolean;
+  /** Whether the selection is a connected graph auto-layout could rearrange. */
+  canLayout: boolean;
   /** Whether the selection holds a group to break apart. */
   hasGroup: boolean;
   /** Whether the shape the button would unlock is already locked. */
@@ -88,6 +100,7 @@ export function ArrangeMenu({
   const alignSelected = useDiagramStore((s) => s.alignSelected);
   const distributeSelected = useDiagramStore((s) => s.distributeSelected);
   const matchSizeSelected = useDiagramStore((s) => s.matchSizeSelected);
+  const layoutSelected = useDiagramStore((s) => s.layoutSelected);
   const bringToFront = useDiagramStore((s) => s.bringToFront);
   const sendToBack = useDiagramStore((s) => s.sendToBack);
   const bringForward = useDiagramStore((s) => s.bringForward);
@@ -192,6 +205,22 @@ export function ArrangeMenu({
                 {MATCH_BUTTONS.map(([dim, Icon, label]) => (
                   <Tooltip key={dim} label={label} side="bottom">
                     <button onClick={() => matchSizeSelected(dim)} className={BUTTON_CLASS}>
+                      <Icon size={16} />
+                    </button>
+                  </Tooltip>
+                ))}
+              </Row>
+              <Row title="Lay out">
+                {LAYOUT_BUTTONS.map(([direction, Icon, label]) => (
+                  <Tooltip key={direction} label={label} side="bottom">
+                    <button
+                      aria-label={label}
+                      // The layout engine is code-split, so this resolves a
+                      // moment later; there is nothing to wait for on this side.
+                      onClick={() => void layoutSelected(direction)}
+                      disabled={!canLayout}
+                      className={BUTTON_CLASS}
+                    >
                       <Icon size={16} />
                     </button>
                   </Tooltip>

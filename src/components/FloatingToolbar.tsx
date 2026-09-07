@@ -19,6 +19,7 @@ import clsx from 'clsx';
 import { canGroupSelection, useDiagramStore } from '../store/useDiagramStore';
 import { toastInfo } from '../store/useToastStore';
 import { formatShortcut, registry } from '../commands/commands';
+import { canAutoLayout } from '../lib/autoLayout';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
@@ -622,6 +623,7 @@ export function FloatingToolbar() {
     [selectedNodes],
   );
   const canGroup = useMemo(() => canGroupSelection(nodes), [nodes]);
+  const canLayout = useMemo(() => canAutoLayout(nodes, edges), [nodes, edges]);
   const hasGroup = useMemo(() => selectedNodes.some(isGroupNode), [selectedNodes]);
   // The shapes `setSelectedShapeKind` would actually redraw, so the button is
   // offered exactly when pressing it would do something.
@@ -841,6 +843,7 @@ export function FloatingToolbar() {
             <ArrangeMenu
               selectedCount={selectedNodes.length}
               canGroup={canGroup}
+              canLayout={canLayout}
               hasGroup={hasGroup}
               locked={locked}
             />
