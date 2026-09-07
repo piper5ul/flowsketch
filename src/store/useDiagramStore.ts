@@ -926,13 +926,14 @@ export interface DiagramState {
    * Returns which kind was saved, or `null` when the selection is not exactly
    * one thing with a style to copy (a group, a frame and an image have none).
    *
-   * **It pushes no history entry, on purpose and in both undo models.** For a
-   * bound diagram the defaults live in the document's `meta` map, which is
-   * deliberately outside the `Y.UndoManager`'s scope — so ⌘Z could not take
-   * this back there however it was recorded, and pushing a boundary for it
-   * would only split the *previous* edit in two. The snapshot stacks are held
-   * to the same rule so the two histories agree: setting a default is a
-   * preference about what comes next, not a mark on the diagram.
+   * **It pushes a history entry like any other edit.** The board's defaults
+   * live in the document's `meta` map, and that map is inside the
+   * `Y.UndoManager`'s scope — only the viewport is kept out of it, by origin
+   * rather than by key (see `src/lib/collab/binding.ts`) — so ⌘Z takes a saved
+   * default back on a bound diagram, and the snapshot stacks carry `defaults`
+   * so it does the same on one with no document behind it. `lastStyle` is not
+   * restored with it: that is this tab's habit rather than the board's state,
+   * and it is in neither history.
    */
   saveSelectionAsDefault: () => DefaultStyleKind | null;
   /**
@@ -940,14 +941,9 @@ export interface DiagramState {
    * dashboard card is rendered from, or `null` for the automatic picture of the
    * whole board.
    *
-   * **It pushes no history entry, on purpose and in both undo models** — the
-   * same rule, and the same reason, as `saveSelectionAsDefault`: for a bound
-   * diagram this lives in the document's `meta` map, which is deliberately
-   * outside the `Y.UndoManager`'s scope, so ⌘Z could not take it back there
-   * however it were recorded and a boundary would only split the *previous*
-   * edit in two. The snapshot stacks are held to the same rule so the two
-   * histories agree. Choosing what the card shows is a decision about how the
-   * board is filed, not a mark on the drawing.
+   * **Pushes a history entry**, for the reason `saveSelectionAsDefault` does:
+   * it lives in the document's `meta` map, which ⌘Z reaches. Nothing is pushed
+   * when the ids do not actually move.
    *
    * Ids that name nothing on the board are kept rather than pruned: a shape can
    * come back (an undo, a restore, a collaborator's own undo), and the renderer
@@ -957,44 +953,37 @@ export interface DiagramState {
 
   // ---- dot voting and the board timer --------------------------------------
   //
-  // **Two of these push no history and three of them do, and the line between
-  // them is which side of the undo manager's scope the state lives on.** The
-  // round and the countdown are board meta (`voting`, `timer`), which rides in
-  // the document's `meta` map outside the `Y.UndoManager` — so they follow
-  // `saveSelectionAsDefault` and `setThumbnailNodeIds` and push nothing. The
-  // dots are **node data**, which is squarely inside that scope: an action that
-  // changes them without opening a boundary would be silently folded into
-  // whatever edit came before it, and one ⌘Z would take back two things. So
-  // every action below that touches `votes` pushes, and a vote is its own undo
-  // step — which is also what a misclick wants.
+  // **All of these push history**, and there is no longer a line down the
+  // middle of them. The round and the countdown are board meta (`voting`,
+  // `timer`), which rides in the document's `meta` map — inside the
+  // `Y.UndoManager`'s scope, like `defaults` and the thumbnail beside them —
+  // and the dots are node data, which always was. An action here that changed
+  // either without opening a boundary would be silently folded into whatever
+  // edit came before it, and one ⌘Z would take back two things.
 
   /**
    * Open a round of dot voting: everybody gets `dotsPerPerson` dots to spend
    * across the whole board, and the totals stay hidden until it is closed.
    *
-   * Pushes no history entry — see the note above. Existing dots are **not**
-   * cleared: that is `clearVotes`, which is an edit to the board and is
-   * undoable, and the panel runs it first when a new round is started over an
-   * old one. Does nothing when nobody is signed in to attribute the round to.
+   * Pushes a history entry. Existing dots are **not** cleared: that is
+   * `clearVotes`, and the panel runs it first when a new round is started over
+   * an old one. Does nothing when nobody is signed in to attribute the round to.
    */
   startVoting: (dotsPerPerson: number) => void;
   /**
    * Close the round and show the totals — Whimsical's "end voting".
    *
    * One act rather than two: revealing without closing would let somebody keep
-   * placing dots while everybody else reads the answers. No history entry.
+   * placing dots while everybody else reads the answers. Pushes a history
+   * entry, and none at all for a round that is already closed and revealed.
    */
   endVoting: () => void;
   /**
    * Take every dot off the board and end any round with them.
    *
-   * **Pushes a history entry**: the dots are node data, and throwing away
-   * everybody's votes is exactly the kind of thing ⌘Z is for. The round itself
-   * goes too — it is in `meta` and rides out with the same `set` — so an undo
-   * brings the dots back but not the round they were cast in. That asymmetry is
-   * the honest consequence of two pieces of state on opposite sides of the undo
-   * manager's scope, and is better than pretending either half is undoable
-   * along with the other.
+   * **One history entry for both halves**: the dots are node data and the round
+   * is `meta`, and both are inside the undo manager's scope, so a ⌘Z brings the
+   * dots back and the round they were cast in with them.
    */
   clearVotes: () => void;
   /**
@@ -1024,11 +1013,14 @@ export interface DiagramState {
    * Start the board's shared countdown, `seconds` from now.
    *
    * Stored as the instant it ends, so every window computes its own remaining
-   * time and nothing ticks through the document. No history entry — it is
+   * time and nothing ticks through the document. Pushes a history entry — it is
    * `meta`, like the round. Does nothing without somebody to attribute it to.
    */
   startTimer: (seconds: number, label?: string) => void;
-  /** Take the countdown off the board. Anybody may; no history entry. */
+  /**
+   * Take the countdown off the board. Anybody who can edit may, whoever started
+   * it. Pushes a history entry, and none when there is no timer to take down.
+   */
   stopTimer: () => void;
 
   /** The `data` a new shape of `kind` starts with, board defaults applied. */
@@ -1129,7 +1121,24 @@ export interface DiagramState {
 // The stacks stay module-level so they never reach the serialized diagram; the
 // `canUndo` / `canRedo` booleans in the store are the UI's view of them — of
 // these stacks, or of the document's, whichever is in force.
-type Snapshot = { nodes: ShapeNode[]; edges: ConnectorEdge[] };
+//
+// **The snapshot is the board's `meta` as well as its elements.** The document's
+// `meta` map is inside the `Y.UndoManager`'s scope (everything in it but the
+// camera, which is written under an origin undo does not track — see
+// `binding.ts`), so ⌘Z takes back a saved default style, a board thumbnail, a
+// round of voting and a timer there. These stacks have to say the same thing or
+// the same keystroke would mean two different things depending on whether a
+// socket happened to be open. The camera is left out here for the same reason it
+// is left out there. So is `lastStyle`: it is this tab's habit rather than the
+// board's state, is never serialized and is not in the document either.
+type Snapshot = {
+  nodes: ShapeNode[];
+  edges: ConnectorEdge[];
+  defaults: BoardDefaults;
+  thumbnailNodeIds: string[] | null;
+  voting: VotingSession | null;
+  timer: BoardTimer | null;
+};
 let past: Snapshot[] = [];
 let future: Snapshot[] = [];
 let suppressHistory = false;
@@ -1139,7 +1148,24 @@ const NUDGE_COALESCE_MS = 500;
 let lastNudgeAt = 0;
 
 function snapshotOf(state: DiagramState): Snapshot {
-  return { nodes: state.nodes, edges: state.edges };
+  return {
+    nodes: state.nodes,
+    edges: state.edges,
+    defaults: state.defaults,
+    thumbnailNodeIds: state.thumbnailNodeIds,
+    voting: state.voting,
+    timer: state.timer,
+  };
+}
+
+/**
+ * Whether two thumbnail lists say the same thing — order included, since it is
+ * the order the card draws them in. Both `null` counts as the same.
+ */
+function sameIdList(a: readonly string[] | null, b: readonly string[] | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return a.length === b.length && a.every((id, i) => id === b[i]);
 }
 
 function historyFlags() {
@@ -2477,7 +2503,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     // The one history entry for the whole insert, holding the diagram as it
     // was *before* the placeholder appeared — which is where ⌘Z should land.
-    pushSnapshot({ nodes: state.nodes.filter((n) => n.id !== id), edges: state.edges });
+    pushSnapshot({ ...snapshotOf(state), nodes: state.nodes.filter((n) => n.id !== id) });
 
     set((s) => ({
       nodes: s.nodes.map((n) =>
@@ -2792,13 +2818,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     // total and are called from tests and from a toolbar as well as a keystroke.
     if (nodes.length + edges.length !== 1) return null;
 
-    // No `pushHistory`: for a bound diagram the defaults live in the document's
-    // `meta`, which is outside the undo manager's scope, so a boundary here
-    // would only split the previous edit in two. The snapshot stacks follow the
-    // same rule so both histories say the same thing.
+    // `pushHistory` like any other edit: the document's `meta` map is inside the
+    // undo manager's scope, so saving a default style is something ⌘Z takes
+    // back — on a bound diagram and on one with no document behind it alike.
+    // It is pushed *after* the checks below, so a keystroke that turns out to
+    // have nothing to save costs no undo entry.
     if (edges.length === 1) {
       const style = pickConnectorStyle(edges[0].data ?? {});
       if (Object.keys(style).length === 0) return null;
+      pushHistory(state);
       set((s) => ({
         defaults: withDefault(s.defaults, 'connector', style) ?? {},
         // The board has just been told what a connector looks like; this tab's
@@ -2814,6 +2842,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     if (!kind || kind === 'connector') return null;
     const style = pickShapeStyle(node.data);
     if (Object.keys(style).length === 0) return null;
+    pushHistory(state);
     set((s) => ({
       defaults: withDefault(s.defaults, kind, style) ?? {},
       lastStyle: withDefault(s.lastStyle, kind, undefined) ?? {},
@@ -2821,29 +2850,35 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     return kind;
   },
 
-  // No `pushHistory`, for the reason `saveSelectionAsDefault` has none: this
-  // lives in the document's `meta`, outside the undo manager's scope, and the
-  // snapshot stacks are held to the same rule so both histories agree.
+  // `pushHistory` for the reason `saveSelectionAsDefault` has one: the board's
+  // thumbnail lives in the document's `meta` map beside the defaults, and that
+  // map is inside the undo manager's scope. Skipped when the ids do not move,
+  // so re-running the command on the same shapes costs no ⌘Z.
   //
   // Narrowed even though the caller is our own command: the ids end up in a
   // free-form JSON column and in a document other browsers read, and one place
   // that decides what a thumbnail list is beats two.
-  setThumbnailNodeIds: (ids) => set({ thumbnailNodeIds: sanitizeThumbnailIds(ids) }),
+  setThumbnailNodeIds: (ids) => {
+    const state = get();
+    const next = sanitizeThumbnailIds(ids);
+    if (sameIdList(state.thumbnailNodeIds, next)) return;
+    pushHistory(state);
+    set({ thumbnailNodeIds: next });
+  },
 
   // ---- dot voting and the board timer --------------------------------------
   //
-  // See the note on the interface above for why two of these push history and
-  // three do not: the round and the countdown are `meta` and outside the undo
-  // manager's scope, the dots are node data and inside it.
+  // All of these push history: the round and the countdown live in the
+  // document's `meta` map, which is inside the undo manager's scope, and the
+  // dots are node data, which always was.
 
-  // No `pushHistory`: the round lives in the document's `meta` map, beside the
-  // defaults and the thumbnail, so ⌘Z could not take it back there however it
-  // were recorded — and a boundary would only split the previous edit in two.
   startVoting: (dotsPerPerson) => {
-    const { viewerId } = get();
+    const state = get();
+    const { viewerId } = state;
     // No name to attribute the round to. The public share page loads without
     // one, and the button that runs this is never rendered there.
     if (!viewerId) return;
+    pushHistory(state);
     set({
       voting: {
         active: true,
@@ -2861,18 +2896,25 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   // Closing and revealing are one act: revealing without closing would let
   // somebody go on placing dots while everybody else reads the answers.
-  endVoting: () =>
-    set((s) => (s.voting ? { voting: { ...s.voting, active: false, revealed: true } } : {})),
+  endVoting: () => {
+    const state = get();
+    const { voting } = state;
+    // No round, or one already closed and revealed: nothing happens, so nothing
+    // is recorded either.
+    if (!voting || (!voting.active && voting.revealed)) return;
+    pushHistory(state);
+    set({ voting: { ...voting, active: false, revealed: true } });
+  },
 
   clearVotes: () => {
     const state = get();
     const hasVotes = state.nodes.some((n) => n.data.votes !== undefined);
     // Nothing to clear and no round to end: not worth a ⌘Z.
     if (!hasVotes && !state.voting) return;
-    // **Pushes**, unlike the two above: the dots are node data and squarely
-    // inside the undo manager's scope, so without a boundary this would be
-    // folded into whatever edit came before it.
-    if (hasVotes) pushHistory(state);
+    // One entry for both halves — the dots are node data and the round is
+    // `meta`, and both are inside the undo manager's scope now, so ⌘Z brings
+    // the dots back *and* the round they were cast in.
+    pushHistory(state);
     set({
       nodes: hasVotes
         ? state.nodes.map((n) => {
@@ -2881,8 +2923,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
             return { ...n, data: data as ShapeData };
           })
         : state.nodes,
-      // The round goes with the dots. It is in `meta` and so is not undoable —
-      // see the note on the interface.
+      // The round goes with the dots, and comes back with them.
       voting: null,
     });
   },
@@ -2938,14 +2979,17 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     commitArrangedPositions(voteRowPositions(rects));
   },
 
-  // `meta` again, so no history entry: see the note above. Stored as the
+  // `meta` again, so a history entry like the rest of it. Stored as the
   // *instant* it runs out, which is what keeps a ticking number out of the
-  // shared document — see `src/lib/timer.ts`.
+  // shared document — see `src/lib/timer.ts`. The clock is read once, when the
+  // timer starts; a ⌘Z that put it back would put back that same instant.
   startTimer: (seconds, label) => {
-    const { viewerId } = get();
+    const state = get();
+    const { viewerId } = state;
     if (!viewerId) return;
     const whole = Math.floor(seconds);
     if (!Number.isFinite(whole) || whole < 1) return;
+    pushHistory(state);
     set({
       timer: {
         endsAt: new Date(Date.now() + Math.min(whole, MAX_TIMER_SECONDS) * 1000).toISOString(),
@@ -2955,7 +2999,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     });
   },
 
-  stopTimer: () => set({ timer: null }),
+  stopTimer: () => {
+    const state = get();
+    // No countdown to take down, so no edit and no ⌘Z.
+    if (!state.timer) return;
+    pushHistory(state);
+    set({ timer: null });
+  },
 
   newShapeData: (kind) => shapeDataWithDefaults(kind, get().defaults, get().lastStyle),
 
@@ -3574,7 +3624,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     future = [snapshotOf(state), ...future];
     suppressHistory = true;
     lastNudgeAt = 0;
-    set({ nodes: previous.nodes, edges: previous.edges, ...historyFlags() });
+    set({ ...previous, ...historyFlags() });
     suppressHistory = false;
   },
 
@@ -3590,7 +3640,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     past = [...past, snapshotOf(state)];
     suppressHistory = true;
     lastNudgeAt = 0;
-    set({ nodes: next.nodes, edges: next.edges, ...historyFlags() });
+    set({ ...next, ...historyFlags() });
     suppressHistory = false;
   },
 }));

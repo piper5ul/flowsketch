@@ -20,6 +20,7 @@ import { usePresentStore } from '../store/usePresentStore';
 import { api } from '../lib/api';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import { rewriteSharedDiagram } from '../lib/sharedView';
+import { SHARED_POLL_MS, liveBoardPatch, liveBoardStateOf } from '../lib/sharedPoll';
 import { useDiagramStore } from '../store/useDiagramStore';
 
 type LoadState = 'loading' | 'ready' | 'gone' | 'unreadable';
@@ -64,6 +65,8 @@ export function SharedPage() {
     };
   }, [token]);
 
+  useLiveBoardPoll(token, state === 'ready');
+
   if (state === 'loading') {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-canvas">
@@ -104,6 +107,66 @@ export function SharedPage() {
 }
 
 /**
+ * Keep the board's timer and its round of voting up to date while this page is
+ * open — see `src/lib/sharedPoll.ts` for why those two and nothing else.
+ *
+ * Stops while the tab is hidden and catches up the moment it comes back: a
+ * background tab that went on polling would be requests nobody is reading, and
+ * a reader returning to the tab wants the current countdown rather than the one
+ * from thirty seconds' time. A failed poll is not reported — the next one is
+ * along shortly, and a shared board that flashed an error every half minute
+ * because a laptop's wifi dropped would be worse than a stale timer.
+ */
+function useLiveBoardPoll(token: string | undefined, ready: boolean) {
+  useEffect(() => {
+    if (!token || !ready) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const poll = async () => {
+      try {
+        const shared = await api.getSharedDiagram(token);
+        if (cancelled) return;
+        const { voting, timer: shown } = useDiagramStore.getState();
+        const patch = liveBoardPatch({ voting, timer: shown }, liveBoardStateOf(shared.data));
+        // `setState` rather than an action, for the reason the document binding
+        // uses one: this is the board's own state arriving from elsewhere, not
+        // an edit anybody made here, so it takes no history entry and is not
+        // gated on the page's read-only-ness.
+        if (patch) useDiagramStore.setState(patch);
+      } catch {
+        // Offline, rate-limited, or the link has just been revoked. The board
+        // on screen is still the board; the next poll will say.
+      }
+    };
+
+    const start = () => {
+      if (timer === null) timer = setInterval(() => void poll(), SHARED_POLL_MS);
+    };
+    const stop = () => {
+      if (timer !== null) clearInterval(timer);
+      timer = null;
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stop();
+        return;
+      }
+      void poll();
+      start();
+    };
+
+    if (document.visibilityState !== 'hidden') start();
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      cancelled = true;
+      stop();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [token, ready]);
+}
+
+/**
  * This page's own slim top bar, and the one thing on it that is not a label:
  * Present. Presenting a shared board is looking at it — the same reason the
  * command is on `READ_ONLY_COMMAND_IDS` — and the button renders nothing at all
@@ -126,13 +189,12 @@ function SharedHeader({ title }: { title: string }) {
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-3">
-        {/* The board's countdown, if one was running when this page loaded.
-            Read-only like everything else here, and it renders nothing when
-            there is no timer. This page opens no socket, so what it shows is
-            the timer as the snapshot held it — an end time, so it still counts
-            down correctly from here; a timer started *after* the page loaded
-            reaches it on the next reload, which is the same deal every other
-            part of a shared board gets. */}
+        {/* The board's countdown. Read-only like everything else here, and it
+            renders nothing when there is no timer. This page opens no socket,
+            so what it shows is the timer as the snapshot held it — an end time,
+            so it still counts down correctly from here — and `useLiveBoardPoll`
+            re-reads that field (and the round of voting beside it) every 30 s,
+            so a timer started after the page loaded turns up on its own. */}
         <TimerButton />
         <PresentButton />
         <Link

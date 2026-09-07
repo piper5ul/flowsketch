@@ -29,15 +29,25 @@ interface ViewPreferences {
   theme: ThemePreference;
   /** What that currently means — `theme` with the OS's answer folded in. */
   resolvedTheme: ResolvedTheme;
+  /**
+   * Whether the board timer chimes when it reaches zero.
+   *
+   * Per browser and not per board, like everything else here: whether a sound
+   * is welcome is a fact about the room somebody is sitting in, not about the
+   * diagram — one person in a meeting wants it and the person beside them with
+   * headphones on does not.
+   */
+  timerSound: boolean;
   toggleMinimap: () => void;
   toggleGridSnap: () => void;
+  toggleTimerSound: () => void;
   /** Advances the theme one step: system → light → dark → system. */
   cycleTheme: () => void;
   /** Sets the theme outright. Used by tests and by anything that knows the answer. */
   setTheme: (preference: ThemePreference) => void;
 }
 
-type Toggle = 'minimap' | 'gridSnap';
+type Toggle = 'minimap' | 'gridSnap' | 'timerSound';
 
 function toggle(key: Toggle) {
   return () =>
@@ -55,8 +65,12 @@ export const useViewPreferences = create<ViewPreferences>((set, get) => ({
   gridSnap: getPreference('gridSnap', false),
   theme: initialTheme,
   resolvedTheme: resolveTheme(initialTheme, systemPrefersDark()),
+  // On by default: a countdown nobody hears end is a countdown somebody has to
+  // watch, which is the whole thing the timer is there to avoid.
+  timerSound: getPreference('timerSound', true),
   toggleMinimap: toggle('minimap'),
   toggleGridSnap: toggle('gridSnap'),
+  toggleTimerSound: toggle('timerSound'),
   setTheme: (preference) => {
     writeThemePreference(preference);
     applyTheme(preference);

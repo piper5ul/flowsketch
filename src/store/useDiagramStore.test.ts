@@ -1325,22 +1325,30 @@ describe('saveSelectionAsDefault', () => {
     expect(store().defaults).toEqual({});
   });
 
-  it('is not undoable, in either history', () => {
+  it('is undoable, in either history', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     store().updateNodeData(a, { fill: '#FF0000' });
     select(a);
-    const before = store().canUndo;
 
     store().saveSelectionAsDefault();
-
-    // No entry of its own: the defaults live in the document's `meta`, which
-    // the Y.UndoManager does not track, so the snapshot stack keeps the same
-    // rule and the two histories say the same thing.
-    expect(store().canUndo).toBe(before);
-    store().undo();
     expect(store().defaults.shape).toMatchObject({ fill: '#FF0000' });
-    // What the undo took back is the colour — the edit before it.
-    expect(store().nodes.find((n) => n.id === a)!.data.fill).not.toBe('#FF0000');
+
+    // An entry of its own: the defaults live in the document's `meta`, which is
+    // inside the Y.UndoManager's scope, so the snapshot stack carries them too
+    // and the two histories say the same thing.
+    expect(store().canUndo).toBe(true);
+    store().undo();
+    expect(store().defaults.shape).toBeUndefined();
+    // And only the default went back — the colour is the edit before it.
+    expect(store().nodes.find((n) => n.id === a)!.data.fill).toBe('#FF0000');
+  });
+
+  it('costs no undo entry when there is nothing to save', () => {
+    const frame = store().addFrame({ x: 0, y: 0 });
+    select(frame);
+    const before = store().canUndo;
+    expect(store().saveSelectionAsDefault()).toBeNull();
+    expect(store().canUndo).toBe(before);
   });
 
   it('round-trips through the saved JSON', () => {
@@ -1445,18 +1453,28 @@ describe('setThumbnailNodeIds', () => {
     expect(store().thumbnailNodeIds).toBeNull();
   });
 
-  it('is not undoable, in either history — it is filing, not a mark on the board', () => {
+  it('is undoable, in either history — it lives in the document’s meta', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     select(a);
-    const before = store().canUndo;
 
     store().setThumbnailNodeIds([a]);
+    expect(store().canUndo).toBe(true);
 
-    // No entry of its own: it lives in the document's `meta`, which the
-    // Y.UndoManager does not track, so the snapshot stack keeps the same rule.
+    store().undo();
+    expect(store().thumbnailNodeIds).toBeNull();
+    // Only the thumbnail went back: the shape is still on the board.
+    expect(store().nodes).toHaveLength(1);
+  });
+
+  it('costs no undo entry when the ids do not move', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+    const before = store().canUndo;
+    store().setThumbnailNodeIds([a]);
     expect(store().canUndo).toBe(before);
     store().undo();
-    expect(store().thumbnailNodeIds).toEqual([a]);
+    // One entry, not two: the second call wrote nothing.
+    expect(store().thumbnailNodeIds).toBeNull();
   });
 
   it('round-trips through the saved JSON', () => {
@@ -3963,11 +3981,11 @@ describe('dot voting', () => {
     expect('votes' in nodeOf(b).data).toBe(false);
     expect(store().voting).toBeNull();
 
-    // The dots come back; the round does not, because it was never in the undo
-    // manager's scope. That asymmetry is documented at the action.
+    // The dots come back and so does the round they were cast in: both halves
+    // are inside the undo manager's scope, and one `pushHistory` covers them.
     store().undo();
     expect(nodeOf(a).data.votes).toEqual({ ada: 1 });
-    expect(store().voting).toBeNull();
+    expect(store().voting).toMatchObject({ active: true, dotsPerPerson: 3 });
   });
 
   it('costs nothing to clear a board with no votes and no round', () => {
@@ -3975,6 +3993,31 @@ describe('dot voting', () => {
     const before = store().canUndo;
     store().clearVotes();
     expect(store().canUndo).toBe(before);
+  });
+
+  it('makes opening and closing a round undoable, like the rest of `meta`', () => {
+    expect(store().canUndo).toBe(false);
+    store().startVoting(3);
+    expect(store().canUndo).toBe(true);
+
+    store().endVoting();
+    expect(store().voting).toMatchObject({ active: false, revealed: true });
+
+    store().undo();
+    expect(store().voting).toMatchObject({ active: true, revealed: false });
+    store().undo();
+    expect(store().voting).toBeNull();
+  });
+
+  it('costs no undo entry for closing a round that is already closed', () => {
+    store().startVoting(3);
+    store().endVoting();
+    const before = store().canUndo;
+    store().endVoting();
+    expect(store().canUndo).toBe(before);
+    store().undo();
+    // One entry for the close, not two.
+    expect(store().voting).toMatchObject({ active: true, revealed: false });
   });
 
   it('counts each voter separately', () => {
@@ -4106,13 +4149,32 @@ describe('the board timer', () => {
     expect(store().timer?.label).toBe('Silent writing');
   });
 
-  it('pushes no history entry — it is `meta`, like the round', () => {
+  it('is undoable at both ends — it is `meta`, and `meta` is in scope now', () => {
+    expect(store().canUndo).toBe(false);
+    store().startTimer(60);
+    expect(store().canUndo).toBe(true);
+    const started = store().timer;
+
+    store().stopTimer();
+    expect(store().timer).toBeNull();
+
+    // Taking the stop back puts the same countdown up again — an end time, so
+    // it is the instant it always was rather than sixty fresh seconds.
+    store().undo();
+    expect(store().timer).toEqual(started);
+    // And taking the start back leaves the board with no timer at all.
+    store().undo();
+    expect(store().timer).toBeNull();
+  });
+
+  it('costs no undo entry for a stop with no timer to stop', () => {
     store().addShape('sticky', { x: 0, y: 0 });
     const before = store().canUndo;
-    store().startTimer(60);
     store().stopTimer();
     expect(store().canUndo).toBe(before);
-    expect(store().timer).toBeNull();
+    store().undo();
+    // The one entry on the stack is the shape, not a stop that did nothing.
+    expect(store().nodes).toHaveLength(0);
   });
 
   it('refuses a timer with nobody behind it, or no length', () => {
