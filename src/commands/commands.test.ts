@@ -237,6 +237,97 @@ describe('the "paste as" commands', () => {
   });
 });
 
+describe('the mind-map commands', () => {
+  /** A mind-map node, an ordinary shape, and one branch between two of them. */
+  function ctxOf(
+    options: { selected?: string; editing?: string } = {},
+  ): CommandContext {
+    const node = (id: string, mindMap: boolean) => ({
+      id,
+      type: 'shape',
+      selected: id === options.selected,
+      data: { shape: 'rectangle', ...(mindMap ? { mindMap: { root: 'root' } } : {}) },
+    });
+    return {
+      store: {
+        getState: () => ({
+          readOnly: false,
+          editingNodeId: options.editing ?? null,
+          editingEdgeId: null,
+          nodes: [node('root', true), node('kid', true), node('plain', false)],
+          edges: [{ id: 'e1', source: 'root', target: 'kid', data: { role: 'mindmap' } }],
+        }),
+        setState: () => {},
+      },
+    } as unknown as CommandContext;
+  }
+
+  const ids = [
+    'mindmap.addChild',
+    'mindmap.addSibling',
+    'mindmap.addSiblingAbove',
+    'mindmap.addParent',
+    'mindmap.pasteChildren',
+  ];
+
+  it('carry the keystrokes Whimsical does', () => {
+    expect(registry.find('mindmap.addRoot')!.shortcut).toEqual({ key: 'm' });
+    expect(registry.find('mindmap.addChild')!.shortcut).toEqual({ key: 'Tab' });
+    expect(registry.find('mindmap.addSibling')!.shortcut).toEqual({ key: 'Enter' });
+    expect(registry.find('mindmap.addSiblingAbove')!.shortcut).toEqual({ key: 'Enter', meta: true });
+    expect(registry.find('mindmap.addParent')!.shortcut).toEqual({ key: 'Enter', alt: true });
+    expect(registry.find('mindmap.toggleCollapse')!.shortcut).toEqual({ key: '/', meta: true });
+    // Reading the system clipboard is asynchronous and permissioned, so this
+    // one is a menu item like the other "paste as" commands.
+    expect(registry.find('mindmap.pasteChildren')!.shortcut).toBeUndefined();
+  });
+
+  it('are offered for one selected mind-map node and for nothing else', () => {
+    for (const id of ids) {
+      expect(offered(id, ctxOf({ selected: 'kid' })), id).toBe(true);
+      expect(offered(id, ctxOf({ selected: 'plain' })), id).toBe(false);
+      expect(offered(id, ctxOf()), id).toBe(false);
+    }
+  });
+
+  it('act on the node being typed into, which is where the gesture lives', () => {
+    // Tab is pressed while the label of the node just made is still open.
+    expect(offered('mindmap.addChild', ctxOf({ editing: 'kid' }))).toBe(true);
+    expect(offered('mindmap.addChild', ctxOf({ editing: 'plain' }))).toBe(false);
+  });
+
+  it('offer collapse only where there is a branch to fold', () => {
+    expect(offered('mindmap.toggleCollapse', ctxOf({ selected: 'root' }))).toBe(true);
+    expect(offered('mindmap.toggleCollapse', ctxOf({ selected: 'kid' }))).toBe(false);
+  });
+
+  it('withdraw the root command while a label is open, so M can be typed', () => {
+    expect(offered('mindmap.addRoot', ctxOf())).toBe(true);
+    expect(offered('mindmap.addRoot', ctxOf({ editing: 'kid' }))).toBe(false);
+  });
+
+  it('are all withdrawn in read-only mode', () => {
+    for (const id of [...ids, 'mindmap.addRoot', 'mindmap.toggleCollapse']) {
+      expect(offered(id, ctxWith(true)), id).toBe(false);
+    }
+  });
+
+  describe('sharing Enter and Tab with the editing commands', () => {
+    const enter = { key: 'Enter' };
+
+    it('takes Enter for a mind-map node, and leaves it to `edit.editText` otherwise', () => {
+      expect(registry.matchEvent(enter, ctxOf({ selected: 'kid' }))!.id).toBe('mindmap.addSibling');
+      expect(registry.matchEvent(enter, ctxOf({ selected: 'plain' }))!.id).toBe('edit.editText');
+    });
+
+    it('leaves Tab alone unless a mind-map node is the target', () => {
+      const tab = { key: 'Tab' };
+      expect(registry.matchEvent(tab, ctxOf({ selected: 'kid' }))!.id).toBe('mindmap.addChild');
+      expect(registry.matchEvent(tab, ctxOf({ selected: 'plain' }))).toBeUndefined();
+    });
+  });
+});
+
 describe('the comment command', () => {
   const command = registry.find('comment.add')!;
 

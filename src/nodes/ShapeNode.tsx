@@ -14,6 +14,7 @@ import {
   shapePaint,
 } from '../lib/shapeStyle';
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
+import { childCount, foldedCount } from '../lib/mindMap';
 import { useShiftKey } from '../lib/useShiftKey';
 
 /** Text shapes never shrink below the height they are created at. */
@@ -52,6 +53,16 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
+  const mindMapToggleCollapse = useDiagramStore((s) => s.mindMapToggleCollapse);
+  // A mind-map node's own chrome: the fold button, and the number it shows when
+  // a branch is folded away. Both selectors return a *number*, never an object —
+  // a fresh object per call would re-render every node on every store update.
+  // They are also the reason the counts are cheap to ask for: a board with no
+  // mind map on it never gets past `data.mindMap`.
+  const branchCount = useDiagramStore((s) => (data.mindMap ? childCount(s.edges, id) : 0));
+  const folded = useDiagramStore((s) =>
+    data.mindMap?.collapsed ? foldedCount(s.nodes, s.edges, id) : 0,
+  );
   // `undefined` unless a search is running and this shape is one of its hits;
   // `'active'` on the one the find bar is currently pointing at. Read as a
   // string so a shape the search never matched does not re-render as it is
@@ -109,7 +120,11 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
 
   const commit = useCallback(() => {
     if (consumeSuppressBlur()) return;
-    setEditingNodeId(null);
+    // Ending the editing is only this node's to do while it is still the node
+    // being edited. A mind-map keystroke moves the editor on to the node it has
+    // just made *before* this one loses focus, and closing it then would cancel
+    // the label the user is already typing into. The text is written either way.
+    if (useDiagramStore.getState().editingNodeId === id) setEditingNodeId(null);
     updateNodeData(id, { label: ref.current?.innerText ?? '' });
     syncTextHeight();
   }, [id, updateNodeData, setEditingNodeId, syncTextHeight]);
@@ -268,6 +283,9 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
       data-parent-id={parentId}
       data-search-hit={searchHit}
       data-peer-selected={peerSelection?.name}
+      // Whether this shape is part of a mind map, and whether its branch is
+      // folded — read by the tests, and by nothing else.
+      data-mind-map={data.mindMap ? (data.mindMap.collapsed ? 'collapsed' : 'open') : undefined}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       style={wrapperStyle}
       onDoubleClick={() => { if (!editing && !isLocked) setEditingNodeId(id); }}
@@ -440,7 +458,29 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
           />
         ))}
 
+      {/* The fold button, on the side the branch grows out of. A mind-map node
+          keeps its own count rather than a chevron: what the user needs to know
+          about a folded branch is how much of it is out of sight. */}
+      {data.mindMap && branchCount > 0 && !editing && (
+        <button
+          type="button"
+          className="nodrag nopan absolute -right-3 top-1/2 z-10 flex h-5 min-w-5 -translate-y-1/2 items-center justify-center rounded-full border border-line bg-panel px-1 text-[10px] font-semibold leading-none text-ink-700 shadow-sm transition hover:bg-hover-soft"
+          aria-label={data.mindMap.collapsed ? 'Expand branch' : 'Collapse branch'}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            mindMapToggleCollapse(id);
+          }}
+        >
+          {data.mindMap.collapsed ? folded : '–'}
+        </button>
+      )}
+
+      {/* Withheld from a mind-map node: quick-add would grow an ordinary shape
+          on an ordinary connector out of the side the map's own branches leave
+          from, and Tab is how a map grows. */}
       {!isText &&
+        !data.mindMap &&
         !editing &&
         QUICK_ADD.map(({ direction, style }) => (
           <button
