@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from '@xyflow/react';
 import {
   anchorToPoint,
@@ -15,6 +15,7 @@ import {
   type Point,
 } from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
+import { absolutePosition } from '../lib/nodeTree';
 import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
@@ -30,10 +31,17 @@ const DASH_ARRAYS: Record<string, string | undefined> = {
   dotted: '1.5 7',
 };
 
-function rectOfNode(n: ShapeNode): Rect {
+/**
+ * A node's box in board coordinates. A child of a group or frame stores its
+ * position relative to that parent, so the edge geometry must resolve it
+ * through the parent chain — otherwise every connector inside a frame is
+ * drawn offset by the frame's origin.
+ */
+function rectOfNode(n: ShapeNode, byId: ReadonlyMap<string, ShapeNode>): Rect {
+  const { x, y } = absolutePosition(n, byId);
   return {
-    x: n.position.x,
-    y: n.position.y,
+    x,
+    y,
     width: n.width ?? n.measured?.width ?? 0,
     height: n.height ?? n.measured?.height ?? 0,
   };
@@ -145,6 +153,7 @@ function historyOnce(): () => void {
 
 export function ConnectorEdge({ id, source, target, data, selected, markerStart, markerEnd }: EdgeProps<ConnectorEdgeType>) {
   const nodes = useDiagramStore((s) => s.nodes);
+  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n] as const)), [nodes]);
   const updateEdgeData = useDiagramStore((s) => s.updateEdgeData);
   const updateEdgeDataTransient = useDiagramStore((s) => s.updateEdgeDataTransient);
   const moveNodesTransient = useDiagramStore((s) => s.moveNodesTransient);
@@ -246,13 +255,13 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
         let best = candidates[0];
         let bestDist = Infinity;
         for (const n of candidates) {
-          const d = distanceToRect(flow.x, flow.y, rectOfNode(n));
+          const d = distanceToRect(flow.x, flow.y, rectOfNode(n, byId));
           if (d < bestDist) {
             bestDist = d;
             best = n;
           }
         }
-        const anchor = nearestAnchorOnRect(flow.x, flow.y, rectOfNode(best));
+        const anchor = nearestAnchorOnRect(flow.x, flow.y, rectOfNode(best, byId));
         reconnectEdgeEndpoint(id, end, best.id, anchor);
       };
       const onUp = () => {
@@ -336,11 +345,11 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   const isFloatingArrow = isAnchorNode(sourceNode.data) && isAnchorNode(targetNode.data);
 
-  const floating = floatingEdgeSides(rectOfNode(sourceNode), rectOfNode(targetNode));
+  const floating = floatingEdgeSides(rectOfNode(sourceNode, byId), rectOfNode(targetNode, byId));
   const sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };
   const targetAnchor: EdgeAnchor = data?.targetAnchor ?? { side: floating.targetPos, t: 0.5 };
-  const { x: sx, y: sy } = anchorToPoint(sourceAnchor, rectOfNode(sourceNode));
-  const { x: tx, y: ty } = anchorToPoint(targetAnchor, rectOfNode(targetNode));
+  const { x: sx, y: sy } = anchorToPoint(sourceAnchor, rectOfNode(sourceNode, byId));
+  const { x: tx, y: ty } = anchorToPoint(targetAnchor, rectOfNode(targetNode, byId));
 
   const stroke = data?.stroke ?? DEFAULT_EDGE_STROKE;
   const strokeStyle = data?.strokeStyle ?? 'solid';
@@ -366,9 +375,9 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           sourceY: sy,
           targetX: tx,
           targetY: ty,
-          sourceRect: rectOfNode(sourceNode),
-          targetRect: rectOfNode(targetNode),
-          obstacles: nodes.filter((n) => n.id !== source && n.id !== target).map(rectOfNode),
+          sourceRect: rectOfNode(sourceNode, byId),
+          targetRect: rectOfNode(targetNode, byId),
+          obstacles: nodes.filter((n) => n.id !== source && n.id !== target).map((n) => rectOfNode(n, byId)),
           vertices: waypoints,
           startDirections: [sourceAnchor.side],
           endDirections: [targetAnchor.side],
