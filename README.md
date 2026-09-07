@@ -2,10 +2,7 @@
 
 A full-featured, collaborative diagramming app inspired by Whimsical, built with React Flow, Zustand, Yjs and Tailwind CSS. Draw flowcharts and diagrams with a clean interface, share them with a link or invite teammates, and edit together in real time.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
-  <img alt="FlowSketch — a customer-onboarding flowchart inside a frame, with a sticky note, a database and an email service joined by labelled connectors; the floating toolbar is open on a selected shape and the collaboration status reads Live" src="docs/screenshot.png">
-</picture>
+![FlowSketch — a customer-onboarding flowchart inside a frame, with a sticky note, a database and an email service joined by labelled connectors; the floating toolbar is open on a selected shape and the collaboration status reads Live](docs/screenshot.png)
 
 ## Features
 
