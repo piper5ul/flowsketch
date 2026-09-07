@@ -16,7 +16,7 @@ describe('computeMarkers', () => {
     const { markerEnd } = computeMarkers({ ...base, strokeWidth: 3 });
     expect(markerEnd).toContain('arrow');
     expect(markerEnd).toContain('ABCDEF');
-    expect(markerEnd).toContain('14');
+    expect(markerEnd).toContain('17');
   });
 
   it('leaves an end with no arrowhead unreferenced', () => {
@@ -39,7 +39,7 @@ describe('computeMarkers', () => {
   });
 
   it('scales the arrowhead with the line it sits on', () => {
-    for (const [width, size] of [[1, 8], [2, 10], [3, 14]] as const) {
+    for (const [width, size] of [[1, 10], [2, 13], [3, 17]] as const) {
       expect(computeMarkers({ ...base, strokeWidth: width }).markerEnd).toContain(`-${size}`);
     }
   });
@@ -63,7 +63,7 @@ describe('markerDefsForEdges', () => {
   it('describes every marker the given connectors reference', () => {
     const defs = markerDefsForEdges([edge({ endArrowStyle: 'circle', startArrowStyle: 'none' })]);
     expect(defs).toEqual([
-      { id: computeMarkers({ ...base, endArrowStyle: 'circle' }).markerEnd, style: 'circle', color: '#ABCDEF', size: 10 },
+      { id: computeMarkers({ ...base, endArrowStyle: 'circle' }).markerEnd, style: 'circle', color: '#ABCDEF', size: 13 },
     ]);
   });
 
@@ -101,7 +101,10 @@ describe('CONNECTOR_STROKE_PX', () => {
     expect(CONNECTOR_STROKE_PX[2]).toBeLessThan(CONNECTOR_STROKE_PX[3]);
   });
 
-  it('leaves a connector that never picked a width drawn exactly as before', () => {
-    expect(CONNECTOR_STROKE_PX[DEFAULT_STROKE_WIDTH]).toBe(2.5);
+  it('draws a connector that never picked a width as a regular one', () => {
+    // The regular width is the look of every connector saved before widths
+    // existed, so changing this number restyles old diagrams — which is what
+    // the Whimsical-look pass deliberately did, once. Change it knowingly.
+    expect(CONNECTOR_STROKE_PX[DEFAULT_STROKE_WIDTH]).toBe(4);
   });
 });

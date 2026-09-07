@@ -65,8 +65,13 @@ const POSITION: Record<Direction, Position> = {
   left: Position.Left,
 };
 
-/** Radius of an elbow's rounded corners. */
-const BORDER_RADIUS = 10;
+/**
+ * Radius of an elbow's rounded corners — measured off Whimsical's 4px
+ * connector at 100%, where the centreline turns on roughly a 12px circle. It
+ * is still clamped to half of the shorter neighbouring run, so a short jog
+ * never folds over itself.
+ */
+const BORDER_RADIUS = 12;
 
 /** How many segments a curve is flattened into for label interpolation. */
 const CURVE_SAMPLES = 24;

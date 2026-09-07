@@ -13,7 +13,7 @@ import {
   nodeEntries,
   VIEWPORT_KEY,
 } from '../../shared/collabDoc.js';
-import { CURRENT_DIAGRAM_VERSION } from '../../src/lib/diagramMigrations.js';
+import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagramMigrations.js';
 import { docToDiagramData, seedDocFromDiagramData } from './render.js';
 
 function node(id: string, x = 0, y = 0) {
@@ -37,14 +37,18 @@ function edge(id: string, source: string, target: string) {
   };
 }
 
-/** A diagram at the current version, so a round trip has to return it unchanged. */
+/**
+ * A diagram at the current version, so a round trip has to return it
+ * unchanged. It is run through the migration once here because a load always
+ * normalises marker ids, and "unchanged" means unchanged by the *document*.
+ */
 function diagram(overrides: Partial<DiagramData> = {}): DiagramData {
-  return {
+  return migrateDiagramData({
     version: CURRENT_DIAGRAM_VERSION,
     nodes: [node('a', 10, 20), node('b', 300, 40)] as unknown as DiagramData['nodes'],
     edges: [edge('e1', 'a', 'b')] as unknown as DiagramData['edges'],
     ...overrides,
-  };
+  });
 }
 
 describe('docToDiagramData', () => {

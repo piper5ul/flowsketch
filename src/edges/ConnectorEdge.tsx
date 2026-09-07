@@ -5,6 +5,7 @@ import {
   distanceToRect,
   floatingEdgeSides,
   nearestAnchorOnRect,
+  standoff,
   type EdgeAnchor,
   type Rect,
 } from '../lib/edgeGeometry';
@@ -16,7 +17,7 @@ import {
 } from '../lib/connectorPath';
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { absolutePosition } from '../lib/nodeTree';
-import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
+import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
@@ -348,8 +349,18 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const floating = floatingEdgeSides(rectOfNode(sourceNode, byId), rectOfNode(targetNode, byId));
   const sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };
   const targetAnchor: EdgeAnchor = data?.targetAnchor ?? { side: floating.targetPos, t: 0.5 };
-  const { x: sx, y: sy } = anchorToPoint(sourceAnchor, rectOfNode(sourceNode, byId));
-  const { x: tx, y: ty } = anchorToPoint(targetAnchor, rectOfNode(targetNode, byId));
+  // The line stops a few px clear of each shape (see `CONNECTOR_STANDOFF_PX`);
+  // a floating arrow's ends are anchors with no shape to stand clear of.
+  const { x: sx, y: sy } = standoff(
+    anchorToPoint(sourceAnchor, rectOfNode(sourceNode, byId)),
+    sourceAnchor.side,
+    isAnchorNode(sourceNode.data) ? 0 : CONNECTOR_STANDOFF_PX,
+  );
+  const { x: tx, y: ty } = standoff(
+    anchorToPoint(targetAnchor, rectOfNode(targetNode, byId)),
+    targetAnchor.side,
+    isAnchorNode(targetNode.data) ? 0 : CONNECTOR_STANDOFF_PX,
+  );
 
   const stroke = data?.stroke ?? DEFAULT_EDGE_STROKE;
   const strokeStyle = data?.strokeStyle ?? 'solid';

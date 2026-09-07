@@ -81,6 +81,32 @@ function v0ToV1(raw: Bag): Bag {
 }
 
 /**
+ * `edge` wearing the marker ids this build's `<marker>` defs answer to.
+ *
+ * A marker id is derived state — style, colour and size folded into a name —
+ * and the size steps have changed between builds, so an id saved by an older
+ * one points at a def that is no longer rendered and the arrowhead silently
+ * vanishes. Recomputing from the styles on every load is what keeps a stored
+ * id from ever being load-bearing; it also covers an edge that arrived through
+ * the API with no ids at all.
+ */
+function withCurrentMarkers(edge: Bag): Bag {
+  const data = isRecord(edge.data) ? edge.data : {};
+  const { markerStart, markerEnd } = computeMarkers({
+    stroke: isNonEmptyString(data.stroke) ? data.stroke : DEFAULT_EDGE_STROKE,
+    startArrowStyle: data.startArrowStyle as ArrowStyle | undefined,
+    endArrowStyle: data.endArrowStyle as ArrowStyle | undefined,
+    strokeWidth: data.strokeWidth as StrokeWidth | undefined,
+  });
+  const out: Bag = { ...edge };
+  if (markerStart) out.markerStart = markerStart;
+  else delete out.markerStart;
+  if (markerEnd) out.markerEnd = markerEnd;
+  else delete out.markerEnd;
+  return out;
+}
+
+/**
  * v1 -> v2: the two arrowhead booleans become the five-way styles.
  *
  * `endArrow: true` was the plain filled arrowhead and `false` was a bare end,
@@ -98,20 +124,7 @@ function v1ToV2(raw: Bag): Bag {
       // An end arrow is the app default, so only an explicit `false` removes it.
       endArrowStyle: endArrow === false ? 'none' : 'arrow',
     };
-
-    const { markerStart, markerEnd } = computeMarkers({
-      stroke: isNonEmptyString(data.stroke) ? data.stroke : DEFAULT_EDGE_STROKE,
-      startArrowStyle: data.startArrowStyle as ArrowStyle,
-      endArrowStyle: data.endArrowStyle as ArrowStyle,
-      strokeWidth: data.strokeWidth as StrokeWidth | undefined,
-    });
-
-    const migrated: Bag = { ...edge, data };
-    if (markerStart) migrated.markerStart = markerStart;
-    else delete migrated.markerStart;
-    if (markerEnd) migrated.markerEnd = markerEnd;
-    else delete migrated.markerEnd;
-    return migrated;
+    return withCurrentMarkers({ ...edge, data });
   });
 
   return { ...raw, version: 2, edges };
@@ -176,7 +189,8 @@ export function migrateDiagramData(raw: unknown): DiagramData {
     ...data,
     version: CURRENT_DIAGRAM_VERSION,
     nodes: recordsOf(data.nodes) as unknown as SerializedNode[],
-    edges: recordsOf(data.edges) as unknown as SerializedEdge[],
+    // Whatever version it came in at: see `withCurrentMarkers`.
+    edges: recordsOf(data.edges).map(withCurrentMarkers) as unknown as SerializedEdge[],
   };
 
   const viewport = viewportOf(data.viewport);
