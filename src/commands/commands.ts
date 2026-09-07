@@ -1,11 +1,13 @@
 import { canAutoLayout } from '../lib/autoLayout';
 import { renderDiagramPng } from '../lib/exportImage';
-import { isGroupNode } from '../lib/nodeKinds';
+import { isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import { slidesOf } from '../lib/presentation';
 import { subtreeIds } from '../lib/nodeTree';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
 import { toastError, toastInfo } from '../store/useToastStore';
 import { useSearchStore } from '../store/useSearchStore';
+import { usePresentStore } from '../store/usePresentStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import { nextFontSize } from '../lib/text';
@@ -613,6 +615,45 @@ export const commandDeclarations: Command[] = [
     shortcut: { key: 'f', meta: true },
     run: () => useSearchStore.getState().openSearch(),
   },
+  // ---- presenting --------------------------------------------------------
+  // One slide per frame (`src/lib/presentation.ts`). Both commands are on
+  // `READ_ONLY_COMMAND_IDS`: presenting is looking, so a viewer's board and the
+  // public `/s/:token` page can both be presented. Neither writes anything —
+  // the running order is the one thing here that does, and that is the store's
+  // `setSlideOrder`, reached from the Present button rather than from a
+  // keystroke.
+  {
+    id: 'view.present',
+    title: 'Present',
+    group: 'view',
+    // ⌘⇧P is free (P alone is the parallelogram tool, and no other binding
+    // uses it with modifiers).
+    shortcut: { key: 'p', meta: true, shift: true },
+    // A board with no sections has no deck, and an empty presentation is not
+    // worth offering. `some` rather than `slidesOf`, because this runs on every
+    // render of the ⌘K menu and the answer is the same.
+    when: (ctx) => ctx.store.getState().nodes.some((n) => isFrameNode(n)),
+    run: () => usePresentStore.getState().start(),
+  },
+  {
+    id: 'view.presentFromFrame',
+    title: 'Present from this frame',
+    group: 'view',
+    // No keystroke: it is about the frame under the pointer, which is what the
+    // right-click menu says and a keystroke cannot.
+    contextMenu: 'node',
+    when: (ctx) => {
+      const selected = selectedNodes(ctx.store.getState());
+      return selected.length === 1 && isFrameNode(selected[0]);
+    },
+    run: (ctx) => {
+      const [node] = selectedNodes(ctx.store.getState());
+      if (!node) return;
+      const index = slidesOf(ctx.store.getState().nodes).findIndex((slide) => slide.id === node.id);
+      if (index >= 0) usePresentStore.getState().start(index);
+    },
+  },
+
   {
     id: 'view.commandMenu',
     title: 'Command menu',
@@ -695,6 +736,10 @@ const READ_ONLY_COMMAND_IDS = new Set<string>([
   'view.fitView',
   'view.fitSelection',
   'view.find',
+  // Presenting is looking: a viewer's board and the public share page both
+  // have a deck, and neither command writes anything.
+  'view.present',
+  'view.presentFromFrame',
   'view.pan',
   'view.shortcuts',
   'view.toggleMinimap',

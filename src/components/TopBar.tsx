@@ -7,6 +7,7 @@ import { HistoryPanel } from './HistoryPanel';
 import { CommentsPanel } from './CommentsPanel';
 import { ShareDialog } from './ShareDialog';
 import { PresenceStrip } from './PresenceStrip';
+import { PresentButton } from './PresentButton';
 import { openThreadCount } from '../lib/comments';
 import { connectionDisplay } from '../lib/collab/connectionStatus';
 import { useCollabStore } from '../store/useCollabStore';
@@ -95,6 +96,11 @@ export function TopBar() {
             collaborators lives and they are allowed to read it. A viewer gets
             nothing: they have no say in who else is here. */}
         {(role === 'owner' || role === 'editor') && <ShareButton />}
+        {/* Next to Export because it answers the same question — how does this
+            board leave the screen — and, like Export, it is offered to every
+            role: presenting is looking. It renders nothing at all on a board
+            with no frames, which is the deck. */}
+        <PresentButton />
         <ExportMenu />
       </div>
     </div>

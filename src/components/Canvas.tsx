@@ -31,6 +31,7 @@ import { edgeTypes } from '../edges/edgeTypes';
 import { ConnectorMarkerDefs } from '../edges/ConnectorMarkerDefs';
 import { useCollabStore } from '../store/useCollabStore';
 import { useCommentStore, type CommentAnchor } from '../store/useCommentStore';
+import { usePresentStore } from '../store/usePresentStore';
 import { CommentPins } from './CommentPins';
 import { PresenceCursors } from './PresenceCursors';
 import { LeftRail } from './LeftRail';
@@ -44,6 +45,7 @@ import { SearchBar } from './SearchBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { CommandMenu } from './CommandMenu';
 import { MeasureOverlay } from './MeasureOverlay';
+import { PresentMode } from './PresentMode';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import type { Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 
@@ -97,6 +99,11 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // what the top bar's presence stands for: the public `/s/:token` page mounts
   // this same canvas with nobody behind it.
   const canComment = topBar;
+  // A presentation is not a canvas: while this is true every piece of chrome is
+  // withdrawn, the board is locked against every gesture, and `PresentMode`
+  // owns the keyboard. It is a viewer's feature — read-only boards and the
+  // public share page present too — so nothing here is gated on `readOnly`.
+  const presenting = usePresentStore((s) => s.active);
 
   /** True while a tool that places something is held, rather than Select or Pan. */
   const isDrawingTool = tool === 'connector' || tool === 'frame' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
@@ -183,12 +190,25 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       skipMoveReport.current = false;
       return;
     }
+    // Every slide is a `fitView`, and the viewport is saved with the diagram:
+    // reporting those would leave the board reopening on whichever slide the
+    // presenter stopped at — for everybody, since the viewport rides in the
+    // shared document. Presenting moves the window, not the diagram. The
+    // restore on exit runs after `active` is already false, and puts back
+    // exactly the viewport the presentation started from.
+    if (usePresentStore.getState().active) return;
     useDiagramStore.getState().setViewport(viewport);
   }, []);
 
   useEffect(() => {
     if (tool !== 'connector') connectorSourceRef.current = null;
   }, [tool]);
+
+  // A presentation belongs to the board that is open. `usePresentStore` is a
+  // module-level store like every other, so a canvas torn down mid-slide (a
+  // lost session, a trip back to the dashboard) would otherwise leave the next
+  // diagram opening straight into somebody else's deck.
+  useEffect(() => () => usePresentStore.getState().stop(), []);
 
   /** The middle of what is on screen, in board coordinates. */
   const viewCentre = useCallback(() => {
@@ -730,6 +750,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       if (isTypingTarget(e.target)) return;
       // The sheet is modal: it takes Escape itself and swallows the rest.
       if (shortcutsOpen) return;
+      // So is a presentation: `PresentMode` has already taken the arrows,
+      // Space and Escape on the capture phase, and nothing else on the board
+      // is reachable while a slide is up.
+      if (presenting) return;
       const command = registry.matchEvent(e, commandContext);
       if (!command) return;
       e.preventDefault();
@@ -748,7 +772,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [commandContext, shortcutsOpen]);
+  }, [commandContext, shortcutsOpen, presenting]);
 
   return (
     <div
@@ -787,9 +811,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         // session there to put a name against a remark. `ContextMenu` renders
         // nothing when every item has been gated away, so this never opens an
         // empty panel. The edge menu is unchanged — it is all edits.
-        onNodeContextMenu={canComment || !readOnly ? onNodeContextMenu : undefined}
-        onEdgeContextMenu={readOnly ? undefined : onEdgeContextMenu}
-        onPaneContextMenu={canComment || !readOnly ? onPaneContextMenu : undefined}
+        onNodeContextMenu={!presenting && (canComment || !readOnly) ? onNodeContextMenu : undefined}
+        onEdgeContextMenu={presenting || readOnly ? undefined : onEdgeContextMenu}
+        onPaneContextMenu={!presenting && (canComment || !readOnly) ? onPaneContextMenu : undefined}
         // Grid snapping is opt-in and orthogonal to the shape-to-shape
         // alignment guides, which keep working either way: the grid rounds the
         // drag, the guides still line the shape up with its neighbours.
@@ -800,20 +824,25 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}
         // The right button opens the context menu, so panning is the middle
         // button plus the hand tool and hold-to-pan.
-        panOnDrag={tool === 'pan' ? true : [1]}
-        selectionOnDrag={!readOnly && tool === 'select'}
+        panOnDrag={presenting ? false : tool === 'pan' ? true : [1]}
+        selectionOnDrag={!presenting && !readOnly && tool === 'select'}
         // React Flow's own three gates. Dragging and connecting are edits; and
         // with nothing selectable there is no selection for the floating
         // toolbar to act on, which is the belt to the braces of not rendering it.
         // Nothing is draggable while a drawing tool is held either: a click on
         // a node is how a shape is placed inside a frame, and a drag would
         // shove the frame around instead of dropping anything into it.
-        nodesDraggable={!readOnly && !isDrawingTool}
-        nodesConnectable={!readOnly}
-        elementsSelectable={!readOnly}
-        panOnScroll
+        // A presentation locks all three as well, whatever the role: a slide is
+        // a picture of the board, and a shape dragged out of its frame mid-talk
+        // would leave the deck.
+        nodesDraggable={!presenting && !readOnly && !isDrawingTool}
+        nodesConnectable={!presenting && !readOnly}
+        elementsSelectable={!presenting && !readOnly}
+        // The whole board is locked while presenting — scroll and pinch
+        // included. A slide is framed by the deck, not by the audience.
+        panOnScroll={!presenting}
         zoomOnScroll={false}
-        zoomOnPinch
+        zoomOnPinch={!presenting}
         zoomOnDoubleClick={false}
         minZoom={0.2}
         maxZoom={2.5}
@@ -834,10 +863,13 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
             the dot's `fill` reads, so a `var()` here resolves at paint time. */}
         <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="var(--canvas-dot)" className="rf-canvas" />
         <ConnectorMarkerDefs />
-        {canComment && <CommentPins />}
-        {canComment && <PresenceCursors />}
-        <AlignmentGuides />
-        {measureFrom && hoveredNodeId && <MeasureOverlay fromId={measureFrom} toId={hoveredNodeId} />}
+        {/* Everything drawn *on* the board that is not the diagram is withdrawn
+            while presenting — pins, cursors and guides are marks of the editing
+            session, and a slide is the drawing. */}
+        {canComment && !presenting && <CommentPins />}
+        {canComment && !presenting && <PresenceCursors />}
+        {!presenting && <AlignmentGuides />}
+        {!presenting && measureFrom && hoveredNodeId && <MeasureOverlay fromId={measureFrom} toId={hoveredNodeId} />}
         {connectDraft && (
           <ViewportPortal>
             <svg
@@ -857,23 +889,27 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
             </svg>
           </ViewportPortal>
         )}
-        {minimap && <CanvasMiniMap />}
+        {minimap && !presenting && <CanvasMiniMap />}
       </ReactFlow>
 
-      {topBar && <TopBar />}
-      {!readOnly && (
+      {/* Every piece of chrome goes while a slide is up: the top bar, the rail,
+          both floating toolbars, the bottom bar and the find bar. What is left
+          on screen is the frame and what is inside it. */}
+      {topBar && !presenting && <TopBar />}
+      {!readOnly && !presenting && (
         <>
           <LeftRail />
           <FloatingToolbar />
           <TextFormatBar />
         </>
       )}
-      <BottomBar onRunCommand={runCommand} />
+      {!presenting && <BottomBar onRunCommand={runCommand} />}
       {/* Rendered whether or not the board can be edited: ⌘F is a way of
           reading a diagram, and the public share page mounts this too. */}
-      <SearchBar belowTopBar={topBar} />
+      {!presenting && <SearchBar belowTopBar={topBar} />}
+      {presenting && <PresentMode />}
 
-      {contextMenu && (
+      {contextMenu && !presenting && (
         <ContextMenu state={contextMenu} ctx={commandContext} onClose={closeContextMenu} />
       )}
       {shortcutsOpen && <ShortcutSheet onClose={closeShortcuts} />}
