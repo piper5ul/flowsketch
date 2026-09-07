@@ -12,8 +12,10 @@ import { Link, useParams } from 'react-router-dom';
 import { ReactFlowProvider } from '@xyflow/react';
 import { Eye } from 'lucide-react';
 import { Canvas } from '../components/Canvas';
+import { PresentButton } from '../components/PresentButton';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
+import { usePresentStore } from '../store/usePresentStore';
 import { api } from '../lib/api';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import { rewriteSharedDiagram } from '../lib/sharedView';
@@ -86,20 +88,7 @@ export function SharedPage() {
     <TooltipProvider>
       <ReactFlowProvider>
         <div className="flex h-screen w-screen flex-col overflow-hidden">
-          <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line bg-panel/90 px-4 py-2.5 backdrop-blur">
-            <div className="flex min-w-0 items-center gap-3">
-              <h1 className="truncate text-[14px] font-semibold text-ink-900">{title}</h1>
-              <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
-                <Eye size={12} /> View only · Shared with you
-              </span>
-            </div>
-            <Link
-              to="/login"
-              className="shrink-0 text-[13px] font-medium text-ink-600 transition hover:text-accent-600"
-            >
-              Made with FlowSketch — Sign in
-            </Link>
-          </header>
+          <SharedHeader title={title} />
           <div className="relative min-h-0 flex-1">
             {/* The same canvas the app uses, without its editing top bar: this
                 page has a header of its own, and the title, star, Share and
@@ -110,6 +99,41 @@ export function SharedPage() {
         <Toasts />
       </ReactFlowProvider>
     </TooltipProvider>
+  );
+}
+
+/**
+ * This page's own slim top bar, and the one thing on it that is not a label:
+ * Present. Presenting a shared board is looking at it — the same reason the
+ * command is on `READ_ONLY_COMMAND_IDS` — and the button renders nothing at all
+ * when the diagram has no frames to make slides of.
+ *
+ * The whole header folds away while a presentation is running, so a slide fills
+ * the window here as it does in the app. `PresentMode` re-fits on the size
+ * change that causes.
+ */
+function SharedHeader({ title }: { title: string }) {
+  const presenting = usePresentStore((s) => s.active);
+  if (presenting) return null;
+
+  return (
+    <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line bg-panel/90 px-4 py-2.5 backdrop-blur">
+      <div className="flex min-w-0 items-center gap-3">
+        <h1 className="truncate text-[14px] font-semibold text-ink-900">{title}</h1>
+        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
+          <Eye size={12} /> View only · Shared with you
+        </span>
+      </div>
+      <div className="flex shrink-0 items-center gap-3">
+        <PresentButton />
+        <Link
+          to="/login"
+          className="text-[13px] font-medium text-ink-600 transition hover:text-accent-600"
+        >
+          Made with FlowSketch — Sign in
+        </Link>
+      </div>
+    </header>
   );
 }
 

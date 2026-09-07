@@ -63,6 +63,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
 - Find shapes and connectors by their labels with `⌘F`: every match is ringed on the board, `Enter` / `⇧Enter` cycle through them, and each one is selected and framed as you reach it. Available on read-only and publicly shared boards too
+- **Present** — every frame is a slide. Press **Present** in the top bar (or `⌘⇧P`, or **Present from this frame** on a frame's right-click menu) and the board fills the window one section at a time: the frame is fitted to the screen, everything outside it is masked out in the frame's own colour, and the chrome gets out of the way. `→` / `Space` / `PageDown` advance, `←` / `PageUp` go back, `Home` / `End` jump to either end, a click anywhere advances and `Esc` puts you back exactly where you were. Slides run top to bottom by default; the caret next to **Present** opens **Arrange slides**, where `↑` / `↓` set the running order (saved with the diagram, one `⌘Z` to undo). Presenting is looking, so a read-only board and a publicly shared link can both be presented
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
 - Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
 - Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
@@ -200,6 +201,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
+| `⌘⇧P` | Present: one slide per frame; `→` / `Space` next, `←` back, `Home` / `End` for either end, `Esc` exits |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
 | `⌘K` | Command menu: every command, searchable, recents first |
 | `?` | Show the keyboard shortcut cheat sheet |
