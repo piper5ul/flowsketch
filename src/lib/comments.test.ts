@@ -6,6 +6,7 @@ import {
   canEditComment,
   canResolveThread,
   openThreadCount,
+  pinPosition,
   threadNumbers,
   visibleThreads,
 } from './comments';
@@ -146,5 +147,31 @@ describe('permissions', () => {
     expect(canEditComment(mine, null)).toBe(false);
     expect(canDeleteComment(mine, opened, 'viewer', null)).toBe(false);
     expect(canDeleteThread(opened, 'viewer', null)).toBe(false);
+  });
+});
+
+describe('pinPosition', () => {
+  const frame = { id: 'frame', position: { x: 60, y: 60 }, width: 900 };
+  const child = { id: 'child', parentId: 'frame', position: { x: 300, y: 70 }, width: 190 };
+  const loose = { id: 'loose', position: { x: 1000, y: 200 }, width: 130 };
+  const nodes = [frame, child, loose];
+
+  it('draws a free-floating thread where it was placed', () => {
+    expect(pinPosition(thread({ nodeId: null, x: 10, y: 20 }), nodes)).toEqual({ x: 10, y: 20 });
+    expect(pinPosition(thread({ nodeId: null, x: null, y: null }), nodes)).toBeNull();
+  });
+
+  it('draws an anchored thread at the top-right corner of its shape', () => {
+    expect(pinPosition(thread({ nodeId: 'loose' }), nodes)).toEqual({ x: 1130, y: 200 });
+  });
+
+  it('folds in the frame offset for a shape inside a frame', () => {
+    expect(pinPosition(thread({ nodeId: 'child' }), nodes)).toEqual({ x: 60 + 300 + 190, y: 60 + 70 });
+  });
+
+  it('falls back to the measured width and draws nothing for a deleted shape', () => {
+    const measured = [{ id: 'm', position: { x: 5, y: 5 }, measured: { width: 40 } }];
+    expect(pinPosition(thread({ nodeId: 'm' }), measured)).toEqual({ x: 45, y: 5 });
+    expect(pinPosition(thread({ nodeId: 'gone' }), nodes)).toBeNull();
   });
 });

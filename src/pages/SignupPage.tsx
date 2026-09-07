@@ -33,7 +33,7 @@ export function SignupPage() {
     <div className="flex min-h-screen items-center justify-center bg-canvas">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
-          <h1 className="text-2xl font-bold text-ink-900">Whimsy</h1>
+          <h1 className="text-2xl font-bold text-ink-900">FlowSketch</h1>
           <p className="mt-1 text-sm text-ink-600">Create your account</p>
         </div>
 
