@@ -10,6 +10,7 @@ import { useDiagramStore } from '../store/useDiagramStore';
 import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
+import { thumbnailSubsetIds } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
 import { backfillBase64Images, findBase64ImageNodes } from '../lib/imageBackfill';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
@@ -193,10 +194,22 @@ export function CanvasPage() {
     // holds this diagram.
     const isCurrent = () => useDiagramStore.getState().diagramId === id;
     const thumbnails = createThumbnailScheduler({
-      render: () =>
-        isCurrent()
-          ? renderDiagramPng({ pixelRatio: 1, maxSide: THUMBNAIL_MAX_SIDE, preserveSelection: true })
-          : Promise.resolve(null),
+      render: () => {
+        if (!isCurrent()) return Promise.resolve(null);
+        // A custom thumbnail names shapes, and a shape can be deleted while its
+        // id is still on the board's list — by this user or by a collaborator.
+        // What is left of it is what gets drawn; nothing left means the whole
+        // board again, which is a better card than none. The stale ids stay put
+        // (see `setThumbnailNodeIds`): the shape may come back.
+        const { thumbnailNodeIds, nodes } = useDiagramStore.getState();
+        const nodeIds = thumbnailSubsetIds(thumbnailNodeIds, nodes);
+        return renderDiagramPng({
+          pixelRatio: 1,
+          maxSide: THUMBNAIL_MAX_SIDE,
+          preserveSelection: true,
+          ...(nodeIds.length > 0 ? { nodeIds } : {}),
+        });
+      },
       save: async (thumbnail) => {
         if (!isCurrent()) return;
         const saved = await api.saveDiagram(id, { thumbnail });
@@ -209,8 +222,20 @@ export function CanvasPage() {
     });
 
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
-      // Neither a retitle nor a pan changes the picture, so only shape edits
-      // mark the thumbnail stale.
+      // Neither a retitle nor a pan changes the picture, so only shape edits —
+      // and a change of *which* shapes the card is drawn from — mark the
+      // thumbnail stale.
+      if (state.thumbnailNodeIds !== prev.thumbnailNodeIds) {
+        // Captured at once rather than within the interval: this one is a
+        // command the user just ran, and a card that goes on showing the old
+        // picture for another half a minute reads as a menu item that did
+        // nothing. `markDirty` first, because `flush` only captures what is
+        // pending. Safe inside a subscription — the capture preserves the
+        // selection, so it writes nothing back to this store.
+        thumbnails.markDirty();
+        void thumbnails.flush();
+        return;
+      }
       if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
     });
 

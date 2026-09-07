@@ -19,9 +19,17 @@
  */
 import type * as Y from 'yjs';
 import type { DiagramData } from '../../shared/types.js';
-import { defaultsOf, edgesOf, nodesOf, viewportOf, writeDiagramIntoDoc } from '../../shared/collabDoc.js';
+import {
+  defaultsOf,
+  edgesOf,
+  nodesOf,
+  thumbnailNodeIdsOf,
+  viewportOf,
+  writeDiagramIntoDoc,
+} from '../../shared/collabDoc.js';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagramMigrations.js';
 import { sanitizeDefaults } from '../../src/lib/defaultStyle.js';
+import { sanitizeThumbnailIds } from '../../src/lib/boardThumbnail.js';
 
 /**
  * The diagram a document is currently holding, as the JSON snapshot.
@@ -41,6 +49,9 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
   // the snapshot is what every other reader of this diagram will see. A default
   // carrying anything but style is dropped here as it would be on a load.
   const defaults = sanitizeDefaults(defaultsOf(doc));
+  // Same rule, same reason: a list of ids is what the client will render the
+  // dashboard card from, and it came out of another browser.
+  const thumbnailNodeIds = sanitizeThumbnailIds(thumbnailNodeIdsOf(doc));
   return {
     version: CURRENT_DIAGRAM_VERSION,
     nodes: nodesOf(doc),
@@ -52,6 +63,9 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
     // Same rule: a board nobody has set a default on has no `defaults` key at
     // all, so its JSON is byte for byte what it always was.
     ...(defaults ? { defaults } : {}),
+    // And again: a board whose card is the automatic picture of the whole
+    // diagram holds no key at all.
+    ...(thumbnailNodeIds ? { thumbnailNodeIds } : {}),
   };
 }
 

@@ -38,6 +38,7 @@ const SIDE_IDS: readonly string[] = ['top', 'right', 'bottom', 'left'];
 function isSideId(id: string | null | undefined): id is Direction {
   return typeof id === 'string' && SIDE_IDS.includes(id);
 }
+import { sanitizeThumbnailIds } from '../lib/boardThumbnail';
 import { computeMarkers } from '../lib/edgeMarkers';
 import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode } from '../lib/nodeKinds';
 import {
@@ -528,6 +529,16 @@ export interface DiagramState {
    * more recent word, and must not be overruled by a swatch picked earlier.
    */
   lastStyle: BoardDefaults;
+  /**
+   * The shapes that stand for this board on the dashboard card — what "Set as
+   * board thumbnail" saves, written into `DiagramData.thumbnailNodeIds` and
+   * into the collaborative document's `meta` map beside the defaults.
+   *
+   * `null` on a board nobody has set one on, which means the card is a picture
+   * of the whole diagram — every diagram written before this existed, and every
+   * one "Remove from board thumbnail" puts back.
+   */
+  thumbnailNodeIds: string[] | null;
   /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
   canUndo: boolean;
   canRedo: boolean;
@@ -694,6 +705,25 @@ export interface DiagramState {
    * preference about what comes next, not a mark on the diagram.
    */
   saveSelectionAsDefault: () => DefaultStyleKind | null;
+  /**
+   * "Set as board thumbnail" / "Remove from board thumbnail": the shapes the
+   * dashboard card is rendered from, or `null` for the automatic picture of the
+   * whole board.
+   *
+   * **It pushes no history entry, on purpose and in both undo models** — the
+   * same rule, and the same reason, as `saveSelectionAsDefault`: for a bound
+   * diagram this lives in the document's `meta` map, which is deliberately
+   * outside the `Y.UndoManager`'s scope, so ⌘Z could not take it back there
+   * however it were recorded and a boundary would only split the *previous*
+   * edit in two. The snapshot stacks are held to the same rule so the two
+   * histories agree. Choosing what the card shows is a decision about how the
+   * board is filed, not a mark on the drawing.
+   *
+   * Ids that name nothing on the board are kept rather than pruned: a shape can
+   * come back (an undo, a restore, a collaborator's own undo), and the renderer
+   * falls back to the whole board while it is gone.
+   */
+  setThumbnailNodeIds: (ids: readonly string[] | null) => void;
   /** The `data` a new shape of `kind` starts with, board defaults applied. */
   newShapeData: (kind: ShapeKind) => ShapeData;
   /** The `data` a new connector starts with, board defaults applied. */
@@ -1037,6 +1067,7 @@ export function serializeDiagram(
   edges: ConnectorEdge[],
   viewport?: DiagramViewport | null,
   defaults?: BoardDefaults | null,
+  thumbnailNodeIds?: readonly string[] | null,
 ): DiagramData {
   return {
     version: CURRENT_DIAGRAM_VERSION,
@@ -1049,6 +1080,11 @@ export function serializeDiagram(
     // so an older diagram's JSON is unchanged by this feature existing.
     ...(defaults && Object.keys(defaults).length > 0
       ? { defaults: defaults as DiagramData['defaults'] }
+      : {}),
+    // And again: a board whose card is the automatic picture of the whole
+    // diagram writes no `thumbnailNodeIds` key at all.
+    ...(thumbnailNodeIds && thumbnailNodeIds.length > 0
+      ? { thumbnailNodeIds: [...thumbnailNodeIds] }
       : {}),
   };
 }
@@ -1171,6 +1207,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   tool: 'select',
   defaults: {} as BoardDefaults,
   lastStyle: {} as BoardDefaults,
+  thumbnailNodeIds: null,
   canUndo: false,
   canRedo: false,
   transientSeq: 0,
@@ -1222,12 +1259,17 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // and carrying it into another diagram would quietly override that
       // board's own default with a swatch picked on a different board.
       lastStyle: {} as BoardDefaults,
+      // Replaced rather than kept for the reason the defaults are: the ids name
+      // shapes on *that* board, and /d/A -> /d/B must not draw B's card from
+      // A's shapes. `migrateDiagramData` has already narrowed it.
+      thumbnailNodeIds: migrated.thumbnailNodeIds ?? null,
       ...historyFlags(),
     });
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, viewport, defaults, saveStatus, loadedAt, readOnly } = get();
+    const { diagramId, title, nodes, edges, viewport, defaults, thumbnailNodeIds, saveStatus, loadedAt, readOnly } =
+      get();
     if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
@@ -1254,7 +1296,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           // The API rejects a blank title, so a diagram whose name the user
           // cleared would fail every autosave from then on.
           title: title.trim() || 'Untitled',
-          data: serializeDiagram(nodes, edges, viewport, defaults),
+          data: serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds),
           // Only sent when this client knows what version it is building on,
           // and never on an overwrite the user asked for.
           ...(loadedAt !== null && !options?.overwrite ? { ifUnmodifiedSince: loadedAt } : {}),
@@ -2039,6 +2081,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
     return kind;
   },
+
+  // No `pushHistory`, for the reason `saveSelectionAsDefault` has none: this
+  // lives in the document's `meta`, outside the undo manager's scope, and the
+  // snapshot stacks are held to the same rule so both histories agree.
+  //
+  // Narrowed even though the caller is our own command: the ids end up in a
+  // free-form JSON column and in a document other browsers read, and one place
+  // that decides what a thumbnail list is beats two.
+  setThumbnailNodeIds: (ids) => set({ thumbnailNodeIds: sanitizeThumbnailIds(ids) }),
 
   newShapeData: (kind) => shapeDataWithDefaults(kind, get().defaults, get().lastStyle),
 

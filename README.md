@@ -71,6 +71,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 ### Dashboard
 - **Folders** — file your diagrams into folders from the sidebar: **New folder** names one in place, and a card's ⋯ menu offers **Move to…** (or drag the card onto a folder). Selecting a folder filters the grid, and search and sort still apply inside it. Rename a folder in place from its ⋯ menu; deleting one asks first and keeps every diagram in it — they move back to **All diagrams**. Folders are personal: a diagram somebody shared with you is never in one of yours, and yours are never visible to anyone you share with. The sidebar collapses to a **Toggle folders** button on narrow screens
 - **All diagrams / Starred** — the two standing views above your folders. Starred diagrams are also pinned to the front of every grid, whatever the sort
+- **Board thumbnail** — a card shows a picture of the whole board, unless you pick one: select a shape or a few and choose **Set as board thumbnail** from the right-click menu, and the card is drawn from those alone. **Remove from board thumbnail** (on the shape menu and on the canvas menu) puts the whole board back. It is a property of the board, so everybody working on it sees the same card; delete the shape it was set on and the card falls back to the whole board until the shape comes back
 - Search by title and sort by last edited, title or creation date, within whatever the sidebar has selected
 - Import a diagram from an exported JSON file, and duplicate, rename, star or delete one from its card
 

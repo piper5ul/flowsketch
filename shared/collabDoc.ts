@@ -31,7 +31,10 @@ export const NODES_KEY = 'nodes';
 export const EDGES_KEY = 'edges';
 export const META_KEY = 'meta';
 
-/** The `meta` map's keys: where the canvas was left, and the board's defaults. */
+/**
+ * The `meta` map's keys: where the canvas was left, the board's defaults, and
+ * which shapes stand for the board on its dashboard card.
+ */
 export const VIEWPORT_KEY = 'viewport';
 /**
  * The style new elements are drawn in on this board (⌘⇧D).
@@ -42,6 +45,14 @@ export const VIEWPORT_KEY = 'viewport';
  * peer scrolling their window must not move yours.)
  */
 export const DEFAULTS_KEY = 'defaults';
+/**
+ * The shapes the dashboard card shows instead of the whole board.
+ *
+ * Read back out like the defaults and unlike the viewport: which picture stands
+ * for the board is a property of the board, so a collaborator setting one has
+ * to reach every window — the card is the same card for all of them.
+ */
+export const THUMBNAIL_KEY = 'thumbnailNodeIds';
 
 /**
  * One element in the document: the JSON the app has always written, plus where
@@ -140,6 +151,18 @@ export function defaultsOf(doc: Y.Doc): DiagramDefaults | undefined {
 }
 
 /**
+ * The board's custom thumbnail as the document holds it, if it holds one.
+ *
+ * Only that it is a list at all is checked here, for the reason `defaultsOf`
+ * only checks that its value is an object: what is *in* it was written by
+ * another browser, and narrowing it to ids is `sanitizeThumbnailIds`' job
+ * (`src/lib/boardThumbnail.ts`), which every reader runs it through.
+ */
+export function thumbnailNodeIdsOf(doc: Y.Doc): unknown {
+  return docMeta(doc).get(THUMBNAIL_KEY);
+}
+
+/**
  * Whether anything has ever been written to `doc` — the question `fetch` asks
  * to decide whether a diagram still needs seeding from its JSON.
  *
@@ -175,6 +198,8 @@ export function writeDiagramIntoDoc(doc: Y.Doc, data: DiagramData, origin?: unkn
     else meta.delete(VIEWPORT_KEY);
     if (data.defaults) meta.set(DEFAULTS_KEY, data.defaults);
     else meta.delete(DEFAULTS_KEY);
+    if (data.thumbnailNodeIds) meta.set(THUMBNAIL_KEY, data.thumbnailNodeIds);
+    else meta.delete(THUMBNAIL_KEY);
     meta.set(SEEDED_KEY, true);
   }, origin);
 }
