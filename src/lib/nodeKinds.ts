@@ -155,6 +155,29 @@ export function canSwapShapeKind(
 }
 
 /**
+ * True for a shape quick-add can grow a neighbour out of.
+ *
+ * Quick-add is the four buttons around a hovered shape and the four ⌥+arrow
+ * commands, and both ask this so a keystroke offers exactly what the pointer
+ * does. What it excludes: anything that is not a drawn shape (a container, a
+ * table, a wireframe component, a freehand stroke — all told by their `type`,
+ * their data being an ordinary rectangle's); a text shape, which is a caption
+ * rather than a box in a row of boxes; a mind-map node, whose branches are
+ * grown with Tab and Enter and which would otherwise sprout an ordinary
+ * connector out of the side a branch leaves from; and a floating arrow's
+ * invisible 1×1 endpoint, which is not a shape the user drew.
+ */
+export function canQuickAddFrom(
+  node: Typed & { data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'> & { mindMap?: unknown } },
+): boolean {
+  if (node.type !== 'shape') return false;
+  const { data } = node;
+  if (data.shape === 'text') return false;
+  if (data.mindMap !== undefined) return false;
+  return !isAnchorNode(data);
+}
+
+/**
  * True for a connector the user can pick up and move as a whole: a floating
  * arrow, whose two ends are the invisible anchors above and belong to nothing.
  *

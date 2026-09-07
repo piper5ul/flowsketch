@@ -616,6 +616,38 @@ a:focus-visible {
   background-clip: content-box;
 }
 
+/* The left rail on a short window.
+ *
+ * The rail is a dozen 40 px buttons in a column beside the canvas, and its
+ * height is a fixed cost that a 1280×700 laptop window is close to spending in
+ * full. Two things keep it on the board, in this order: the gaps and the
+ * padding tighten below 800 px of window, and what is left over scrolls inside
+ * the rail's own box (`LeftRail` sets `max-height` and `overflow-y: auto`).
+ * No tool is dropped or moved to a popover — every button is still exactly
+ * where it was, and the popovers themselves are portalled, so a rail that is
+ * scrolling still opens them over the canvas.
+ */
+@media (max-height: 800px) {
+  .rail-stack {
+    gap: 0.125rem;
+    padding: 0.25rem;
+  }
+  .rail-stack .rail-divider {
+    margin-top: 0.125rem;
+    margin-bottom: 0.125rem;
+  }
+}
+
+/* A scrollbar inside a 52 px rail would be a third of an icon wide, and what
+   it would be reporting is that the window is short — which the user knows. */
+.rail-stack {
+  scrollbar-width: none;
+}
+.rail-stack::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 @keyframes panel-in {
   from {
     opacity: 0;
