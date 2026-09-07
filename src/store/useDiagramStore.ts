@@ -590,6 +590,11 @@ export interface DiagramState {
    */
   wrapSelectionInFrame: () => void;
   /**
+   * Leaves exactly `ids` selected. A selection is not part of the diagram, so
+   * this pushes no history — the same as clicking would.
+   */
+  narrowSelection: (ids: ReadonlySet<string>) => void;
+  /**
    * Undoes that for every selected group: its children go back to where they
    * are on the board and inherit the group's own parent, and the group itself
    * goes. One history entry however many groups were selected.
@@ -1370,6 +1375,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       nodes: [...rest.map((n) => ({ ...n, selected: false })), group, ...moved],
       edges: state.edges.map((e) => ({ ...e, selected: false })),
     });
+  },
+
+  narrowSelection: (ids) => {
+    set((s) => ({
+      nodes: s.nodes.map((n) => (n.selected !== ids.has(n.id) ? { ...n, selected: ids.has(n.id) } : n)),
+      edges: s.edges.map((e) => (e.selected !== ids.has(e.id) ? { ...e, selected: ids.has(e.id) } : e)),
+    }));
   },
 
   wrapSelectionInFrame: () => {
