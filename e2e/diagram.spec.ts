@@ -1979,3 +1979,49 @@ test('the connector tool draws from where you press to where you release', async
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
 });
+
+test('export options: selection only at 1× frames just the selected shape', async ({ page }) => {
+  await signUp(page);
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number) => ({
+      id, type: 'shape', position: { x, y: 0 }, width: 100, height: 100,
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const body = { title: 'Export options', data: { version: 3, nodes: [shape('a', 0), shape('b', 1000)], edges: [] } };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  // PNG dimensions live in the IHDR chunk: width at bytes 16–19, height at 20–23.
+  const pngSize = async (path: string) => {
+    const fs = await import('node:fs/promises');
+    const buf = await fs.readFile(path);
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  };
+  // The menu's own button is a prefix of its items' names, so `exact`.
+  const exportPng = async (prepare: () => Promise<void>) => {
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      (async () => {
+        await page.getByRole('button', { name: 'Export', exact: true }).click();
+        await page.getByRole('button', { name: '1×' }).click();
+        await prepare();
+        await page.getByRole('button', { name: 'Export as PNG' }).click();
+      })(),
+    ]);
+    return pngSize((await download.path())!);
+  };
+
+  const whole = await exportPng(async () => {});
+  // Two 100px shapes 1000px apart plus the export padding, at 1×.
+  expect(whole.width).toBeGreaterThan(1000);
+
+  await page.locator('[data-id="a"]').click();
+  const part = await exportPng(async () => {
+    await page.getByLabel('Selection only').check();
+  });
+  expect(part.width).toBeLessThan(300);
+  expect(part.height).toBeLessThan(300);
+});
