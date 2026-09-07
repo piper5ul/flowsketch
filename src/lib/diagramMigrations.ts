@@ -54,6 +54,15 @@
  * `loadDiagram`, where a ragged grid out of the free-form JSON column would
  * otherwise reach the canvas.
  *
+ * **`ShapeData.wire` is the same case once more, and then some**: only a node
+ * of type `wire` carries one, and a diagram written before wireframes existed
+ * holds no such node — so there is nothing an older spelling could be misread
+ * as, and no step here for it. It is narrowed where it is *read*
+ * (`wireComponentOf` in `src/lib/wireframe.ts`) rather than on load, for the
+ * reason `votes` is: `data` is a free-form bag everywhere else too, a component
+ * name from a newer build is a real possibility, and a node whose component
+ * this build cannot name simply draws nothing.
+ *
  * **Dot voting and the board timer are the case yet again.** `ShapeData.votes`
  * is absent on every shape nobody has voted for, and `DiagramData.voting` /
  * `DiagramData.timer` are absent on a board that has never run a round or

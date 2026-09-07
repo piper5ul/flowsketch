@@ -10,6 +10,7 @@ import {
   Eraser,
   Frame,
   Highlighter,
+  LayoutTemplate,
   Pencil,
   Shapes,
   Spline,
@@ -20,6 +21,8 @@ import { Tooltip } from './Tooltip';
 import { defaultConnectorKind, useDiagramStore } from '../store/useDiagramStore';
 import { useImageInsert } from '../lib/useImageInsert';
 import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
+import { WIRE_ICONS } from '../lib/wireIcons';
+import { WIRE_COMPONENTS, WIRE_LABELS } from '../lib/wireframe';
 import type { ConnectorKind, ShapeKind, Tool } from '../types';
 
 const ImageIcon = SHAPE_ICONS.image;
@@ -202,6 +205,73 @@ function PenMenu() {
   );
 }
 
+/**
+ * The wireframe library: **one** rail button opening a grid of the fourteen
+ * components.
+ *
+ * One button and not fourteen for the reason the pen menu is one: the rail is a
+ * column beside the canvas and is already about as tall as a laptop window can
+ * hold. W opens this grid rather than arming a tool — there is no single
+ * "wireframe" to place — and picking a component arms `wire` with it, so the
+ * next click on the board drops it.
+ *
+ * Open state is the canvas's, not this component's: the keystroke runs through
+ * the command registry and reaches the canvas's `ctx.ui`, which is where the
+ * shortcut sheet and the ⌘K menu already live.
+ */
+function WireframeMenu({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const armed = useDiagramStore((s) => s.tool === 'wire');
+  const current = useDiagramStore((s) => s.wireComponent);
+  const setWireTool = useDiagramStore((s) => s.setWireTool);
+
+  return (
+    <Popover.Root open={open} onOpenChange={onOpenChange}>
+      <Popover.Trigger asChild>
+        <RailButton active={armed} label="Wireframe" shortcut="W">
+          <LayoutTemplate size={18} />
+        </RailButton>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="right"
+          sideOffset={12}
+          aria-label="Wireframe components"
+          className="panel-in z-50 rounded-2xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          <div className="grid grid-cols-4 gap-0.5">
+            {WIRE_COMPONENTS.map((component) => {
+              const Icon = WIRE_ICONS[component];
+              return (
+                <button
+                  key={component}
+                  onClick={() => {
+                    setWireTool(component);
+                    onOpenChange(false);
+                  }}
+                  className={clsx(
+                    'flex h-14 w-16 flex-col items-center justify-center gap-1 rounded-lg px-1 transition-colors',
+                    armed && current === component
+                      ? 'bg-accent-500 text-white'
+                      : 'text-white/70 hover:bg-white/10 hover:text-white',
+                  )}
+                >
+                  <Icon size={18} />
+                  {/* The name is spelled out rather than left to a tooltip: a
+                      grid of fourteen abstract glyphs is a guessing game. */}
+                  <span className="w-full truncate text-center text-[10px] font-medium leading-none">
+                    {WIRE_LABELS[component]}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: string }) {
   const active = useDiagramStore((s) => s.tool === tool);
   const setTool = useDiagramStore((s) => s.setTool);
@@ -260,7 +330,18 @@ function MoreShapesMenu() {
   );
 }
 
-export function LeftRail() {
+/**
+ * `wirePickerOpen` and its setter come from the canvas because the W command
+ * opens the picker, and a command reaches the canvas's UI through `ctx.ui`.
+ * Every other popover here opens only from a click and keeps its own state.
+ */
+export function LeftRail({
+  wirePickerOpen,
+  onWirePickerOpenChange,
+}: {
+  wirePickerOpen: boolean;
+  onWirePickerOpenChange: (open: boolean) => void;
+}) {
   const tool = useDiagramStore((s) => s.tool);
   const setTool = useDiagramStore((s) => s.setTool);
   // Derived rather than stored: what the rail shows as picked is exactly what
@@ -303,6 +384,10 @@ export function LeftRail() {
         ))}
 
         <MoreShapesMenu />
+
+        {/* The wireframe library. One button, because the rail is already as
+            tall as a laptop window can hold — see `WireframeMenu`. */}
+        <WireframeMenu open={wirePickerOpen} onOpenChange={onWirePickerOpenChange} />
 
         <ShapeToolButton tool="text" shortcut="T" />
 

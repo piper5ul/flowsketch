@@ -244,6 +244,22 @@ const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys, shift })
 export const commandDeclarations: Command[] = [
   ...toolCommands,
 
+  /**
+   * The wireframe picker — W, Whimsical's own key for changing board mode.
+   *
+   * Not one of `toolCommands`: there are fourteen components and no single
+   * "wireframe" to arm, so the key opens the rail's grid and the click that
+   * follows chooses. Gated as an edit by default (it is absent from
+   * `READ_ONLY_COMMAND_IDS`), which is right — a viewer has no rail to open.
+   */
+  {
+    id: 'tool.wireframe',
+    title: 'Wireframe',
+    group: 'tools',
+    shortcut: { key: 'w' },
+    run: (ctx) => ctx.ui.openWireframes(),
+  },
+
   // ---- comments ----------------------------------------------------------
   {
     id: 'comment.add',

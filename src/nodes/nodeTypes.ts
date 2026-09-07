@@ -3,10 +3,15 @@ import { GroupNode } from './GroupNode';
 import { FrameNode } from './FrameNode';
 import { InkNode } from './InkNode';
 import { TableNode } from './TableNode';
+import { WireNode } from './WireNode';
 
 export const nodeTypes = {
   shape: ShapeNode,
   frame: FrameNode,
+  // One wireframe component. One node type for all fourteen of them: they are
+  // all a box with a label and differ only in what they draw, which is
+  // `data.wire.component` — see `src/lib/wireframe.ts`.
+  wire: WireNode,
   // A grid of editable cells. Not a container — nothing hangs off it — and not
   // a shape: its box is its grid, so it is its own `type`.
   table: TableNode,

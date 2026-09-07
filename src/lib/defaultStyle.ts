@@ -125,8 +125,14 @@ export function pickConnectorStyle(data: Record<string, unknown>): Partial<Conne
 export function kindOf(node: { type?: string; data?: { shape?: unknown } }): DefaultStyleKind | null {
   // A container has no style to copy, and neither has a freehand stroke: its
   // only style is a colour, and "make this the default shape" would carry a
-  // pen's ink onto every box drawn after it.
-  if (node.type === 'group' || node.type === 'frame' || node.type === 'ink') return null;
+  // pen's ink onto every box drawn after it. A wireframe component has none for
+  // a sharper reason — its colours are the fixed wireframe palette, so saving
+  // one as the board's default shape style would stamp that grey on every box
+  // drawn after it, and reading the board's default *into* one would undo the
+  // whole point of a palette that never varies.
+  if (node.type === 'group' || node.type === 'frame' || node.type === 'ink' || node.type === 'wire') {
+    return null;
+  }
   const shape = node.data?.shape;
   if (shape === 'image') return null;
   if (shape === 'sticky') return 'sticky';

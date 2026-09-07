@@ -48,7 +48,9 @@ import {
   isGroupNode,
   isInkNode,
   isTableNode,
+  isWireNode,
 } from '../lib/nodeKinds';
+import { hasWireLabel } from '../lib/wireframe';
 import { addColumn, addRow, removeColumn, removeRow } from '../lib/table';
 import type { TableData } from '../types';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
@@ -676,12 +678,26 @@ export function FloatingToolbar() {
   // control of its own, and a follow-up. An ink stroke sits them out for a
   // third: it carries no label to typeset and has no box to fill, round or
   // cast a shadow from.
-  const styleableNodes = useMemo(
+  // A wireframe component is a fourth: it *does* carry a label, so the
+  // typography controls below apply to it — but its ground is the fixed
+  // wireframe palette, so "Filled / Outline", the corner radius and the shadow
+  // have nothing to act on. Hence two lists rather than one.
+  const textableNodes = useMemo(
     () =>
       selectedNodes.filter(
-        (n) => n.data.shape !== 'image' && !isContainerNode(n) && !isTableNode(n) && !isInkNode(n),
+        (n) =>
+          n.data.shape !== 'image' &&
+          !isContainerNode(n) &&
+          !isTableNode(n) &&
+          !isInkNode(n) &&
+          // A frame, a placeholder and a divider have no words to typeset.
+          (!isWireNode(n) || hasWireLabel(n.data)),
       ),
     [selectedNodes],
+  );
+  const styleableNodes = useMemo(
+    () => textableNodes.filter((n) => !isWireNode(n)),
+    [textableNodes],
   );
   // A frame takes a colour (a toned-down one — see `FrameNode`) though none of
   // the other shape controls, and so does a table, whose fill tints its header,
@@ -809,19 +825,19 @@ export function FloatingToolbar() {
       >
         {/* Typography, folded away: a shape is selected to be moved, coloured
             or reshaped far more often than to be re-typeset. */}
-        {styleableNodes.length > 0 && (
+        {textableNodes.length > 0 && (
           <TextPopover
             value={{
-              fontSize: styleableNodes[0].data.fontSize ?? DEFAULT_FONT_SIZE,
-              bold: styleableNodes[0].data.bold ?? false,
-              italic: styleableNodes[0].data.italic ?? false,
-              underline: styleableNodes[0].data.underline ?? false,
-              strikethrough: styleableNodes[0].data.strikethrough ?? false,
-              textColor: styleableNodes[0].data.textColor,
+              fontSize: textableNodes[0].data.fontSize ?? DEFAULT_FONT_SIZE,
+              bold: textableNodes[0].data.bold ?? false,
+              italic: textableNodes[0].data.italic ?? false,
+              underline: textableNodes[0].data.underline ?? false,
+              strikethrough: textableNodes[0].data.strikethrough ?? false,
+              textColor: textableNodes[0].data.textColor,
               textAlign:
-                styleableNodes[0].data.textAlign ??
-                (styleableNodes[0].data.shape === 'text' ? 'left' : 'center'),
-              verticalAlign: styleableNodes[0].data.verticalAlign ?? 'middle',
+                textableNodes[0].data.textAlign ??
+                (textableNodes[0].data.shape === 'text' ? 'left' : 'center'),
+              verticalAlign: textableNodes[0].data.verticalAlign ?? 'middle',
             }}
             // The patch lands on every selected shape, images excepted — which
             // is what makes the popover work for a multi-selection unchanged.

@@ -10,9 +10,24 @@ import * as Popover from '@radix-ui/react-popover';
 import { Filter } from 'lucide-react';
 import clsx from 'clsx';
 import { useDiagramStore } from '../store/useDiagramStore';
-import { filterOptions, narrowedIds } from '../lib/selectionFilter';
+import { filterOptions, isWireFilterKind, narrowedIds, wireComponentOfFilterKind } from '../lib/selectionFilter';
+import type { FilterKind } from '../lib/selectionFilter';
 import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
+import { WIRE_ICONS } from '../lib/wireIcons';
+import { WIRE_LABELS } from '../lib/wireframe';
 import { Tooltip } from './Tooltip';
+
+/**
+ * The icon and the name a bucket wears. Two tables rather than one, because a
+ * wireframe component is not a shape kind — see `FilterKind`.
+ */
+function faceOf(kind: FilterKind): { Icon: React.ComponentType<{ size?: number }>; label: string } {
+  if (isWireFilterKind(kind)) {
+    const component = wireComponentOfFilterKind(kind);
+    return { Icon: WIRE_ICONS[component], label: WIRE_LABELS[component] };
+  }
+  return { Icon: SHAPE_ICONS[kind], label: SHAPE_LABELS[kind] };
+}
 
 const BUTTON_CLASS =
   'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white';
@@ -47,7 +62,7 @@ export function FilterSelectionMenu() {
             <h3 className="px-1 pb-1 text-[11px] font-medium text-white/50">By shape</h3>
             <ul className="flex flex-col">
               {options.shapes.map(({ value, count }) => {
-                const Icon = SHAPE_ICONS[value];
+                const { Icon, label } = faceOf(value);
                 return (
                   <li key={value}>
                     <button
@@ -55,7 +70,7 @@ export function FilterSelectionMenu() {
                       className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-white/85 hover:bg-white/10"
                     >
                       <Icon size={14} />
-                      <span className="flex-1 text-left">{SHAPE_LABELS[value]}</span>
+                      <span className="flex-1 text-left">{label}</span>
                       <span className="text-[11px] text-white/50">{count}</span>
                     </button>
                   </li>

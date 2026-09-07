@@ -13,6 +13,7 @@ import {
   setColumnWidth,
 } from '../lib/table';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import { WIRE_FILL, WIRE_STROKE, defaultSizeOf } from '../lib/wireframe';
 import type { InkPoint } from '../types';
 import {
   MIND_MAP_LEVEL_GAP,
@@ -3114,6 +3115,77 @@ describe('pasteMermaid', () => {
   it('places a chart with nothing to lay out at the origin anyway', async () => {
     await store().pasteMermaid('flowchart TD\n  A[Alone]', origin);
     expect(labelled('Alone').position).toEqual(origin);
+  });
+});
+
+describe('wireframe components', () => {
+  const wireOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  it('addWire drops the component at its own default size, wearing the wireframe palette', () => {
+    const id = store().addWire('browser', { x: 40, y: 60 });
+    expect(wireOf(id)).toMatchObject({
+      type: 'wire',
+      position: { x: 40, y: 60 },
+      ...defaultSizeOf('browser'),
+      selected: true,
+    });
+    // The palette, not the board's default shape style — see `wireframe.ts`.
+    expect(wireOf(id).data).toMatchObject({
+      fill: WIRE_FILL,
+      stroke: WIRE_STROKE,
+      wire: { component: 'browser' },
+    });
+  });
+
+  it('is not a floating arrow endpoint: its two colours are the palette, not both transparent', () => {
+    const id = store().addWire('button', { x: 0, y: 0 });
+    expect(isAnchorNode(wireOf(id).data)).toBe(false);
+  });
+
+  it('captions a component that says something, and opens it for typing', () => {
+    const id = store().addWire('button', { x: 0, y: 0 });
+    expect(wireOf(id).data.label).toBe('Button');
+    expect(store().editingNodeId).toBe(id);
+  });
+
+  it('leaves a frame and a divider unlabelled, and opens no editor for them', () => {
+    const id = store().addWire('divider', { x: 0, y: 0 });
+    expect(wireOf(id).data.label).toBe('');
+    expect(store().editingNodeId).toBeNull();
+  });
+
+  it('is one history entry', () => {
+    const id = store().addWire('toggle', { x: 0, y: 0 });
+    expect(store().canUndo).toBe(true);
+    store().undo();
+    expect(store().nodes.find((n) => n.id === id)).toBeUndefined();
+  });
+
+  it('round-trips through the saved JSON with no migration', () => {
+    const id = store().addWire('checkbox', { x: 12, y: 34 });
+    const json = serializeDiagram(store().nodes, store().edges);
+    const back = migrateDiagramData(JSON.parse(JSON.stringify(json)));
+    expect(back.nodes.find((n) => n.id === id)).toMatchObject({
+      type: 'wire',
+      data: { wire: { component: 'checkbox' } },
+    });
+  });
+
+  it('setWireTool arms the tool and the component together', () => {
+    store().setWireTool('phone');
+    expect(store().tool).toBe('wire');
+    expect(store().wireComponent).toBe('phone');
+    // Picking another tool leaves the last component picked, which is what the
+    // rail's button wears.
+    store().setTool('select');
+    expect(store().wireComponent).toBe('phone');
+  });
+
+  it('has no style for the save-as-default command to copy', () => {
+    const id = store().addWire('button', { x: 0, y: 0 });
+    store().setEditingNodeId(null);
+    useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: n.id === id })) });
+    expect(store().saveSelectionAsDefault()).toBeNull();
   });
 });
 

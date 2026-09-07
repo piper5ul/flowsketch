@@ -39,6 +39,7 @@ import {
   parseTableText,
 } from '../lib/table';
 import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
+import { defaultSizeOf as wireSizeOf } from '../lib/wireframe';
 import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
@@ -128,6 +129,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const addShape = useDiagramStore((s) => s.addShape);
   const addFrame = useDiagramStore((s) => s.addFrame);
   const addTable = useDiagramStore((s) => s.addTable);
+  const addWire = useDiagramStore((s) => s.addWire);
+  // Which of the fourteen the wireframe tool is armed with. Read here rather
+  // than inside `placeTool` so the callback is rebuilt when the picker changes.
+  const wireComponent = useDiagramStore((s) => s.wireComponent);
   const tool = useDiagramStore((s) => s.tool);
   const setTool = useDiagramStore((s) => s.setTool);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
@@ -158,6 +163,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     tool === 'connector' ||
     tool === 'frame' ||
     tool === 'table' ||
+    tool === 'wire' ||
     isInkTool(tool) ||
     SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
 
@@ -195,6 +201,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // the middle of the view is used instead.
   const paneAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // The rail's wireframe picker. Lifted out of `LeftRail` because W opens it,
+  // and a command reaches the canvas's own UI through `ctx.ui` — the shape the
+  // shortcut sheet and the ⌘K menu already have.
+  const [wirePickerOpen, setWirePickerOpen] = useState(false);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   // Held modifiers, for the three precision gestures: ⌘-drag ignores the
   // alignment guides, `-drag ignores the grid as well, ⌥-hover measures.
@@ -306,6 +316,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       ui: {
         openShortcuts: () => setShortcutsOpen(true),
         openCommandMenu: () => setCommandMenuOpen(true),
+        openWireframes: () => setWirePickerOpen(true),
         // Supplied only where there is a session to attribute a comment to.
         // The public share page mounts this same canvas with nobody behind it,
         // and every comment route needs a name against the remark.
@@ -425,13 +436,22 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         setTool('select');
         return;
       }
+      if (tool === 'wire') {
+        // Centred on the click like every other placement, but each component
+        // has its own default box, so the offset is asked for rather than
+        // spelled out.
+        const size = wireSizeOf(wireComponent);
+        addWire(wireComponent, { x: point.x - size.width / 2, y: point.y - size.height / 2 });
+        setTool('select');
+        return;
+      }
       if (!SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) return;
       const shape = tool as ShapeKind;
       const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
       addShape(shape, { x: point.x - sizeOffset.x, y: point.y - sizeOffset.y });
       setTool('select');
     },
-    [tool, screenToFlowPosition, addShape, addFrame, addTable, setTool],
+    [tool, screenToFlowPosition, addShape, addFrame, addTable, addWire, wireComponent, setTool],
   );
 
   /**
@@ -456,7 +476,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       // A frame is a node, so a click inside one never reaches `onPaneClick`.
       // Drawing tools are served here too, or a frame would be a hole in the
       // board that nothing could be drawn into.
-      if (tool === 'frame' || tool === 'table' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) {
+      if (tool === 'frame' || tool === 'table' || tool === 'wire' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) {
         placeTool(event);
         return;
       }
@@ -1130,7 +1150,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       {topBar && !presenting && <TopBar />}
       {!readOnly && !presenting && (
         <>
-          <LeftRail />
+          <LeftRail wirePickerOpen={wirePickerOpen} onWirePickerOpenChange={setWirePickerOpen} />
           <FloatingToolbar />
           <TextFormatBar />
         </>

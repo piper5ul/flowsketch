@@ -33,6 +33,14 @@ import {
   simplify,
   strokeHits,
 } from '../lib/ink';
+import {
+  WIRE_FILL,
+  WIRE_STROKE,
+  defaultSizeOf,
+  hasLabel,
+  labelPlaceholder,
+  type WireComponent,
+} from '../lib/wireframe';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import {
@@ -633,6 +641,16 @@ export interface DiagramState {
   viewport: DiagramViewport | null;
   tool: Tool;
   /**
+   * Which wireframe component the `wire` tool is armed with — and, while it is
+   * not, the last one picked, which is what the rail's button wears so the tool
+   * shows what it would draw before it draws it (the pen button's idiom).
+   *
+   * Non-null on purpose: `tool === 'wire'` is the whole of whether anything is
+   * armed, and a null here would only add a second way of asking. Like `tool`
+   * it is per-session and never serialized.
+   */
+  wireComponent: WireComponent;
+  /**
    * The style new elements are drawn in **on this board** — what ⌘⇧D saves,
    * what is written into `DiagramData.defaults` and into the collaborative
    * document's `meta` map, and what a collaborator's new shapes pick up too.
@@ -735,6 +753,13 @@ export interface DiagramState {
   requestLinkEditor: () => void;
 
   setTool: (tool: Tool) => void;
+  /**
+   * Arms the wireframe tool with one component: the next click on the board
+   * drops it. One action rather than `setTool('wire')` plus a setter, because
+   * the two are never meaningfully set apart — a `wire` tool with nothing
+   * chosen has nothing to place.
+   */
+  setWireTool: (component: WireComponent) => void;
   /** Records a pan or zoom. Transient by design: moving the camera is not an edit. */
   setViewport: (viewport: DiagramViewport) => void;
   onNodesChange: (changes: NodeChange<ShapeNode>[]) => void;
@@ -783,6 +808,13 @@ export interface DiagramState {
    * always `tableSize(table)`, never a size of its own.
    */
   addTable: (position: { x: number; y: number }, table?: TableData) => string;
+  /**
+   * Drops one wireframe component with its top-left at `position`, at the size
+   * `WIRE_DEFAULTS` gives it. One history entry; the new node is selected, and
+   * for a component that says something the label is opened for typing — a
+   * button is placed in order to be captioned.
+   */
+  addWire: (component: WireComponent, position: { x: number; y: number }) => string;
   /** Remembers which cell of which table has the cursor. Not an edit; no history. */
   setActiveTableCell: (cell: TableCell | null) => void;
 
@@ -1711,6 +1743,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   snapOverride: 'none',
   viewport: null,
   tool: 'select',
+  wireComponent: 'button' as WireComponent,
   defaults: {} as BoardDefaults,
   lastStyle: {} as BoardDefaults,
   thumbnailNodeIds: null,
@@ -1877,6 +1910,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   requestLinkEditor: () => set((s) => ({ linkEditorRequest: s.linkEditorRequest + 1 })),
 
   setTool: (tool) => set({ tool }),
+
+  setWireTool: (component) => set({ tool: 'wire', wireComponent: component }),
 
   setViewport: (viewport) => set({ viewport }),
 
@@ -2141,6 +2176,44 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       data: { ...shapeDataWithDefaults('rectangle', defaults, lastStyle), table: grid },
     };
     set((s) => ({ nodes: [...s.nodes, node] }));
+    return id;
+  },
+
+  // A wireframe component is placed like a shape and coloured like nothing
+  // else: its `fill` and `stroke` are the **wireframe palette**, not the
+  // board's default style, because a wireframe reads as layout rather than as
+  // design (see `src/lib/wireframe.ts`). They are ordinary `ShapeData` fields
+  // all the same, which is what lets the colour palette tint one — the
+  // renderer mixes whatever is stored into the palette entry it would have
+  // worn anyway, so a component nobody has coloured comes out exactly grey.
+  // `shape` is a rectangle nothing draws, and the two colours are deliberately
+  // *not* both transparent: `isAnchorNode` reads that pair, and a floating
+  // arrow's endpoint is not what this is.
+  addWire: (component, position) => {
+    pushHistory(get());
+    const id = nanoid(8);
+    const node: ShapeNode = {
+      id,
+      type: 'wire',
+      position,
+      ...defaultSizeOf(component),
+      selected: true,
+      data: {
+        label: labelPlaceholder(component),
+        shape: 'rectangle',
+        fill: WIRE_FILL,
+        stroke: WIRE_STROKE,
+        wire: { component },
+      },
+    };
+    set((s) => ({
+      nodes: [...s.nodes, node],
+      // A component with words is placed in order to be captioned, so the
+      // editor opens on the default caption with it selected — typing replaces
+      // it, and leaving it alone commits the same text and costs no second
+      // history entry.
+      editingNodeId: hasLabel(component) ? id : null,
+    }));
     return id;
   },
 

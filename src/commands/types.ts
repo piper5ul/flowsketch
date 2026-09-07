@@ -102,6 +102,15 @@ export interface CommandContext {
     /** The ⌘K command menu. */
     openCommandMenu: () => void;
     /**
+     * The left rail's wireframe picker — the grid of the fourteen components.
+     *
+     * W opens the picker rather than arming a tool, because there is no one
+     * "wireframe" to place: which component is coming is the question the
+     * popover asks. The rail owns the grid and the canvas owns whether it is
+     * open, so the command reaches it here the way `openShortcuts` does.
+     */
+    openWireframes: () => void;
+    /**
      * Starts a comment thread on whatever the right-click menu was opened
      * over — a shape, or the point on the canvas that was clicked.
      *

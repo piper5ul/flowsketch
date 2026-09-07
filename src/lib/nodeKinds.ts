@@ -53,6 +53,24 @@ export function isTableNode(node: Typed): boolean {
 }
 
 /**
+ * True for one wireframe component — a button, a browser chrome, a toggle.
+ *
+ * Read from the `type` for the reason every other node kind is: a wire node
+ * carries an ordinary `ShapeData` whose `shape` is a rectangle nothing draws
+ * and whose `fill`/`stroke` are the wireframe palette, so asking the data would
+ * answer "rectangle". *Which* component it is lives in `data.wire.component`
+ * — but a node with that field and the wrong `type` is not a wireframe
+ * component, and this is the predicate that says so.
+ *
+ * Like a table, a wire node is **not** a container: `browser`, `phone` and
+ * `card` look like frames and nothing hangs off them through `parentId` in this
+ * build, so `isContainerNode` stays the two it has always been.
+ */
+export function isWireNode(node: Typed): boolean {
+  return node.type === 'wire';
+}
+
+/**
  * Every shape kind, at runtime. Built from an exhaustive record rather than
  * written out as an array, so adding a kind to `ShapeKind` and forgetting it
  * here is a type error rather than a table that silently misses a shape.
@@ -120,13 +138,16 @@ export function canRoundCorners(shape: ShapeKind): boolean {
  * grid of cells and a freehand stroke a line drawn by hand: neither has a
  * silhouette to exchange, and both are told by their `type` — which is why
  * this takes the whole node rather than only its data, their data being an
- * ordinary rectangle's. The floating toolbar and the store share this predicate
- * so the button is offered exactly when pressing it would do something.
+ * ordinary rectangle's. A wireframe component is a third of that kind: what it
+ * draws is `data.wire.component`, so redrawing a toggle as a star would throw
+ * away the whole of what it is. The floating toolbar and the store share this
+ * predicate so the button is offered exactly when pressing it would do
+ * something.
  */
 export function canSwapShapeKind(
   node: Typed & { data: Pick<ShapeData, 'shape' | 'locked' | 'fill' | 'stroke'> },
 ): boolean {
-  if (isContainerNode(node) || isTableNode(node) || isInkNode(node)) return false;
+  if (isContainerNode(node) || isTableNode(node) || isInkNode(node) || isWireNode(node)) return false;
   const { data } = node;
   if (data.shape === 'image' || data.shape === 'text') return false;
   if (isAnchorNode(data)) return false;
