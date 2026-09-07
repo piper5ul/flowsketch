@@ -1,6 +1,12 @@
 /**
- * A small Mermaid **flowchart** parser: enough of the syntax to turn a diagram
- * somebody wrote as text into shapes and connectors on the board.
+ * A small Mermaid parser: enough of the syntax to turn a diagram somebody wrote
+ * as text into shapes and connectors on the board.
+ *
+ * Two diagram kinds live here, and they share nothing but the line scanner:
+ * `parseMermaidFlowchart` below, and `parseMermaidSequence` at the bottom of
+ * the file. Each answers `null` for text that is not its own kind — including
+ * for the *other* kind — so a caller can offer a string to both in turn and
+ * find out what it is holding.
  *
  * There is no library here on purpose. Mermaid's own parser is a Jison grammar
  * that arrives with the whole renderer attached — hundreds of kilobytes to read
@@ -24,8 +30,9 @@
  * the wrong place). Also unsupported: styling of any kind, the `A --x B` /
  * `A --o B` endpoint markers (parsed, but drawn as a plain arrow), an open link
  * carrying inline text (`A -- text --- B`), class shorthand (`A:::name`) and
- * every non-flowchart Mermaid diagram — a sequence diagram has no header this
- * recognises and comes back as `null`.
+ * every other Mermaid diagram — a sequence diagram has no header this
+ * recognises and comes back as `null` (`parseMermaidSequence` is what reads
+ * one).
  *
  * Pure and structural like the rest of `src/lib`: a string in, a plain
  * description out, and not one word about the store or React Flow.
@@ -348,4 +355,176 @@ export function parseMermaidFlowchart(text: string): MermaidFlowchart | null {
 
   if (nodes.size === 0) return null;
   return { direction, nodes: [...nodes.values()], edges };
+}
+
+// ---------------------------------------------------------------------------
+// Sequence diagrams
+//
+// The other half of this module, and deliberately a separate scanner rather
+// than a second mode of the one above: a sequence diagram's grammar is
+// line-oriented (one statement per line, no `;` and no brackets to balance)
+// where a flowchart's is a chain of statements, so sharing the machinery would
+// have cost more than it saved. What the two do share is `stripComment` and the
+// promise every parser here makes: `null` for text that is not this kind.
+// ---------------------------------------------------------------------------
+
+/**
+ * Which head a message wears. `solid` is Mermaid's filled arrowhead (`->>`, and
+ * `-x`, whose cross we draw as one); `open` is the plain line-end of `->` and
+ * of the async `-)`. Whether the *line* is dotted is `dashed`, separately.
+ */
+export type MermaidSequenceArrow = 'solid' | 'open';
+
+export interface MermaidSequenceParticipant {
+  /** The id the source refers to this actor by. */
+  id: string;
+  /** What is drawn in the box: `participant X as Label`'s label, or the id. */
+  label: string;
+}
+
+export interface MermaidSequenceMessage {
+  /** Participant ids, both of them guaranteed to be in `participants`. */
+  from: string;
+  to: string;
+  text: string;
+  arrow: MermaidSequenceArrow;
+  /** A dotted line in Mermaid (`-->>`, `-->`, `--x`, `--)`), drawn dashed. */
+  dashed: boolean;
+}
+
+export interface MermaidSequence {
+  participants: MermaidSequenceParticipant[];
+  messages: MermaidSequenceMessage[];
+}
+
+/** The header, and the whole of what tells a sequence diagram from every other. */
+const SEQUENCE_HEADER = /^sequenceDiagram\b/i;
+
+/**
+ * `participant X` / `actor X`, each optionally `as Label`.
+ *
+ * The id is lazy so that `as` wins where it appears: `participant A as Alice`
+ * is A labelled "Alice", while `participant Alice Smith` — which Mermaid does
+ * not allow but somebody will write — keeps every word as the id rather than
+ * silently losing half of it.
+ */
+const SEQUENCE_ACTOR = /^(?:participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$/i;
+
+/**
+ * The statements this parser reads past.
+ *
+ * Activation bars, notes and the block forms (`loop` / `alt` / `opt` / `par`
+ * and their `else` / `and` / `end`) are **out of scope** on purpose: each is a
+ * piece of drawn furniture with no counterpart among the shapes and connectors
+ * this representation is made of, and half-drawing one would be worse than
+ * leaving it out. The messages *inside* such a block are still read — the block
+ * markers are what is dropped, exactly as `subgraph` is in a flowchart.
+ */
+const SEQUENCE_IGNORED =
+  /^(?:autonumber|activate|deactivate|note|loop|alt|else|opt|par|and|critical|option|break|rect|end|title|accTitle|accDescr|box|link|links|properties|details|destroy)\b/i;
+
+/** `create participant X as Y` — the `create` is dropped and the rest read as usual. */
+const SEQUENCE_CREATE = /^create\s+/i;
+
+/**
+ * A message: two actors with an arrow between them and a `: text` after it.
+ *
+ * The arrow alternatives are ordered longest-first, so `-->>` is not read as
+ * `-->` followed by a `>` in the target's name, and each one's leading dash is
+ * optionally doubled — which is exactly Mermaid's rule that a doubled dash
+ * means a dotted line.
+ */
+const SEQUENCE_MESSAGE = /^(.+?)\s*(--?>>|--?[x)]|--?>)\s*([^:]*?)\s*:\s*([\s\S]*)$/;
+
+/**
+ * An actor as written beside an arrow, reduced to the id alone.
+ *
+ * `A->>+B: hi` activates B and `B-->>-A: hi` deactivates it; the marker sits on
+ * the target, and since activation bars are out of scope it is simply removed.
+ */
+function sequenceActorId(raw: string): string {
+  return raw.trim().replace(/^[+-]\s*/, '').trim();
+}
+
+/**
+ * `text` as a sequence diagram, or `null` when it is not one.
+ *
+ * **What is supported** — the `sequenceDiagram` header; `participant X` /
+ * `actor X`, each with an optional `as Label`; participants nobody declared,
+ * which take their place in the order they are first mentioned; and the
+ * messages `->>`, `-->>`, `->`, `-->`, `-x`, `--x`, `-)` and `--)`, each
+ * written `A ARROW B: text`. A doubled dash is a dotted line; `->>` and `-x`
+ * carry a filled head and `->` and `-)` an open one.
+ *
+ * **What is not** — activation (`activate` / `deactivate`, and the `+` / `-`
+ * markers on a message, which are read and dropped), `Note` in any of its
+ * forms, and the block statements `loop` / `alt` / `else` / `opt` / `par` /
+ * `and` / `critical` / `break` / `rect` / `box` with their `end`s: all of them
+ * are skipped, and the messages inside a block are read as ordinary ones. So
+ * are `autonumber`, `title`, `link` and the accessibility statements.
+ *
+ * A ```` ```mermaid ```` fence around the text is tolerated, as it is for a
+ * flowchart: that is how the source is usually copied.
+ */
+export function parseMermaidSequence(text: string): MermaidSequence | null {
+  const lines: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const bare = stripComment(raw).trim();
+    if (!bare || bare.startsWith('```')) continue;
+    lines.push(bare);
+  }
+
+  if (lines.length === 0 || !SEQUENCE_HEADER.test(lines[0])) return null;
+
+  // Insertion-ordered: a participant's place in the row across the top is where
+  // it is first named, whether that is a declaration or a message — which is
+  // the order Mermaid itself draws them in.
+  const participants = new Map<string, MermaidSequenceParticipant>();
+  const messages: MermaidSequenceMessage[] = [];
+
+  function note(id: string, label?: string): void {
+    const existing = participants.get(id);
+    if (!existing) {
+      participants.set(id, { id, label: label ?? id });
+      return;
+    }
+    // A later declaration carrying a label wins, the way a bracketed mention
+    // wins over a bare one in a flowchart.
+    if (label !== undefined) existing.label = label;
+  }
+
+  for (const line of lines.slice(1)) {
+    const statement = line.replace(SEQUENCE_CREATE, '');
+
+    const actor = SEQUENCE_ACTOR.exec(statement);
+    if (actor) {
+      const id = actor[1].trim();
+      if (id) note(id, actor[2]?.trim() || undefined);
+      continue;
+    }
+
+    if (SEQUENCE_IGNORED.test(statement)) continue;
+
+    const message = SEQUENCE_MESSAGE.exec(statement);
+    if (!message) continue;
+    const [, rawFrom, token, rawTo, body] = message;
+    const from = sequenceActorId(rawFrom);
+    const to = sequenceActorId(rawTo);
+    if (!from || !to) continue;
+
+    note(from);
+    note(to);
+    messages.push({
+      from,
+      to,
+      text: body.trim(),
+      // `>>` and `x` are Mermaid's two filled heads; `>` alone and `)` are the
+      // open ones. A doubled leading dash is what makes the line dotted.
+      arrow: token.endsWith('>>') || token.endsWith('x') ? 'solid' : 'open',
+      dashed: token.startsWith('--'),
+    });
+  }
+
+  if (participants.size === 0) return null;
+  return { participants: [...participants.values()], messages };
 }

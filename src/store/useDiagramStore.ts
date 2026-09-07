@@ -101,7 +101,8 @@ import {
 } from '../lib/mindMap';
 import { linesOf, stackAlong, stickyGrid } from '../lib/pasteAs';
 import { reorderSlides } from '../lib/presentation';
-import { parseMermaidFlowchart } from '../lib/mermaid';
+import { parseMermaidFlowchart, parseMermaidSequence } from '../lib/mermaid';
+import { layoutSequence } from '../lib/sequenceLayout';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import type { ImageBackfillPatch } from '../lib/imageBackfill';
 import { toastError } from './useToastStore';
@@ -902,6 +903,19 @@ export interface DiagramState {
    * all the same: see the note at the implementation.
    */
   pasteMermaid: (text: string, origin: { x: number; y: number }) => Promise<string[] | null>;
+
+  /**
+   * Turns pasted Mermaid `sequenceDiagram` source into a sequence diagram —
+   * participants in a row, a dashed lifeline down from each and the messages
+   * between them — with the row's top-left corner at `origin`. Returns the
+   * **participants'** ids (they are what ends up selected), or `null` when the
+   * text is not a sequence diagram.
+   *
+   * Synchronous where `pasteMermaid` is not: the geometry is a ladder rather
+   * than a graph, so `src/lib/sequenceLayout.ts` works it out exactly and there
+   * is no layout engine to fetch.
+   */
+  pasteSequence: (text: string, origin: { x: number; y: number }) => string[] | null;
 
   /**
    * Mind maps. Each of these is **one** history entry: the node, its branch and
@@ -2748,7 +2762,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     return nodes.map((n) => n.id);
   },
 
-  // "Paste Mermaid as flowchart". The parse is `src/lib/mermaid.ts`; what is
+  // "Paste Mermaid", for a `graph` / `flowchart`. The parse is
+  // `src/lib/mermaid.ts` (`pasteSequence` below is the other kind); what is
   // here is the shapes it becomes and the arrangement.
   //
   // **The whole paste is one undo step**, and that is why the layout is not
@@ -2822,6 +2837,92 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const patch = await layoutSelectionPatch(get, vertical ? 'DOWN' : 'RIGHT');
     if (patch) set(patch);
     return nodes.map((n) => n.id);
+  },
+
+  // "Paste Mermaid" again, for a `sequenceDiagram`. The parse is
+  // `src/lib/mermaid.ts` and every coordinate is `src/lib/sequenceLayout.ts`;
+  // what is here is the two of them turned into the store's own nodes and
+  // edges, in **one** `pushHistory` and one `set`.
+  //
+  // Nothing new is drawn. A participant is a rectangle wearing the board's
+  // default style, and every other node is the invisible 1×1 anchor a floating
+  // arrow already hangs off — which is why a lifeline needs no renderer, no
+  // export exclusion and no migration. The anchors are **children of their
+  // participant**, so dragging one takes its whole column with it and deleting
+  // it takes the column too (`subtreeIds`), for free.
+  pasteSequence: (text, origin) => {
+    const parsed = parseMermaidSequence(text);
+    if (!parsed) return null;
+
+    const state = get();
+    const laid = layoutSequence(parsed, origin, () => nanoid(8));
+
+    const participantStyle = shapeDataWithDefaults('rectangle', state.defaults, state.lastStyle);
+    const connectorStyle = connectorDataWithDefaults(state.defaults, state.lastStyle);
+
+    const nodes: ShapeNode[] = laid.nodes.map((n) => {
+      const participant = n.sequence.role === 'participant';
+      return {
+        id: n.id,
+        type: 'shape' as const,
+        position: n.position,
+        width: n.width,
+        height: n.height,
+        // Written only when there is one, so a participant's JSON is an
+        // ordinary shape's.
+        ...(n.parentId !== undefined ? { parentId: n.parentId } : {}),
+        // The participants are what the user goes on to drag and restyle; the
+        // anchors are plumbing and are left out of the selection.
+        selected: participant,
+        data: participant
+          ? { ...participantStyle, label: n.label, sequence: n.sequence }
+          : {
+              // The floating-arrow anchor, exactly: both colours transparent is
+              // what `isAnchorNode` reads.
+              label: '',
+              shape: 'rectangle' as const,
+              fill: 'transparent',
+              stroke: 'transparent',
+              sequence: n.sequence,
+            },
+      };
+    });
+
+    const edges: ConnectorEdge[] = laid.edges.map((e) => {
+      const data: ConnectorData = {
+        ...connectorStyle,
+        // The board's default connector kind is usually `elbow`; a lifeline and
+        // a message are both drawn as the ladder rungs they are, so the kind is
+        // the layout's to say and not the board's.
+        connectorType: e.connectorType,
+        strokeStyle: e.strokeStyle,
+        startArrowStyle: 'none',
+        endArrowStyle: e.endArrowStyle,
+        label: e.label,
+        sourceAnchor: e.sourceAnchor,
+        targetAnchor: e.targetAnchor,
+        ...(e.waypoints ? { waypoints: e.waypoints } : {}),
+        sequence: e.sequence,
+      };
+      return {
+        id: e.id,
+        source: e.source,
+        target: e.target,
+        type: 'connector' as const,
+        zIndex: 1000,
+        selected: false,
+        ...computeMarkers(data),
+        data,
+      };
+    });
+
+    pushHistory(state);
+    set((s) => ({
+      nodes: [...s.nodes.map((n) => ({ ...n, selected: false })), ...nodes],
+      edges: [...s.edges.map((e) => ({ ...e, selected: false })), ...edges],
+    }));
+
+    return nodes.filter((n) => n.selected).map((n) => n.id);
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is

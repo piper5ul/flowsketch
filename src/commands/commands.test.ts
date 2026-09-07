@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canEditDiagram, commandDeclarations, commands, registry } from './commands';
-import { parseMermaidFlowchart } from '../lib/mermaid';
+import { parseMermaidFlowchart, parseMermaidSequence } from '../lib/mermaid';
 import { useToastStore } from '../store/useToastStore';
 import type { CommandContext } from './types';
 
@@ -231,6 +231,10 @@ describe('the "paste as" commands', () => {
             calls.push({ action: 'mermaid', text: t, origin });
             return parseMermaidFlowchart(t) ? ['n1'] : null;
           },
+          pasteSequence: (t: string, origin: { x: number; y: number }) => {
+            calls.push({ action: 'sequence', text: t, origin });
+            return parseMermaidSequence(t) ? ['n1'] : null;
+          },
         }),
         setState: () => {},
       },
@@ -279,12 +283,29 @@ describe('the "paste as" commands', () => {
   it('build a flowchart from Mermaid text and say so when it is not one', async () => {
     const good = ctxWithClipboard('flowchart TD\n A --> B');
     mermaid.run(good.ctx);
-    await vi.waitFor(() => expect(good.calls).toHaveLength(1));
+    // The sequence parser is offered the text first and refuses it, so the
+    // flowchart branch is the second of the two calls.
+    await vi.waitFor(() => expect(good.calls).toHaveLength(2));
+    expect(good.calls.map((c) => c.action)).toEqual(['sequence', 'mermaid']);
     expect(messages()).toEqual([]);
 
     const bad = ctxWithClipboard('shopping list');
     mermaid.run(bad.ctx);
-    await vi.waitFor(() => expect(messages()).toEqual(["That isn't a Mermaid flowchart"]));
+    await vi.waitFor(() =>
+      expect(messages()).toEqual(["That isn't a Mermaid flowchart or sequence diagram"]),
+    );
+  });
+
+  it('build a sequence diagram from the same menu item, without asking the flowchart parser', async () => {
+    const { ctx, calls } = ctxWithClipboard('sequenceDiagram\n  A->>B: hi');
+    mermaid.run(ctx);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({
+      action: 'sequence',
+      text: 'sequenceDiagram\n  A->>B: hi',
+      origin: { x: 12, y: 34 },
+    });
+    expect(messages()).toEqual([]);
   });
 
   it('say so when the browser refuses the clipboard, and paste nothing', async () => {
