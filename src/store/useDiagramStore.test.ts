@@ -1030,7 +1030,7 @@ describe('updateEdgeData', () => {
     const before = store().edges[0].markerEnd;
     store().updateEdgeData(id, { strokeWidth: 3 });
     expect(store().edges[0].markerEnd).not.toBe(before);
-    expect(store().edges[0].markerEnd).toContain('-14');
+    expect(store().edges[0].markerEnd).toContain('-17');
   });
 
   it('leaves the markers alone for a patch that cannot affect them', () => {

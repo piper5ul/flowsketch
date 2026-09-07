@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorToPoint, distanceToRect, floatingEdgeSides, nearestAnchorOnRect, type Rect } from './edgeGeometry';
+import { anchorToPoint, distanceToRect, floatingEdgeSides, nearestAnchorOnRect, standoff, type Rect } from './edgeGeometry';
 
 const rect: Rect = { x: 0, y: 0, width: 100, height: 50 };
 
@@ -68,5 +68,20 @@ describe('distanceToRect', () => {
 
   it('measures diagonal distance from a corner', () => {
     expect(distanceToRect(-30, -40, rect)).toBe(50);
+  });
+});
+
+describe('standoff', () => {
+  const p = { x: 100, y: 50 };
+
+  it('moves the point straight out from the side it sits on', () => {
+    expect(standoff(p, 'top', 6)).toEqual({ x: 100, y: 44 });
+    expect(standoff(p, 'bottom', 6)).toEqual({ x: 100, y: 56 });
+    expect(standoff(p, 'left', 6)).toEqual({ x: 94, y: 50 });
+    expect(standoff(p, 'right', 6)).toEqual({ x: 106, y: 50 });
+  });
+
+  it('is the identity for a gap of zero, which is what a floating arrow gets', () => {
+    expect(standoff(p, 'left', 0)).toEqual(p);
   });
 });

@@ -1850,7 +1850,8 @@ test('a connector between shapes inside a frame is drawn where the shapes are', 
   const a = await box('[data-id="a"]');
   const b = await box('[data-id="b"]');
   const edge = await box('.react-flow__edge path');
-  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 6) =>
+  // A connector stops `CONNECTOR_STANDOFF_PX` (6px) clear of its shape, plus a hair of antialiasing.
+  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 10) =>
     edge.x < n.x + n.width + tol && edge.x + edge.width > n.x - tol && edge.y < n.y + n.height + tol && edge.y + edge.height > n.y - tol;
   expect(touches(a), 'edge should start at the source shape').toBe(true);
   expect(touches(b), 'edge should end at the target shape').toBe(true);

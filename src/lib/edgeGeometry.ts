@@ -19,6 +19,24 @@ export function anchorToPoint(anchor: EdgeAnchor, rect: Rect): Point {
   }
 }
 
+/**
+ * `point` moved `gap` px straight out from the side it sits on — the direction
+ * a connector leaves a shape in — so the line starts a little clear of the
+ * edge without changing which way it sets off.
+ */
+export function standoff(point: Point, side: Direction, gap: number): Point {
+  switch (side) {
+    case 'top':
+      return { x: point.x, y: point.y - gap };
+    case 'bottom':
+      return { x: point.x, y: point.y + gap };
+    case 'left':
+      return { x: point.x - gap, y: point.y };
+    case 'right':
+      return { x: point.x + gap, y: point.y };
+  }
+}
+
 function closestPointOnSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number) {
   const dx = x2 - x1;
   const dy = y2 - y1;

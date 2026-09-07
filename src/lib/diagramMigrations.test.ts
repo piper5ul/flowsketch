@@ -76,8 +76,12 @@ describe('migrateDiagramData', () => {
         },
       ],
     };
-    // The stored marker survives — a writer always persists markers alongside data.
-    expect(migrateDiagramData(current)).toEqual(current);
+    // Everything passes through except the marker ids, which are derived from
+    // the data on every load so a stored id can never be stale.
+    const out = migrateDiagramData(current);
+    const { markerEnd, ...edge } = out.edges[0];
+    expect({ ...out, edges: [edge] }).toEqual({ ...current, edges: [{ ...current.edges[0], markerEnd: undefined }] });
+    expect(markerEnd).toContain('fs-circle-123456');
   });
 
   it('is idempotent — migrating twice equals migrating once', () => {
@@ -218,5 +222,31 @@ describe('migrateDiagramData', () => {
   it('throws a descriptive error for a diagram from a newer version', () => {
     expect(() => migrateDiagramData({ version: CURRENT_DIAGRAM_VERSION + 1, nodes: [], edges: [] }))
       .toThrow(/newer version/i);
+  });
+});
+
+describe('marker ids are recomputed on every load', () => {
+  const edge = (over: Record<string, unknown>) => ({
+    id: 'e', source: 'a', target: 'b', type: 'connector',
+    data: { connectorType: 'elbow', stroke: '#ABCDEF', strokeStyle: 'solid', label: '', startArrowStyle: 'none', endArrowStyle: 'arrow' },
+    ...over,
+  });
+  const load = (e: Record<string, unknown>) => migrateDiagramData({ version: CURRENT_DIAGRAM_VERSION, nodes: [], edges: [e] }).edges[0];
+
+  it('gives a current-format edge saved without ids the arrowheads its data asks for', () => {
+    const out = load(edge({}));
+    expect(out.markerEnd).toContain('fs-arrow-ABCDEF');
+    expect(out.markerStart).toBeUndefined();
+  });
+
+  it('repoints an id from an older build at this build’s defs', () => {
+    const out = load(edge({ markerEnd: 'fs-arrow-ABCDEF-10' }));
+    expect(out.markerEnd).toContain('fs-arrow-ABCDEF');
+    expect(out.markerEnd).not.toBe('fs-arrow-ABCDEF-10');
+  });
+
+  it('drops an id the data no longer wants', () => {
+    const out = load(edge({ markerEnd: 'fs-arrow-ABCDEF-10', data: { connectorType: 'elbow', stroke: '#ABCDEF', strokeStyle: 'solid', label: '', startArrowStyle: 'none', endArrowStyle: 'none' } }));
+    expect(out.markerEnd).toBeUndefined();
   });
 });

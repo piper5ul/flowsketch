@@ -32,11 +32,24 @@ const REF_X: Record<VisibleArrowStyle, number> = {
 function MarkerShape({ style, color }: { style: VisibleArrowStyle; color: string }) {
   switch (style) {
     case 'arrow':
-      return <path d="M 0 0 L 10 5 L 0 10 Z" fill={color} />;
+      // Wider than it is long — 13px across by 10px deep on a regular line,
+      // the proportions measured off Whimsical's — with a hairline stroke of
+      // its own colour so the corners are soft rather than cut. The path is
+      // inset by half that stroke, so the painted extent is still the full
+      // box and the tip still lands on `REF_X`.
+      return (
+        <path
+          d="M 2.5 0.5 L 9.5 5 L 2.5 9.5 Z"
+          fill={color}
+          stroke={color}
+          strokeWidth={1}
+          strokeLinejoin="round"
+        />
+      );
     case 'open':
       return (
         <path
-          d="M 1 0.5 L 9.5 5 L 1 9.5"
+          d="M 2 0.5 L 9.5 5 L 2 9.5"
           fill="none"
           stroke={color}
           strokeWidth={1.8}

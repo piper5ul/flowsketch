@@ -7,7 +7,7 @@ import { DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from './
  * two, leaving a bold line wearing an arrow four times the area of a thin
  * line's rather than the deliberate step below.
  */
-const MARKER_SIZE_PX: Record<StrokeWidth, number> = { 1: 8, 2: 10, 3: 14 };
+const MARKER_SIZE_PX: Record<StrokeWidth, number> = { 1: 10, 2: 13, 3: 17 };
 
 /** An arrowhead that draws something — every style but `none`. */
 export type VisibleArrowStyle = Exclude<ArrowStyle, 'none'>;

@@ -325,7 +325,7 @@ describe('smoothStepPath', () => {
   });
 
   it('never rounds a corner by more than half of its shorter leg', () => {
-    // The second leg is 6px, so its fillet has to stop at 3px, not the 10px default.
+    // The second leg is 6px, so its fillet has to stop at 3px, not the 12px default.
     const d = smoothStepPath([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 6 }]);
     expect(d).toBe('M 0 0 L 97 0 Q 100 0 100 3 L 100 6');
   });
