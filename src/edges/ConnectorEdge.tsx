@@ -11,7 +11,9 @@ import {
 } from '../lib/edgeGeometry';
 import {
   buildConnectorPath,
+  estimateLabelWidth,
   interpolatePolyline,
+  labelLift,
   type PathSegment,
   type Point,
 } from '../lib/connectorPath';
@@ -19,7 +21,7 @@ import { manhattanRoute } from '../lib/manhattanRouter';
 import { absolutePosition } from '../lib/nodeTree';
 import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { markerDepthPx } from '../lib/edgeMarkers';
-import { isAnchorNode } from '../lib/nodeKinds';
+import { isAnchorNode, isFloatingArrowEdge } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
@@ -345,7 +347,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   if (!sourceNode || !targetNode) return null;
 
-  const isFloatingArrow = isAnchorNode(sourceNode.data) && isAnchorNode(targetNode.data);
+  const isFloatingArrow = isFloatingArrowEdge({ data }, sourceNode.data, targetNode.data);
 
   const floating = floatingEdgeSides(rectOfNode(sourceNode, byId), rectOfNode(targetNode, byId));
   const sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };
@@ -410,7 +412,25 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   pathPointsRef.current = pathPoints;
 
   const labelT = data?.labelT ?? 0.5;
-  const labelPos = interpolatePolyline(pathPoints, labelT);
+  const labelAnchor = interpolatePolyline(pathPoints, labelT);
+  // On a run too short to carry its label between the arrowheads, the pill is
+  // lifted one pill-height off the line, along the line's normal there, so the
+  // line and both heads stay visible under it.
+  const lift = labelLift(
+    polylineLength(pathPoints),
+    estimateLabelWidth(data?.label ?? '', FONT_SIZE_PX[data?.labelFontSize ?? 'medium']),
+  );
+  const labelPos = (() => {
+    if (!lift) return labelAnchor;
+    const a = interpolatePolyline(pathPoints, Math.max(0, labelT - 0.02));
+    const b = interpolatePolyline(pathPoints, Math.min(1, labelT + 0.02));
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    // The normal that points "up" on screen, whichever way the line runs.
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    const sign = ny <= 0 ? 1 : -1;
+    return { x: labelAnchor.x + nx * lift * sign, y: labelAnchor.y + ny * lift * sign };
+  })();
 
   /**
    * Where a bend dragged out of the path at `at` belongs in the list: after

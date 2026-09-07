@@ -7,6 +7,7 @@ import {
   isInkNode,
   isTableNode,
   isWireNode,
+  isFloatingArrowEdge,
 } from './nodeKinds';
 import type { DiagramNodeType, ShapeData, ShapeKind } from '../types';
 
@@ -147,5 +148,21 @@ describe('isTableNode', () => {
     expect(isContainerNode({ type: 'table' })).toBe(false);
     expect(isContainerNode({ type: 'frame' })).toBe(true);
     expect(isContainerNode({ type: 'group' })).toBe(true);
+  });
+});
+
+describe('isFloatingArrowEdge', () => {
+  const anchor = { shape: 'rectangle' as const, fill: 'transparent', stroke: 'transparent' };
+  const shape = { shape: 'rectangle' as const, fill: '#FFFFFF', stroke: '#CBD5E1' };
+
+  it('is a floating arrow when both ends are anchors and nothing claims them', () => {
+    expect(isFloatingArrowEdge({ data: {} }, anchor, anchor)).toBe(true);
+    expect(isFloatingArrowEdge({ data: undefined }, anchor, anchor)).toBe(true);
+    expect(isFloatingArrowEdge({ data: {} }, anchor, shape)).toBe(false);
+  });
+
+  it('is not one for a sequence diagram’s message, whose anchors belong to lifelines', () => {
+    expect(isFloatingArrowEdge({ data: { sequence: { kind: 'message', index: 0 } } }, anchor, anchor)).toBe(false);
+    expect(isFloatingArrowEdge({ data: { sequence: { kind: 'lifeline', index: 0 } } }, anchor, anchor)).toBe(false);
   });
 });

@@ -637,6 +637,13 @@ export interface DiagramState {
    * Transient — set by the canvas from the keyboard, never saved.
    */
   snapOverride: SnapOverride;
+  /**
+   * The shape a connector being drawn would land on if released now — the
+   * one under the pointer during the connector tool's drag or a handle drag.
+   * Transient, never saved; `ShapeNode` outlines it so the release has a
+   * visible answer before it happens.
+   */
+  connectTargetId: string | null;
   /** Where the canvas was left, restored on the next open. `null` until it is reported. */
   viewport: DiagramViewport | null;
   tool: Tool;
@@ -843,6 +850,7 @@ export interface DiagramState {
    */
   setSlideOrder: (orderedIds: readonly string[]) => void;
   setSnapOverride: (override: SnapOverride) => void;
+  setConnectTarget: (id: string | null) => void;
   /**
    * Leaves exactly `ids` selected. A selection is not part of the diagram, so
    * this pushes no history — the same as clicking would.
@@ -1767,6 +1775,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   edges: [],
   guides: [],
   snapOverride: 'none',
+  connectTargetId: null,
   viewport: null,
   tool: 'select',
   wireComponent: 'button' as WireComponent,
@@ -2309,6 +2318,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       edges: s.edges.map((e) => (e.selected !== ids.has(e.id) ? { ...e, selected: ids.has(e.id) } : e)),
     }));
   },
+
+  setConnectTarget: (id) => set((s) => (s.connectTargetId === id ? s : { connectTargetId: id })),
 
   setSnapOverride: (override) => set((s) => (s.snapOverride === override ? s : { snapOverride: override })),
 

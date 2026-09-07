@@ -153,3 +153,22 @@ export function canSwapShapeKind(
   if (isAnchorNode(data)) return false;
   return !data.locked;
 }
+
+/**
+ * True for a connector the user can pick up and move as a whole: a floating
+ * arrow, whose two ends are the invisible anchors above and belong to nothing.
+ *
+ * A sequence diagram's messages *also* run between two anchors, but those
+ * anchors sit on lifelines and are children of their participants — the
+ * message is pinned to the diagram, and dragging the pair loose would leave it
+ * floating between columns. The `sequence` tag on the connector is what tells
+ * the two apart, since nothing about the anchors themselves does.
+ */
+export function isFloatingArrowEdge(
+  edge: { data?: { sequence?: unknown } | undefined },
+  sourceData: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>,
+  targetData: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>,
+): boolean {
+  if (edge.data?.sequence !== undefined) return false;
+  return isAnchorNode(sourceData) && isAnchorNode(targetData);
+}
