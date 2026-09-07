@@ -99,6 +99,46 @@ describe('the read-only gate', () => {
   });
 });
 
+describe('the save-as-default command', () => {
+  const command = registry.find('style.saveDefault')!;
+
+  /** A context with exactly these nodes and edges selected. */
+  function ctxOf(nodes: unknown[], edges: unknown[] = []): CommandContext {
+    return {
+      store: { getState: () => ({ readOnly: false, nodes, edges, tool: 'select' }), setState: () => {} },
+    } as unknown as CommandContext;
+  }
+
+  it('is offered on the shape menu and on the connector menu', () => {
+    // A connector has a default of its own, and the shape menu is not where
+    // anyone would look for it.
+    expect(command.contextMenu).toEqual(['node', 'edge']);
+  });
+
+  it('carries ⌘⇧D and is withdrawn in read-only mode', () => {
+    expect(command.shortcut).toEqual({ key: 'd', meta: true, shift: true });
+    expect(offered('style.saveDefault', ctxWith(true))).toBe(false);
+  });
+
+  it('is offered for one shape or one connector, and for nothing else', () => {
+    const shape = { id: 'n1', selected: true, type: 'shape', data: { shape: 'rectangle' } };
+    const other = { id: 'n2', selected: true, type: 'shape', data: { shape: 'ellipse' } };
+    const edge = { id: 'e1', selected: true, data: { stroke: '#123456' } };
+
+    expect(command.when!(ctxOf([shape]))).toBe(true);
+    expect(command.when!(ctxOf([], [edge]))).toBe(true);
+    // Nothing selected, two things selected, or one of each: "make *this* the
+    // default" has no answer for any of them.
+    expect(command.when!(ctxOf([]))).toBe(false);
+    expect(command.when!(ctxOf([shape, other]))).toBe(false);
+    expect(command.when!(ctxOf([shape], [edge]))).toBe(false);
+    // A group, a frame and an image have no style to copy.
+    expect(command.when!(ctxOf([{ ...shape, type: 'group' }]))).toBe(false);
+    expect(command.when!(ctxOf([{ ...shape, type: 'frame' }]))).toBe(false);
+    expect(command.when!(ctxOf([{ ...shape, data: { shape: 'image' } }]))).toBe(false);
+  });
+});
+
 describe('the comment command', () => {
   const command = registry.find('comment.add')!;
 

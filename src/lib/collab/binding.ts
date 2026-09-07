@@ -40,6 +40,8 @@
 import * as Y from 'yjs';
 import type { DiagramData, SerializedEdge, SerializedNode } from '../../../shared/types';
 import {
+  DEFAULTS_KEY,
+  defaultsOf,
   docMeta,
   edgeEntries,
   edgesOf,
@@ -53,6 +55,7 @@ import {
 import type { ConnectorEdge, DiagramState, DocumentHistory, ShapeNode } from '../../store/useDiagramStore';
 import { hasDocumentHistory, serializeDiagram } from '../../store/useDiagramStore';
 import { normalizeParentage } from '../nodeTree';
+import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -177,8 +180,28 @@ export function pushDiagramToDoc(doc: Y.Doc, data: DiagramData, origin: unknown)
       meta.set(VIEWPORT_KEY, plain(data.viewport));
       changed = true;
     }
+
+    // The board's defaults, on the other hand, *are* everybody's: a shape a
+    // collaborator draws after somebody pressed ⌘⇧D has to come out in the
+    // style that was saved. Written when they differ, deleted when the board
+    // has none, so a diagram nobody has set one on holds no key at all.
+    changed = syncDefaults(meta, data.defaults as BoardDefaults | undefined) || changed;
   }, origin);
   return changed;
+}
+
+/** Write `defaults` into `meta`, or remove the key. True when something moved. */
+function syncDefaults(meta: Y.Map<unknown>, defaults: BoardDefaults | undefined): boolean {
+  const value = defaults && Object.keys(defaults).length > 0 ? defaults : undefined;
+  const current = meta.get(DEFAULTS_KEY);
+  if (value === undefined) {
+    if (current === undefined) return false;
+    meta.delete(DEFAULTS_KEY);
+    return true;
+  }
+  if (same(current, value)) return false;
+  meta.set(DEFAULTS_KEY, plain(value));
+  return true;
 }
 
 /**
@@ -202,6 +225,12 @@ export function applyLocalEditsSince(
   doc.transact(() => {
     mergeSince(nodeEntries(doc), baseline.nodes, current.nodes);
     mergeSince(edgeEntries(doc), baseline.edges, current.edges);
+    // Same rule for the board's defaults: a ⌘⇧D pressed in the beat before the
+    // socket opened is this browser's edit and belongs in the document, while
+    // one that has not changed since the load is the document's business.
+    if (!same(baseline.defaults, current.defaults)) {
+      syncDefaults(docMeta(doc), current.defaults as BoardDefaults | undefined);
+    }
   }, origin);
 }
 
@@ -269,7 +298,7 @@ export function docEdgesOntoStore(
 
 /** The store's diagram, in the form the document holds it. */
 function diagramOf(state: DiagramState): DiagramData {
-  return serializeDiagram(state.nodes, state.edges, state.viewport);
+  return serializeDiagram(state.nodes, state.edges, state.viewport, state.defaults);
 }
 
 /**
@@ -329,17 +358,30 @@ export function bindDocToStore(
     const nodes = nodesOf(doc);
     const edges = edgesOf(doc);
     const next = JSON.stringify([nodes, edges]);
-    if (next === rendered) return;
-    rendered = next;
+    // Written by another browser, so narrowed to style keys before anything
+    // here acts on it — `sanitizeDefaults` is the same gate a stored row goes
+    // through on load.
+    const defaults = sanitizeDefaults(defaultsOf(doc)) ?? {};
 
     const state = store.getState();
+    const elementsChanged = next !== rendered;
+    const defaultsChanged = !same(defaults, state.defaults);
+    if (!elementsChanged && !defaultsChanged) return;
+
+    const patch: Partial<DiagramState> = {};
+    if (elementsChanged) {
+      rendered = next;
+      patch.nodes = docNodesOntoStore(nodes, state.nodes);
+      patch.edges = docEdgesOntoStore(edges, state.edges);
+    }
+    // The one thing in `meta` that *is* read back: a default is a property of
+    // the board, not of the window it was set in. The viewport is not — see
+    // `pushDiagramToDoc`.
+    if (defaultsChanged) patch.defaults = defaults;
+
     applyingRemote = true;
     try {
-      // The viewport is deliberately not read back — see `pushDiagramToDoc`.
-      store.setState({
-        nodes: docNodesOntoStore(nodes, state.nodes),
-        edges: docEdgesOntoStore(edges, state.edges),
-      });
+      store.setState(patch);
     } finally {
       applyingRemote = false;
     }
@@ -545,7 +587,8 @@ export function bindDocToStore(
     if (
       state.nodes === previous.nodes &&
       state.edges === previous.edges &&
-      state.viewport === previous.viewport
+      state.viewport === previous.viewport &&
+      state.defaults === previous.defaults
     ) {
       return;
     }

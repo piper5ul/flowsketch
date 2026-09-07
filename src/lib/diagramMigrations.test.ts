@@ -219,6 +219,29 @@ describe('migrateDiagramData', () => {
     }
   });
 
+  it('leaves a payload that has no board defaults without any', () => {
+    // Every diagram written before ⌘⇧D existed: absent means "no board
+    // defaults", which is why this needed no version of its own.
+    expect('defaults' in migrateDiagramData(v0)).toBe(false);
+  });
+
+  it('carries stored board defaults through, narrowed to style', () => {
+    const migrated = migrateDiagramData({
+      ...v0,
+      defaults: {
+        shape: { fill: '#FF0000', label: 'no', locked: true, imageSrc: '/api/images/abc' },
+        connector: { strokeWidth: 3, waypoints: [{ x: 1, y: 2 }] },
+      },
+    });
+    expect(migrated.defaults).toEqual({ shape: { fill: '#FF0000' }, connector: { strokeWidth: 3 } });
+  });
+
+  it('drops a defaults value nothing could act on', () => {
+    for (const defaults of ['nope', null, 42, [], { shape: 'red' }, { shape: { label: 'no' } }]) {
+      expect('defaults' in migrateDiagramData({ ...v0, defaults }), JSON.stringify(defaults)).toBe(false);
+    }
+  });
+
   it('throws a descriptive error for a diagram from a newer version', () => {
     expect(() => migrateDiagramData({ version: CURRENT_DIAGRAM_VERSION + 1, nodes: [], edges: [] }))
       .toThrow(/newer version/i);

@@ -12,7 +12,6 @@ import {
 import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
-import { makeEdgeData } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
 import {
@@ -87,7 +86,6 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const setTool = useDiagramStore((s) => s.setTool);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
-  const defaultConnector = useDiagramStore((s) => s.defaultConnector);
   // Nothing on this canvas may change the diagram while this is true — see the
   // `readOnly` note in the store for why the gate lives out here and not there.
   const readOnly = useDiagramStore((s) => s.readOnly);
@@ -324,7 +322,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
       if (connectorSourceRef.current === node.id) return;
 
-      const edgeData = makeEdgeData(defaultConnector);
+      const edgeData = useDiagramStore.getState().newConnectorData();
       addEdges({
         id: nanoid(8),
         source: connectorSourceRef.current,
@@ -336,7 +334,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       });
       connectorSourceRef.current = null;
     },
-    [tool, addEdges, defaultConnector, placeTool],
+    [tool, addEdges, placeTool],
   );
 
   const onPaneClick = useCallback(
@@ -370,7 +368,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
             data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
           },
         ]);
-        const edgeData = makeEdgeData(defaultConnector);
+        const edgeData = useDiagramStore.getState().newConnectorData();
         addEdges({
           id: nanoid(8),
           source: startId,
@@ -388,7 +386,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
       placeTool(event);
     },
-    [tool, screenToFlowPosition, setTool, setEditingNodeId, addNodes, addEdges, defaultConnector, placeTool],
+    [tool, screenToFlowPosition, setTool, setEditingNodeId, addNodes, addEdges, placeTool],
   );
 
   // A fresh connector renders no label element, so there is nothing to
@@ -478,7 +476,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
    */
   const createShapeWithConnector = useCallback(
     (sourceId: string, sourceAnchor: EdgeAnchor | undefined, at: Point, from: Point) => {
-      const { defaultFill, defaultStroke } = useDiagramStore.getState();
+      const { newShapeData, newConnectorData } = useDiagramStore.getState();
       const id = nanoid(8);
       const width = 180;
       const height = 100;
@@ -488,9 +486,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         position: { x: at.x - width / 2, y: at.y - height / 2 },
         width,
         height,
-        data: { label: '', shape: 'rectangle', fill: defaultFill, stroke: defaultStroke },
+        data: newShapeData('rectangle'),
       });
-      const edgeData = { ...makeEdgeData(defaultConnector), sourceAnchor, targetAnchor: sideAnchor(facingSide(from, at)) };
+      const edgeData = { ...newConnectorData(), sourceAnchor, targetAnchor: sideAnchor(facingSide(from, at)) };
       addEdges({
         id: nanoid(8),
         source: sourceId,
@@ -502,7 +500,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         data: edgeData,
       });
     },
-    [addNodes, addEdges, defaultConnector],
+    [addNodes, addEdges],
   );
 
   /**
@@ -562,7 +560,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         const target = nodeAtPoint(current, at, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
         if (target) {
           const targetAnchor = anchorFor(target, new Map(current.map((n) => [n.id, n] as const)), at);
-          const edgeData = { ...makeEdgeData(defaultConnector), sourceAnchor: g.anchor, targetAnchor: targetAnchor ?? undefined };
+          const edgeData = { ...useDiagramStore.getState().newConnectorData(), sourceAnchor: g.anchor, targetAnchor: targetAnchor ?? undefined };
           addEdges({
             id: nanoid(8),
             source: g.sourceId,
@@ -586,7 +584,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       window.addEventListener('pointerup', onUp);
       window.addEventListener('keydown', onKey);
     },
-    [tool, readOnly, screenToFlowPosition, addEdges, defaultConnector, createShapeWithConnector, setTool],
+    [tool, readOnly, screenToFlowPosition, addEdges, createShapeWithConnector, setTool],
   );
 
   // Dragging a connector out to empty canvas creates a new connected shape,

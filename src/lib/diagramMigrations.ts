@@ -14,12 +14,16 @@
  * absent one reads as `'filled'` (`resolveFillStyle` in `src/lib/shapeStyle.ts`),
  * so every diagram written before it existed is already correct and there is no
  * step here for it — a field is only worth a version when the *old* spelling
- * would be misread without one.
+ * would be misread without one. `DiagramData.defaults` (the board's "save as
+ * default style") is the same case: absent means "no board defaults" and the
+ * built-in ones apply, which is what every diagram written before it already
+ * wants. It is *narrowed* rather than migrated — see `sanitizeDefaults`.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';
 import { computeMarkers } from './edgeMarkers.js';
 import { DEFAULT_EDGE_STROKE } from './defaults.js';
+import { sanitizeDefaults } from './defaultStyle.js';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 3;
@@ -202,6 +206,13 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const viewport = viewportOf(data.viewport);
   if (viewport) migrated.viewport = viewport;
   else delete migrated.viewport;
+
+  // Narrowed on the way in, whatever version the payload came in at: the column
+  // is free-form JSON, and a `defaults` carrying a label, a lock or an image
+  // would stamp it on every shape drawn after it.
+  const defaults = sanitizeDefaults(data.defaults);
+  if (defaults) migrated.defaults = defaults;
+  else delete migrated.defaults;
 
   return migrated;
 }

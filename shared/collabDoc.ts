@@ -24,15 +24,24 @@
  * of ids would be one key every edit fights over.
  */
 import * as Y from 'yjs';
-import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from './types.js';
+import type { DiagramData, DiagramDefaults, DiagramViewport, SerializedEdge, SerializedNode } from './types.js';
 
 /** The `Y.Doc` top-level keys. Changing one is a format change. */
 export const NODES_KEY = 'nodes';
 export const EDGES_KEY = 'edges';
 export const META_KEY = 'meta';
 
-/** The `meta` map's only key today: where the canvas was left. */
+/** The `meta` map's keys: where the canvas was left, and the board's defaults. */
 export const VIEWPORT_KEY = 'viewport';
+/**
+ * The style new elements are drawn in on this board (⌘⇧D).
+ *
+ * In `meta` alongside the viewport, and the one thing there that **is** read
+ * back out: a default is a property of the board, so a collaborator drawing a
+ * shape after somebody set one must get it. (The viewport is the opposite: a
+ * peer scrolling their window must not move yours.)
+ */
+export const DEFAULTS_KEY = 'defaults';
 
 /**
  * One element in the document: the JSON the app has always written, plus where
@@ -116,6 +125,21 @@ export function viewportOf(doc: Y.Doc): DiagramViewport | undefined {
 }
 
 /**
+ * The board's defaults as the document holds them, if it holds any.
+ *
+ * Only the *shape* of the value is checked here — that it is an object at all.
+ * What is in it is another browser's writing, and narrowing it to the style
+ * keys this build will act on is `sanitizeDefaults`' job (`src/lib/defaultStyle.ts`),
+ * which every reader runs it through: this module describes the format and
+ * holds no opinion about what a style is.
+ */
+export function defaultsOf(doc: Y.Doc): DiagramDefaults | undefined {
+  const raw = docMeta(doc).get(DEFAULTS_KEY);
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  return raw as DiagramDefaults;
+}
+
+/**
  * Whether anything has ever been written to `doc` — the question `fetch` asks
  * to decide whether a diagram still needs seeding from its JSON.
  *
@@ -149,6 +173,8 @@ export function writeDiagramIntoDoc(doc: Y.Doc, data: DiagramData, origin?: unkn
     const meta = docMeta(doc);
     if (data.viewport) meta.set(VIEWPORT_KEY, data.viewport);
     else meta.delete(VIEWPORT_KEY);
+    if (data.defaults) meta.set(DEFAULTS_KEY, data.defaults);
+    else meta.delete(DEFAULTS_KEY);
     meta.set(SEEDED_KEY, true);
   }, origin);
 }

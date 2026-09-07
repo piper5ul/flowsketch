@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS } from '../lib/nodeKinds';
+import { DEFAULT_SWATCH } from '../lib/palette';
 import { useToastStore } from './useToastStore';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 
@@ -44,7 +45,7 @@ describe('addShape', () => {
       position: { x: 10, y: 20 },
       width: 180,
       height: 100,
-      data: { shape: 'rectangle', label: '', fill: store().defaultFill, stroke: store().defaultStroke },
+      data: { shape: 'rectangle', label: '', fill: DEFAULT_SWATCH.fill, stroke: DEFAULT_SWATCH.stroke },
     });
   });
 
@@ -84,8 +85,8 @@ describe('setSelectedShapeKind', () => {
     expect(first.data).toMatchObject({
       shape: 'diamond',
       label: 'Start',
-      fill: store().defaultFill,
-      stroke: store().defaultStroke,
+      fill: DEFAULT_SWATCH.fill,
+      stroke: DEFAULT_SWATCH.stroke,
     });
     // The swap is about the outline, not the box: a rectangle keeps the 180×100
     // it was drawn at rather than snapping to the diamond's default size.
@@ -978,6 +979,260 @@ describe('addConnectedShape', () => {
   });
 });
 
+describe('saveSelectionAsDefault', () => {
+  /** Select exactly this edge (and no nodes). */
+  function selectEdge(id: string) {
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => ({ ...n, selected: false })),
+      edges: s.edges.map((e) => ({ ...e, selected: e.id === id })),
+    }));
+  }
+
+  it("saves a shape's style on the board, and the next shape is drawn in it", () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, { fill: '#FF0000', stroke: '#880000', fillStyle: 'outline', bold: true });
+    select(a);
+
+    expect(store().saveSelectionAsDefault()).toBe('shape');
+    expect(store().defaults.shape).toMatchObject({
+      fill: '#FF0000',
+      stroke: '#880000',
+      fillStyle: 'outline',
+      bold: true,
+    });
+
+    const next = store().addShape('ellipse', { x: 300, y: 0 });
+    expect(store().nodes.find((n) => n.id === next)!.data).toMatchObject({
+      // The style, and only the style: an ellipse drawn under a rectangle's
+      // default is still an ellipse, and is not called what the rectangle was.
+      shape: 'ellipse',
+      label: '',
+      fill: '#FF0000',
+      fillStyle: 'outline',
+      bold: true,
+    });
+  });
+
+  it('never lets a label, a link, a lock or an image into the default', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, {
+      label: 'Do not copy me',
+      link: 'https://example.com',
+      locked: true,
+      imageSrc: '/api/images/abc',
+      fill: '#FF0000',
+    });
+    select(a);
+    store().saveSelectionAsDefault();
+
+    expect(store().defaults.shape).toEqual({ fill: '#FF0000', stroke: DEFAULT_SWATCH.stroke });
+    const next = store().addShape('rectangle', { x: 300, y: 0 });
+    const data = store().nodes.find((n) => n.id === next)!.data;
+    expect(data.label).toBe('');
+    expect(data.link).toBeUndefined();
+    expect(data.locked).toBeUndefined();
+    expect(data.imageSrc).toBeUndefined();
+  });
+
+  it('never lets a size or a position into the default', () => {
+    const a = store().addShape('rectangle', { x: 10, y: 20 });
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => (n.id === a ? { ...n, width: 900, height: 700 } : n)),
+    }));
+    select(a);
+    store().saveSelectionAsDefault();
+
+    const next = store().addShape('rectangle', { x: 300, y: 0 });
+    const node = store().nodes.find((n) => n.id === next)!;
+    expect({ width: node.width, height: node.height }).toEqual({ width: 180, height: 100 });
+    expect(node.position).toEqual({ x: 300, y: 0 });
+  });
+
+  it('keeps a sticky note, a text shape and a shape apart', () => {
+    const sticky = store().addShape('sticky', { x: 0, y: 0 });
+    store().updateNodeData(sticky, { fill: '#FF00FF' });
+    select(sticky);
+    expect(store().saveSelectionAsDefault()).toBe('sticky');
+
+    store().addShape('sticky', { x: 0, y: 0 });
+    expect(store().nodes.at(-1)!.data.fill).toBe('#FF00FF');
+    // A rectangle is not a sticky note, and a text shape is neither.
+    expect(store().newShapeData('rectangle').fill).toBe(DEFAULT_SWATCH.fill);
+    expect(store().newShapeData('text').fill).toBe('transparent');
+  });
+
+  it("saves a connector's style, and the next connector is drawn in it", () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const edgeId = store().edges[0].id;
+    store().updateEdgeData(edgeId, {
+      connectorType: 'curved',
+      stroke: '#123456',
+      strokeStyle: 'dashed',
+      strokeWidth: 3,
+      startArrowStyle: 'circle',
+      endArrowStyle: 'diamond',
+      label: 'not a default',
+    });
+    selectEdge(edgeId);
+
+    expect(store().saveSelectionAsDefault()).toBe('connector');
+    expect(store().defaults.connector).toEqual({
+      connectorType: 'curved',
+      stroke: '#123456',
+      strokeStyle: 'dashed',
+      strokeWidth: 3,
+      startArrowStyle: 'circle',
+      endArrowStyle: 'diamond',
+    });
+
+    const data = store().newConnectorData();
+    expect(data).toMatchObject({ connectorType: 'curved', stroke: '#123456', strokeWidth: 3 });
+    // The label is one connector's words, never every connector's.
+    expect(data.label).toBe('');
+  });
+
+  it("regenerates the arrowheads of a connector drawn in the board's default", () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const edgeId = store().edges[0].id;
+    store().updateEdgeData(edgeId, { stroke: '#123456', startArrowStyle: 'diamond' });
+    selectEdge(edgeId);
+    store().saveSelectionAsDefault();
+
+    const b = store().addShape('rectangle', { x: 600, y: 0 });
+    store().onConnect({ source: a, target: b, sourceHandle: 'right', targetHandle: 'left' });
+    const made = store().edges.at(-1)!;
+    // Markers are derived from the data, so a default that changes the colour
+    // or an arrowhead has to change the ids on the edge with it.
+    expect(made).toMatchObject(computeMarkers(made.data!));
+    expect(made.markerStart).toBeTruthy();
+  });
+
+  it('draws a quick-added connector in the default too', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const edgeId = store().edges[0].id;
+    store().updateEdgeData(edgeId, { connectorType: 'straight', stroke: '#123456' });
+    selectEdge(edgeId);
+    store().saveSelectionAsDefault();
+
+    store().addConnectedShape(a, 'bottom');
+    expect(store().edges.at(-1)!.data).toMatchObject({ connectorType: 'straight', stroke: '#123456' });
+  });
+
+  it('overrules the swatch this session had been using', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    // The session picks red, then a *blue* shape is made the board default.
+    store().updateSelectedNodesStyle({ fill: '#FF0000', stroke: '#880000' });
+    const b = store().addShape('rectangle', { x: 300, y: 0 });
+    store().updateNodeData(b, { fill: '#0000FF', stroke: '#000088' });
+    select(b);
+    store().saveSelectionAsDefault();
+
+    // Saving a default is the more recent word, so it clears the session layer
+    // rather than being quietly overruled by a swatch picked earlier.
+    expect(store().newShapeData('rectangle').fill).toBe('#0000FF');
+  });
+
+  it('refuses a selection that is not exactly one thing', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 300, y: 0 });
+    expect(store().saveSelectionAsDefault()).toBeNull();
+    select(a, b);
+    expect(store().saveSelectionAsDefault()).toBeNull();
+    expect(store().defaults).toEqual({});
+  });
+
+  it('refuses a container, which has no style to copy', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 300, y: 0 });
+    select(a, b);
+    store().groupSelected();
+    const group = store().nodes.find((n) => n.type === 'group')!;
+    select(group.id);
+    expect(store().saveSelectionAsDefault()).toBeNull();
+
+    const frame = store().addFrame({ x: 0, y: 600 });
+    select(frame);
+    expect(store().saveSelectionAsDefault()).toBeNull();
+    expect(store().defaults).toEqual({});
+  });
+
+  it('is not undoable, in either history', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, { fill: '#FF0000' });
+    select(a);
+    const before = store().canUndo;
+
+    store().saveSelectionAsDefault();
+
+    // No entry of its own: the defaults live in the document's `meta`, which
+    // the Y.UndoManager does not track, so the snapshot stack keeps the same
+    // rule and the two histories say the same thing.
+    expect(store().canUndo).toBe(before);
+    store().undo();
+    expect(store().defaults.shape).toMatchObject({ fill: '#FF0000' });
+    // What the undo took back is the colour — the edit before it.
+    expect(store().nodes.find((n) => n.id === a)!.data.fill).not.toBe('#FF0000');
+  });
+
+  it('round-trips through the saved JSON', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, { fill: '#FF0000', fillStyle: 'outline' });
+    select(a);
+    store().saveSelectionAsDefault();
+
+    const saved = JSON.parse(
+      JSON.stringify(serializeDiagram(store().nodes, store().edges, store().viewport, store().defaults)),
+    );
+    expect(saved.defaults).toEqual({
+      shape: { fill: '#FF0000', stroke: DEFAULT_SWATCH.stroke, fillStyle: 'outline' },
+    });
+
+    store().loadDiagram('test', 'Test', false, saved);
+    expect(store().defaults.shape).toMatchObject({ fill: '#FF0000', fillStyle: 'outline' });
+    store().addShape('rectangle', { x: 0, y: 0 });
+    expect(store().nodes.at(-1)!.data).toMatchObject({ fill: '#FF0000', fillStyle: 'outline' });
+  });
+
+  it('leaves the JSON of a board with no default exactly as it was', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    const data = serializeDiagram(store().nodes, store().edges, store().viewport, store().defaults);
+    expect('defaults' in data).toBe(false);
+  });
+
+  it('belongs to the board it was set on', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, { fill: '#FF0000' });
+    select(a);
+    store().saveSelectionAsDefault();
+
+    // Opening another diagram in the same tab must not carry it across.
+    store().loadDiagram('other', 'Other', false, { nodes: [], edges: [] });
+    expect(store().defaults).toEqual({});
+    expect(store().newShapeData('rectangle').fill).toBe(DEFAULT_SWATCH.fill);
+  });
+
+  it('drops a stored default that carries anything but style', () => {
+    // `Diagram.data` is free-form JSON: a hand-edited or hostile row must not
+    // be able to stamp a lock or a picture onto every new shape.
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [],
+      defaults: { shape: { fill: '#FF0000', locked: true, imageSrc: '/api/images/abc', label: 'no' } },
+    });
+    expect(store().defaults.shape).toEqual({ fill: '#FF0000' });
+    store().addShape('rectangle', { x: 0, y: 0 });
+    const data = store().nodes.at(-1)!.data;
+    expect(data.locked).toBeUndefined();
+    expect(data.imageSrc).toBeUndefined();
+    expect(data.label).toBe('');
+  });
+});
+
 describe('setDefaultStyle', () => {
   it('draws quick-added connectors with the default kind', () => {
     store().setDefaultStyle({ connector: 'curved' });
@@ -995,9 +1250,16 @@ describe('setDefaultStyle', () => {
   });
 
   it('leaves the colours alone when only the connector kind is set', () => {
-    const { defaultFill, defaultStroke } = store();
+    store().setDefaultStyle({ fill: '#111111', stroke: '#222222' });
     store().setDefaultStyle({ connector: 'straight' });
-    expect(store()).toMatchObject({ defaultFill, defaultStroke, defaultConnector: 'straight' });
+    expect(store().newShapeData('rectangle')).toMatchObject({ fill: '#111111', stroke: '#222222' });
+    expect(store().newConnectorData().connectorType).toBe('straight');
+  });
+
+  it('is session only — nothing it sets is saved with the diagram', () => {
+    store().setDefaultStyle({ fill: '#111111', connector: 'straight' });
+    expect(store().defaults).toEqual({});
+    expect(serializeDiagram(store().nodes, store().edges, null, store().defaults).defaults).toBeUndefined();
   });
 });
 
@@ -1183,7 +1445,7 @@ describe('updateSelectedEdgesStyle', () => {
 });
 
 describe('updateSelectedNodesStyle', () => {
-  it('restyles the selection and makes that style the new default', () => {
+  it('restyles the selection and carries that style to the next shape', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     store().addShape('rectangle', { x: 0, y: 0 });
     select(a);
@@ -1191,8 +1453,29 @@ describe('updateSelectedNodesStyle', () => {
 
     expect(store().nodes[0].data).toMatchObject({ fill: '#111111', stroke: '#222222' });
     expect(store().nodes[1].data.fill).not.toBe('#111111');
-    expect(store().defaultFill).toBe('#111111');
-    expect(store().defaultStroke).toBe('#222222');
+
+    const next = store().addShape('rectangle', { x: 0, y: 0 });
+    expect(store().nodes.find((n) => n.id === next)!.data).toMatchObject({
+      fill: '#111111',
+      stroke: '#222222',
+    });
+  });
+
+  it('carries the colour only to the kind it was applied to', () => {
+    const sticky = store().addShape('sticky', { x: 0, y: 0 });
+    select(sticky);
+    store().updateSelectedNodesStyle({ fill: '#111111', stroke: '#222222' });
+
+    // Recolouring a sticky note has never been a statement about rectangles.
+    expect(store().newShapeData('rectangle').fill).toBe(DEFAULT_SWATCH.fill);
+    expect(store().newShapeData('sticky').fill).toBe('#111111');
+  });
+
+  it("is session only — the board's saved defaults are untouched", () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    store().updateSelectedNodesStyle({ fill: '#111111', stroke: '#222222' });
+    expect(store().defaults).toEqual({});
   });
 });
 

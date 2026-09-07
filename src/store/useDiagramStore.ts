@@ -23,6 +23,15 @@ import type {
 } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
+import {
+  kindOf,
+  pickConnectorStyle,
+  pickShapeStyle,
+  resolveDefaultStyle,
+  withDefault,
+  type BoardDefaults,
+  type DefaultStyleKind,
+} from '../lib/defaultStyle';
 
 const SIDE_IDS: readonly string[] = ['top', 'right', 'bottom', 'left'];
 /** A React Flow handle id that names one of a shape's four sides. */
@@ -482,9 +491,25 @@ export interface DiagramState {
   /** Where the canvas was left, restored on the next open. `null` until it is reported. */
   viewport: DiagramViewport | null;
   tool: Tool;
-  defaultFill: string;
-  defaultStroke: string;
-  defaultConnector: ConnectorKind;
+  /**
+   * The style new elements are drawn in **on this board** — what ⌘⇧D saves,
+   * what is written into `DiagramData.defaults` and into the collaborative
+   * document's `meta` map, and what a collaborator's new shapes pick up too.
+   * `{}` on a board nobody has set a default on, which is every diagram written
+   * before this existed.
+   */
+  defaults: BoardDefaults;
+  /**
+   * The style this *tab* last used, over the top of the board's.
+   *
+   * Picking a swatch (or a connector kind in the rail) carries over to the next
+   * shape, the way Whimsical's quick-add does — but that is a habit of one
+   * session, not a decision about the board, so it is never saved and never
+   * leaves this browser. `resolveDefaultStyle` puts it above `defaults`, and
+   * `saveSelectionAsDefault` clears the kind it writes: pressing ⌘⇧D is the
+   * more recent word, and must not be overruled by a swatch picked earlier.
+   */
+  lastStyle: BoardDefaults;
   /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
   canUndo: boolean;
   canRedo: boolean;
@@ -621,7 +646,34 @@ export interface DiagramState {
   duplicateSelection: (options?: { offset?: number; select?: boolean }) => void;
   pasteClipboard: (clip: ClipboardPayload, offset?: number) => ClipboardPayload;
 
+  /**
+   * Records the style this session is now using — the rail's connector kind,
+   * and the swatch a colour pick applies. Session only: it writes `lastStyle`,
+   * never the board's `defaults`, so nothing here is saved with the diagram.
+   */
   setDefaultStyle: (patch: { fill?: string; stroke?: string; connector?: ConnectorKind }) => void;
+  /**
+   * "Save as default style" (⌘⇧D): the one selected node or edge becomes the
+   * board's default for its kind, and every new element of that kind is drawn
+   * that way — for everybody on the board, since `defaults` rides in the
+   * collaborative document.
+   *
+   * Returns which kind was saved, or `null` when the selection is not exactly
+   * one thing with a style to copy (a group, a frame and an image have none).
+   *
+   * **It pushes no history entry, on purpose and in both undo models.** For a
+   * bound diagram the defaults live in the document's `meta` map, which is
+   * deliberately outside the `Y.UndoManager`'s scope — so ⌘Z could not take
+   * this back there however it was recorded, and pushing a boundary for it
+   * would only split the *previous* edit in two. The snapshot stacks are held
+   * to the same rule so the two histories agree: setting a default is a
+   * preference about what comes next, not a mark on the diagram.
+   */
+  saveSelectionAsDefault: () => DefaultStyleKind | null;
+  /** The `data` a new shape of `kind` starts with, board defaults applied. */
+  newShapeData: (kind: ShapeKind) => ShapeData;
+  /** The `data` a new connector starts with, board defaults applied. */
+  newConnectorData: () => ConnectorData;
 
   bringToFront: () => void;
   sendToBack: () => void;
@@ -844,6 +896,7 @@ export function serializeDiagram(
   nodes: ShapeNode[],
   edges: ConnectorEdge[],
   viewport?: DiagramViewport | null,
+  defaults?: BoardDefaults | null,
 ): DiagramData {
   return {
     version: CURRENT_DIAGRAM_VERSION,
@@ -852,7 +905,79 @@ export function serializeDiagram(
     // Left out entirely rather than written as null: a diagram nobody has
     // panned should open framed on whatever screen it is opened on.
     ...(viewport ? { viewport } : {}),
+    // Same: a board nobody has pressed ⌘⇧D on writes no `defaults` key at all,
+    // so an older diagram's JSON is unchanged by this feature existing.
+    ...(defaults && Object.keys(defaults).length > 0
+      ? { defaults: defaults as DiagramData['defaults'] }
+      : {}),
   };
+}
+
+/** A sticky note's own colours, which no swatch and no board default supplies. */
+const STICKY_FILL = '#FBF3D0';
+const STICKY_STROKE = '#E9B10A';
+
+/**
+ * The `data` a new shape starts with **before** any board default is laid over
+ * it: the app's own answer, and what a diagram with no defaults still draws.
+ *
+ * A text shape has no box, so it is painted with nothing; a sticky note brings
+ * its own paper; everything else starts on the default swatch.
+ */
+function builtInShapeData(shape: ShapeKind): ShapeData {
+  if (shape === 'sticky') return { label: '', shape, fill: STICKY_FILL, stroke: STICKY_STROKE };
+  if (shape === 'text') return { label: '', shape, fill: 'transparent', stroke: 'transparent' };
+  return { label: '', shape, fill: DEFAULT_SWATCH.fill, stroke: DEFAULT_SWATCH.stroke };
+}
+
+/** The connector kind a board with nothing to say about it draws. */
+const BUILT_IN_CONNECTOR: ConnectorKind = 'elbow';
+
+/**
+ * Which default-style kinds are represented among `nodes`, each once — so a
+ * colour applied to a mixed selection updates the session default for a sticky
+ * note and for a rectangle without either one inheriting the other's.
+ * Containers and images have no style and are simply not among them.
+ */
+function kindsOf(nodes: readonly ShapeNode[]): Exclude<DefaultStyleKind, 'connector'>[] {
+  const kinds = new Set<Exclude<DefaultStyleKind, 'connector'>>();
+  for (const node of nodes) {
+    const kind = kindOf(node);
+    if (kind && kind !== 'connector') kinds.add(kind);
+  }
+  return [...kinds];
+}
+
+/**
+ * `builtInShapeData`, with this board's default for the shape's kind — and then
+ * this session's — laid over it. The two layers are `resolveDefaultStyle`'s;
+ * the whitelist behind them is why a default can only ever restyle a shape and
+ * never relabel, relink or lock it.
+ */
+function shapeDataWithDefaults(
+  shape: ShapeKind,
+  defaults: BoardDefaults,
+  lastStyle: BoardDefaults,
+): ShapeData {
+  const base = builtInShapeData(shape);
+  const kind = kindOf({ type: 'shape', data: { shape } });
+  if (!kind || kind === 'connector') return base;
+  return { ...base, ...resolveDefaultStyle(defaults, lastStyle, kind) };
+}
+
+/** The `data` a new connector starts with, this board's default laid over it. */
+function connectorDataWithDefaults(defaults: BoardDefaults, lastStyle: BoardDefaults): ConnectorData {
+  const style = resolveDefaultStyle(defaults, lastStyle, 'connector');
+  return { ...makeEdgeData(style.connectorType ?? BUILT_IN_CONNECTOR), ...style };
+}
+
+/**
+ * Which connector kind the rail should show as picked. Derived rather than
+ * stored, so there is one answer to "what is the default connector" and the
+ * rail cannot drift from what `newConnectorData` actually builds.
+ */
+export function defaultConnectorKind(state: Pick<DiagramState, 'defaults' | 'lastStyle'>): ConnectorKind {
+  return resolveDefaultStyle(state.defaults, state.lastStyle, 'connector').connectorType ?? BUILT_IN_CONNECTOR;
 }
 
 export const useDiagramStore = create<DiagramState>((set, get) => ({
@@ -873,9 +998,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   guides: [],
   viewport: null,
   tool: 'select',
-  defaultFill: DEFAULT_SWATCH.fill,
-  defaultStroke: DEFAULT_SWATCH.stroke,
-  defaultConnector: 'elbow',
+  defaults: {} as BoardDefaults,
+  lastStyle: {} as BoardDefaults,
   canUndo: false,
   canRedo: false,
   transientSeq: 0,
@@ -919,12 +1043,20 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // Cleared, not kept: /d/A -> /d/B reuses this store, and B must not open
       // on A's camera.
       viewport: migrated.viewport ?? null,
+      // A default belongs to the board it was set on, so this replaces rather
+      // than merges — /d/A -> /d/B must not draw B's shapes in A's colours.
+      // `migrateDiagramData` has already narrowed it to style keys.
+      defaults: (migrated.defaults ?? {}) as BoardDefaults,
+      // The session layer goes with it: it is "the colour I last used *here*",
+      // and carrying it into another diagram would quietly override that
+      // board's own default with a swatch picked on a different board.
+      lastStyle: {} as BoardDefaults,
       ...historyFlags(),
     });
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, viewport, saveStatus, loadedAt, readOnly } = get();
+    const { diagramId, title, nodes, edges, viewport, defaults, saveStatus, loadedAt, readOnly } = get();
     if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
@@ -951,7 +1083,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           // The API rejects a blank title, so a diagram whose name the user
           // cleared would fail every autosave from then on.
           title: title.trim() || 'Untitled',
-          data: serializeDiagram(nodes, edges, viewport),
+          data: serializeDiagram(nodes, edges, viewport, defaults),
           // Only sent when this client knows what version it is building on,
           // and never on an overwrite the user asked for.
           ...(loadedAt !== null && !options?.overwrite ? { ifUnmodifiedSince: loadedAt } : {}),
@@ -1108,7 +1240,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // pressed and released; one that landed on a body handle keeps the
       // automatic side for that end.
       const data: ConnectorData = {
-        ...makeEdgeData(s.defaultConnector),
+        ...connectorDataWithDefaults(s.defaults, s.lastStyle),
         ...(isSideId(connection.sourceHandle) ? { sourceAnchor: { side: connection.sourceHandle, t: 0.5 } } : {}),
         ...(isSideId(connection.targetHandle) ? { targetAnchor: { side: connection.targetHandle, t: 0.5 } } : {}),
       };
@@ -1130,7 +1262,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   addShape: (shape, position) => {
     pushHistory(get());
     const id = nanoid(8);
-    const { defaultFill, defaultStroke } = get();
+    const { defaults, lastStyle } = get();
     const sizeByShape: Record<ShapeKind, { width: number; height: number }> = {
       rectangle: { width: 180, height: 100 },
       ellipse: { width: 120, height: 120 },
@@ -1157,12 +1289,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       type: 'shape',
       position,
       ...sizeByShape[shape],
-      data: {
-        label: '',
-        shape,
-        fill: shape === 'sticky' ? '#FBF3D0' : shape === 'text' ? 'transparent' : defaultFill,
-        stroke: shape === 'text' ? 'transparent' : shape === 'sticky' ? '#E9B10A' : defaultStroke,
-      },
+      // Size is deliberately not part of a default (Whimsical's is not either),
+      // so the table above is the whole of how big a new shape is.
+      data: shapeDataWithDefaults(shape, defaults, lastStyle),
     };
     set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'text' ? id : null }));
     return id;
@@ -1499,12 +1628,16 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       width: newWidth,
       height: newHeight,
       selected: true,
+      // Quick-add inherits from the shape it grew out of, not from the board's
+      // default: the user is extending *this* row of boxes, and a default that
+      // overrode the shape they clicked the handle on would be the wrong
+      // answer even when the default is the one they set.
       data: { label: '', shape: source.data.shape, fill: source.data.fill, stroke: source.data.stroke },
     };
     // Pinned to the two facing sides: a quick-added shape that is later moved
     // keeps leaving from, and arriving at, the sides it was added across.
     const edgeData: ConnectorData = {
-      ...makeEdgeData(state.defaultConnector),
+      ...connectorDataWithDefaults(state.defaults, state.lastStyle),
       sourceAnchor: { side: sourceHandle, t: 0.5 },
       targetAnchor: { side: targetHandle, t: 0.5 },
     };
@@ -1541,8 +1674,14 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     pushHistory(get());
     set((s) => ({
       nodes: s.nodes.map((n) => (n.selected ? { ...n, data: { ...n.data, ...patch } } : n)),
-      defaultFill: patch.fill ?? s.defaultFill,
-      defaultStroke: patch.stroke ?? s.defaultStroke,
+      // The colour carries over to the next shape — but only to the next shape
+      // of the *kind* it was applied to, and only in this tab. Recolouring a
+      // sticky note has never been a statement about rectangles; before board
+      // defaults existed there was one shared pair of colours and it was.
+      lastStyle: kindsOf(s.nodes.filter((n) => n.selected)).reduce(
+        (acc, kind) => withDefault(acc, kind, { ...acc?.[kind], ...pickShapeStyle(patch) }) ?? {},
+        s.lastStyle,
+      ),
     }));
   },
 
@@ -1677,12 +1816,71 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
+  // Session only — see `lastStyle`. A colour picked here is remembered for
+  // every kind of shape, because the caller (the rail, a swatch with nothing
+  // selected) has not said which kind it means; `updateSelectedNodesStyle` is
+  // the path that knows, and it is narrower.
   setDefaultStyle: (patch) =>
+    set((s) => {
+      let lastStyle: BoardDefaults = s.lastStyle;
+      const style = pickShapeStyle(patch);
+      if (Object.keys(style).length > 0) {
+        for (const kind of ['shape', 'sticky', 'text'] as const) {
+          lastStyle = withDefault(lastStyle, kind, { ...lastStyle[kind], ...style }) ?? {};
+        }
+      }
+      if (patch.connector) {
+        lastStyle =
+          withDefault(lastStyle, 'connector', {
+            ...lastStyle.connector,
+            connectorType: patch.connector,
+          }) ?? {};
+      }
+      return { lastStyle };
+    }),
+
+  saveSelectionAsDefault: () => {
+    const state = get();
+    const nodes = state.nodes.filter((n) => n.selected);
+    const edges = state.edges.filter((e) => e.selected);
+    // Exactly one thing: "make *this* the default" has no answer for a
+    // selection of five shapes in three colours, and the command's `when`
+    // withholds it for that reason. Checked here too — the store's actions are
+    // total and are called from tests and from a toolbar as well as a keystroke.
+    if (nodes.length + edges.length !== 1) return null;
+
+    // No `pushHistory`: for a bound diagram the defaults live in the document's
+    // `meta`, which is outside the undo manager's scope, so a boundary here
+    // would only split the previous edit in two. The snapshot stacks follow the
+    // same rule so both histories say the same thing.
+    if (edges.length === 1) {
+      const style = pickConnectorStyle(edges[0].data ?? {});
+      if (Object.keys(style).length === 0) return null;
+      set((s) => ({
+        defaults: withDefault(s.defaults, 'connector', style) ?? {},
+        // The board has just been told what a connector looks like; this tab's
+        // own last-used connector would otherwise go on overriding it.
+        lastStyle: withDefault(s.lastStyle, 'connector', undefined) ?? {},
+      }));
+      return 'connector';
+    }
+
+    const node = nodes[0];
+    const kind = kindOf(node);
+    // A group, a frame and an image have no fill and stroke of their own.
+    if (!kind || kind === 'connector') return null;
+    const style = pickShapeStyle(node.data);
+    if (Object.keys(style).length === 0) return null;
     set((s) => ({
-      defaultFill: patch.fill ?? s.defaultFill,
-      defaultStroke: patch.stroke ?? s.defaultStroke,
-      defaultConnector: patch.connector ?? s.defaultConnector,
-    })),
+      defaults: withDefault(s.defaults, kind, style) ?? {},
+      lastStyle: withDefault(s.lastStyle, kind, undefined) ?? {},
+    }));
+    return kind;
+  },
+
+  newShapeData: (kind) => shapeDataWithDefaults(kind, get().defaults, get().lastStyle),
+
+  newConnectorData: () => connectorDataWithDefaults(get().defaults, get().lastStyle),
 
   // Node stacking order follows array order (later = drawn on top), so
   // z-ordering is just a matter of reordering `nodes` — and then of putting

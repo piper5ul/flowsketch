@@ -54,8 +54,8 @@ function bindWithHistory(doc: Y.Doc, options: { readOnly?: boolean } = {}) {
 
 /** The diagram exactly as an autosave would have written it. */
 function snapshot() {
-  const { nodes, edges, viewport } = store();
-  return serializeDiagram(nodes, edges, viewport);
+  const { nodes, edges, viewport, defaults } = store();
+  return serializeDiagram(nodes, edges, viewport, defaults);
 }
 
 /** Select exactly these node ids, the way the canvas does. */
@@ -238,6 +238,111 @@ describe('store -> doc', () => {
     bind(doc, { readOnly: true });
     store().addShape('rectangle', { x: 0, y: 0 });
     expect(nodeEntries(doc).size).toBe(0);
+  });
+});
+
+/**
+ * Board defaults are shared state, unlike the viewport they sit beside in
+ * `meta`: what ⌘⇧D says has to reach the other windows, or a collaborator's
+ * next shape comes out in the wrong colour.
+ */
+describe('board defaults', () => {
+  /** Make the one selected shape the board's default, as ⌘⇧D does. */
+  function saveDefault(id: string) {
+    select(id);
+    return store().saveSelectionAsDefault();
+  }
+
+  it('writes a default this client saves into the document', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, { fill: '#FF0000', fillStyle: 'outline' });
+
+    expect(saveDefault(a)).toBe('shape');
+
+    expect(docToDiagramData(doc).defaults).toMatchObject({
+      shape: { fill: '#FF0000', fillStyle: 'outline' },
+    });
+    // And the snapshot the server would render still equals the JSON an
+    // autosave would have written — the whole point of the binding.
+    expect(docToDiagramData(doc)).toEqual(snapshot());
+  });
+
+  it('renders a collaborator’s default onto this client', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('rectangle', { x: 0, y: 0 });
+
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    pushDiagramToDoc(
+      peer,
+      { ...docToDiagramData(peer), defaults: { shape: { fill: '#00FF00', stroke: '#008800' } } },
+      'peer',
+    );
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().defaults).toEqual({ shape: { fill: '#00FF00', stroke: '#008800' } });
+    // Which is what the next shape drawn *here* comes out as.
+    store().addShape('rectangle', { x: 300, y: 0 });
+    expect(store().nodes.at(-1)!.data).toMatchObject({ fill: '#00FF00', stroke: '#008800' });
+  });
+
+  it('narrows a collaborator’s default to style before acting on it', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+
+    // Written straight into the document, the way a browser running another
+    // build — or none of ours — could.
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    peer.getMap('meta').set('defaults', {
+      shape: { fill: '#00FF00', locked: true, imageSrc: '/api/images/abc', label: 'no' },
+    });
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().defaults).toEqual({ shape: { fill: '#00FF00' } });
+    store().addShape('rectangle', { x: 0, y: 0 });
+    const data = store().nodes.at(-1)!.data;
+    expect(data.locked).toBeUndefined();
+    expect(data.imageSrc).toBeUndefined();
+    expect(data.label).toBe('');
+  });
+
+  it('carries a default saved before the socket opened into the document', () => {
+    // The board is interactive while the socket is opening, so a ⌘⇧D pressed
+    // in that beat is this browser's edit like any other.
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().updateNodeData(a, { fill: '#FF0000' });
+    const baseline = snapshot();
+    saveDefault(a);
+
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, baseline, 'server');
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    expect(docToDiagramData(doc).defaults).toMatchObject({ shape: { fill: '#FF0000' } });
+    expect(store().defaults.shape).toMatchObject({ fill: '#FF0000' });
+  });
+
+  it('writes nothing for a board that has no default', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('rectangle', { x: 0, y: 0 });
+    expect(doc.getMap('meta').get('defaults')).toBeUndefined();
+    expect('defaults' in docToDiagramData(doc)).toBe(false);
+  });
+
+  it('is not something a viewer writes back', () => {
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, snapshot(), 'server');
+    bind(doc, { readOnly: true });
+
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    saveDefault(a);
+
+    expect(doc.getMap('meta').get('defaults')).toBeUndefined();
   });
 });
 

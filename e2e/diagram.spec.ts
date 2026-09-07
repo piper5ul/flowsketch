@@ -1981,6 +1981,60 @@ test('the connector tool draws from where you press to where you release', async
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
 });
 
+/**
+ * The box a shape's fill and outline are painted on. The wrapper carries
+ * `data-shape`; the div inside it is what `shapePaint` styles.
+ */
+function shapeBox(node: Locator): Locator {
+  return node.locator('[data-shape] > div').first();
+}
+
+test('a shape saved as the default style is what the next shape is drawn in', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 300, y: 220 } });
+  const first = page.locator('.react-flow__node').first();
+  await expect(first).toBeVisible();
+  await first.click();
+
+  // Style it: painted as an outline, in a deep blue swatch.
+  await toolbar.getByRole('button', { name: 'Outline' }).click();
+  await toolbar.getByRole('button', { name: 'Color' }).click();
+  await page.getByRole('button', { name: 'blue-3' }).click();
+  // The trigger toggles the palette shut again.
+  await toolbar.getByRole('button', { name: 'Color' }).click();
+  // #2563EB — `blue-3`'s stroke, which is what an outline shape draws.
+  await expect(shapeBox(first)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+
+  await toolbar.getByRole('button', { name: 'Style', exact: true }).click();
+  await page.getByRole('button', { name: 'Save as default style' }).click();
+  await expect(page.getByText('Saved as default for shapes on this board')).toBeVisible();
+
+  // A second rectangle, drawn from the rail: same outline, same blue, and a
+  // place of its own — a default is a style and nothing else.
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 780, y: 460 } });
+  const second = page.locator('.react-flow__node').nth(1);
+  await expect(second).toBeVisible();
+  await expect(shapeBox(second)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+  await expect(shapeBox(second)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+
+  // And it survives the round trip through the document and its snapshot: a
+  // third shape drawn after a reload is still drawn in the board's default.
+  await expectSynced(page);
+  await page.reload();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.keyboard.press('r');
+  await page.locator('.react-flow__pane').click({ position: { x: 300, y: 620 } });
+  const third = page.locator('.react-flow__node').nth(2);
+  await expect(third).toBeVisible();
+  await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+});
+
 test('K opens the link editor for the selected shape', async ({ page }) => {
   await signUp(page);
   await page.getByRole('button', { name: 'New Diagram' }).first().click();
