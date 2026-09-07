@@ -42,6 +42,7 @@ import { TextFormatBar } from './TextFormatBar';
 import { SearchBar } from './SearchBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { CommandMenu } from './CommandMenu';
+import { MeasureOverlay } from './MeasureOverlay';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import type { Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 
@@ -120,6 +121,41 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const commentAnchorRef = useRef<CommentAnchor | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [commandMenuOpen, setCommandMenuOpen] = useState(false);
+  // Held modifiers, for the three precision gestures: ⌘-drag ignores the
+  // alignment guides, `-drag ignores the grid as well, ⌥-hover measures.
+  const [held, setHeld] = useState({ meta: false, backtick: false, alt: false });
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const setSnapOverride = useDiagramStore((s) => s.setSnapOverride);
+  useEffect(() => {
+    setSnapOverride(held.backtick ? 'all' : held.meta ? 'guides' : 'none');
+  }, [held.backtick, held.meta, setSnapOverride]);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Meta') setHeld((h) => (h.meta ? h : { ...h, meta: true }));
+      else if (e.key === 'Alt') setHeld((h) => (h.alt ? h : { ...h, alt: true }));
+      else if (e.key === '`' && !isTypingTarget(e.target)) setHeld((h) => (h.backtick ? h : { ...h, backtick: true }));
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Meta') setHeld((h) => ({ ...h, meta: false }));
+      else if (e.key === 'Alt') setHeld((h) => ({ ...h, alt: false }));
+      else if (e.key === '`') setHeld((h) => ({ ...h, backtick: false }));
+    };
+    // A key released while another window has focus never reports its keyup.
+    const reset = () => setHeld({ meta: false, backtick: false, alt: false });
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', reset);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', reset);
+    };
+  }, []);
+  const measureFrom = useMemo(() => {
+    if (!held.alt || !hoveredNodeId) return null;
+    const selected = nodes.filter((n) => n.selected);
+    return selected.length === 1 && selected[0].id !== hoveredNodeId ? selected[0].id : null;
+  }, [held.alt, hoveredNodeId, nodes]);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   // Read once, at mount: React Flow only reads `defaultViewport` and `fitView`
@@ -695,6 +731,8 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         onNodeClick={onNodeClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
+        onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
+        onNodeMouseLeave={() => setHoveredNodeId(null)}
         onNodeDragStop={onNodeDragStop}
         // A read-only board used to have no menus at all, every item on them
         // being an edit. "Comment" is the exception — writing one is a
@@ -710,7 +748,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         // Grid snapping is opt-in and orthogonal to the shape-to-shape
         // alignment guides, which keep working either way: the grid rounds the
         // drag, the guides still line the shape up with its neighbours.
-        snapToGrid={gridSnap}
+        snapToGrid={gridSnap && !held.backtick}
         snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={30}
@@ -754,6 +792,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         {canComment && <CommentPins />}
         {canComment && <PresenceCursors />}
         <AlignmentGuides />
+        {measureFrom && hoveredNodeId && <MeasureOverlay fromId={measureFrom} toId={hoveredNodeId} />}
         {connectDraft && (
           <ViewportPortal>
             <svg

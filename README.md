@@ -189,6 +189,9 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `0` | Reset zoom to 100% |
 | `1` | Fit all shapes in view |
 | `2` | Zoom to the selection |
+| `⌘` + drag | Move without snapping to neighbours |
+| `` ` `` + drag | Move without snapping to neighbours or the grid |
+| `⌥` + hover | Measure the gap between the selected shape and the one under the pointer |
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
