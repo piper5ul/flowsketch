@@ -8,7 +8,7 @@ const transporter = nodemailer.createTransport({
 
 export async function sendVerificationEmail(to: string, subject: string, url: string) {
   await transporter.sendMail({
-    from: '"Whimsy" <noreply@whimsy.local>',
+    from: '"FlowSketch" <noreply@flowsketch.local>',
     to,
     subject,
     html: `<p>Click <a href="${url}">here</a> to ${subject.toLowerCase()}.</p>`,

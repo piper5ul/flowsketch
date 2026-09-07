@@ -286,7 +286,7 @@ export function DashboardPage() {
         {/* Header */}
         <header className="border-b border-line bg-panel/80 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
-            <h1 className="text-lg font-bold text-ink-900">Whimsy</h1>
+            <h1 className="text-lg font-bold text-ink-900">FlowSketch</h1>
             <div className="flex items-center gap-3">
               <span className="text-sm text-ink-600">{session?.user?.name || session?.user?.email}</span>
               <Tooltip label="Sign out" side="bottom">

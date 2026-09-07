@@ -13,6 +13,7 @@ import type {
   CommentThreadInfo,
   DiagramRole,
 } from '../../shared/types';
+import { absolutePosition, type TreeNode } from './nodeTree';
 import { formatVersionTime } from './versionHistory';
 
 /**
@@ -26,6 +27,41 @@ export const formatCommentTime = formatVersionTime;
 export interface AnchoredNode {
   id: string;
   data: { label?: string };
+}
+
+/** What placing a pin needs to know about a node: where it is, and how wide. */
+export interface PinnableNode extends TreeNode {
+  width?: number | null;
+  measured?: { width?: number };
+}
+
+/**
+ * Where a thread's pin is drawn, in board coordinates, or `null` if it has
+ * nowhere to go.
+ *
+ * An anchored pin sits at the top-right corner of its shape, where it overlaps
+ * least of what it is about. A shape inside a frame stores its position
+ * relative to the frame, so the ancestors' offsets are folded in — without
+ * that the pin lands at the frame's offset from the shape, which is exactly the
+ * drift the connector renderer had to fix too.
+ *
+ * `nodeId` is not a foreign key — the shape can be deleted out from under the
+ * thread. The conversation survives in the panel; the pin has nothing to point
+ * at, so it is not drawn.
+ */
+export function pinPosition(
+  thread: CommentThreadInfo,
+  nodes: readonly PinnableNode[],
+): { x: number; y: number } | null {
+  if (thread.nodeId === null) {
+    return thread.x === null || thread.y === null ? null : { x: thread.x, y: thread.y };
+  }
+  const byId = new Map(nodes.map((node) => [node.id, node] as const));
+  const node = byId.get(thread.nodeId);
+  if (!node) return null;
+  const width = node.width ?? node.measured?.width ?? 0;
+  const at = absolutePosition(node, byId);
+  return { x: at.x + width, y: at.y };
 }
 
 /**

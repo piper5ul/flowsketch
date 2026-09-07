@@ -14,28 +14,9 @@
  */
 import { ViewportPortal } from '@xyflow/react';
 import { useMemo } from 'react';
-import { threadNumbers, visibleThreads } from '../lib/comments';
+import { pinPosition, threadNumbers, visibleThreads } from '../lib/comments';
 import { useCommentStore } from '../store/useCommentStore';
-import { useDiagramStore, type ShapeNode } from '../store/useDiagramStore';
-import type { CommentThreadInfo } from '../../shared/types';
-
-/** Where a pin is drawn, in flow coordinates, or `null` if it has nowhere to go. */
-function pinPosition(
-  thread: CommentThreadInfo,
-  nodes: ShapeNode[],
-): { x: number; y: number } | null {
-  if (thread.nodeId === null) {
-    return thread.x === null || thread.y === null ? null : { x: thread.x, y: thread.y };
-  }
-  const node = nodes.find((candidate) => candidate.id === thread.nodeId);
-  // `nodeId` is not a foreign key — the shape can be deleted out from under the
-  // thread. The conversation survives in the panel; the pin has nothing to
-  // point at, so it is not drawn.
-  if (!node) return null;
-  // The top-right corner, where a pin overlaps least of what it is about.
-  const width = node.width ?? node.measured?.width ?? 0;
-  return { x: node.position.x + width, y: node.position.y };
-}
+import { useDiagramStore } from '../store/useDiagramStore';
 
 export function CommentPins() {
   const threads = useCommentStore((s) => s.threads);
