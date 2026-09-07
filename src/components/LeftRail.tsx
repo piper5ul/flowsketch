@@ -367,9 +367,27 @@ export function LeftRail({
     [insertImages],
   );
 
+  // The rail is a column of a dozen buttons beside the canvas, and on a short
+  // window that is nearly the whole window: it must never grow past the board
+  // it sits on. `max-h-[calc(100%-2rem)]` bounds it to the canvas with a 1 rem
+  // margin top and bottom, `overflow-y-auto` lets what is left scroll inside
+  // that box, and `.rail-stack` tightens the gaps and the padding under
+  // `max-height: 800px` (see `index.css`) so the scrolling is the last resort
+  // rather than the first. The scrollbar is hidden — a 10 px gutter inside a
+  // 52 px rail would be a third of the icon wide — and every popover trigger
+  // keeps working: Radix portals its content, so nothing here can clip it.
   return (
-    <div className="pointer-events-none absolute left-4 top-1/2 z-20 -translate-y-1/2">
-      <div className="pointer-events-auto flex flex-col gap-1 rounded-2xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
+    <div className="pointer-events-none absolute left-4 top-1/2 z-20 max-h-[calc(100%-2rem)] -translate-y-1/2">
+      {/* Named, for the reason `FloatingToolbar` is: several of these buttons
+          share a label with one somewhere else ("Text" picks the text tool
+          here and opens typography there), and the name is what tells them
+          apart in a test. */}
+      <div
+        role="toolbar"
+        aria-label="Tools"
+        aria-orientation="vertical"
+        className="rail-stack pointer-events-auto flex max-h-full flex-col gap-1 overflow-y-auto rounded-2xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur"
+      >
         <RailButton active={tool === 'select'} label="Select" shortcut="V" onClick={() => setTool('select')}>
           <MousePointer2 size={18} />
         </RailButton>
@@ -377,7 +395,7 @@ export function LeftRail({
           <Hand size={18} />
         </RailButton>
 
-        <div className="my-1 h-px bg-white/10" />
+        <div className="rail-divider my-1 h-px bg-white/10" />
 
         {SHAPE_TOOLS.map((s) => (
           <ShapeToolButton key={s.tool} tool={s.tool} shortcut={s.shortcut} />
@@ -405,7 +423,7 @@ export function LeftRail({
           onChange={onFilesPicked}
         />
 
-        <div className="my-1 h-px bg-white/10" />
+        <div className="rail-divider my-1 h-px bg-white/10" />
 
         {/* The pen, the highlighter and the eraser. Each stays held after a
             stroke — you draw several — and Escape (or the select tool) is the

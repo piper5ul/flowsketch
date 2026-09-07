@@ -8,7 +8,7 @@ import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 import type { Direction, VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
-import { canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
+import { canQuickAddFrom, canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
 import { hasMarkdown, parseMarkdown } from '../lib/markdown';
 import { MarkdownLabel } from '../components/MarkdownLabel';
 import {
@@ -494,11 +494,13 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
           says. */}
       {!editing && <VoteBadge nodeId={id} />}
 
-      {/* Withheld from a mind-map node: quick-add would grow an ordinary shape
-          on an ordinary connector out of the side the map's own branches leave
-          from, and Tab is how a map grows. */}
-      {!isText &&
-        !data.mindMap &&
+      {/* `canQuickAddFrom` is the whole of who gets these — a mind-map node
+          and a floating arrow's endpoint are withheld there, with the reasons
+          — and it is the same predicate the ⌥+arrow commands are gated on, so
+          the keystroke offers exactly what the buttons do. This component only
+          ever renders a node of type `shape`, which is what makes the `type`
+          half of it true here. */}
+      {canQuickAddFrom({ type: 'shape', data }) &&
         !editing &&
         QUICK_ADD.map(({ direction, style }) => (
           <button

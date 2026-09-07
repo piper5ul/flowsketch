@@ -14,6 +14,7 @@ import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { deepSelectTarget } from '../lib/deepSelect';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
 import {
   anchorFor,
@@ -488,6 +489,23 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         placeTool(event);
         return;
       }
+      // ⌘-click reaches inside a group and picks the one shape it landed on —
+      // Whimsical's deep select. `deepSelectTarget` holds the whole rule (and
+      // the reason ⌘ can carry this as well as React Flow's multi-select
+      // toggle); React Flow has already applied its own change by now, so
+      // narrowing the selection here is what the user is left with.
+      if (tool === 'select' && !readOnly) {
+        const state = useDiagramStore.getState();
+        const target = deepSelectTarget(
+          state.nodes,
+          node.id,
+          event,
+          state.edges.some((e) => e.selected),
+        );
+        if (target) selectOnly('node', target);
+        return;
+      }
+
       if (tool !== 'connector') return;
       // A floating arrow's endpoints are not shapes the user can connect to.
       if (isAnchorNode(node.data)) return;
@@ -511,7 +529,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       });
       connectorSourceRef.current = null;
     },
-    [tool, addEdges, placeTool],
+    [tool, addEdges, placeTool, readOnly, selectOnly],
   );
 
   const onPaneClick = useCallback(

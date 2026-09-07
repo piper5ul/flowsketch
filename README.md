@@ -12,7 +12,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Change a shape into another kind from the floating toolbar's **Shape** button — the label, size and colors stay put
 - Resize any shape by dragging selection handles
 - Smart alignment guides that snap to neighboring shapes while dragging
-- **Groups** — select two or more shapes and press `⌘G` to make them move as one. A group draws nothing of its own: a dashed outline when you point at it or select it, and nothing at all otherwise, so it never appears in an export. Groups nest, deleting one deletes what is inside it, and copying one copies its contents. `⌘⇧G` lets them go again
+- **Groups** — select two or more shapes and press `⌘G` to make them move as one. A group draws nothing of its own: a dashed outline when you point at it or select it, and nothing at all otherwise, so it never appears in an export. Groups nest, deleting one deletes what is inside it, and copying one copies its contents. `⌘⇧G` lets them go again. `⌘`-click a shape inside a group to select exactly that shape — the floating toolbar then acts on it alone, and the group is left as it is
 
 ### Connectors
 - **Elbow (Manhattan) routing** with automatic obstacle avoidance
@@ -60,7 +60,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Paste images from the clipboard as image shapes (`⌘V` with an image on the clipboard)
 - Add hyperlinks to shapes from the floating toolbar
 - Nudge selected shapes with the arrow keys (1 px, 10 px with Shift)
-- Quick-add neighbor buttons on hover that create a connected shape in any direction
+- Quick-add neighbor buttons on hover that create a connected shape in any direction — or `⌥` + an arrow key with a shape selected, which adds one that way and opens its label, so a row of boxes goes in without touching the mouse
 - Drag connector endpoints to reconnect them to other shapes
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
@@ -207,6 +207,8 @@ Every one of these also works while you are typing into a mind-map node's label.
 | `⌘[` | Send selection backward |
 | `⌘G` | Group the selection (needs 2 shapes) |
 | `⌘⇧G` | Ungroup the selected group(s) |
+| `⌘` + click | Select one shape inside a group, and only it (when nothing but that group is selected) |
+| `⌥` + arrows | Quick-add a connected shape right / left / below / above, ready to type into |
 | `⌘⇧L` | Lock / unlock selection |
 | `⌥⇧` + arrows | Align the selection left / right / top / bottom (needs 2 shapes) |
 | `⌥⇧H` / `⌥⇧V` | Align the selection on its horizontal / vertical centre line |

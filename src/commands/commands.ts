@@ -3,7 +3,7 @@ import { MIND_MAP_NODE_SIZE, childrenOf, mapOf } from '../lib/mindMap';
 import { linesOf } from '../lib/pasteAs';
 import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
-import { isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import { canQuickAddFrom, isFrameNode, isGroupNode } from '../lib/nodeKinds';
 import { slidesOf } from '../lib/presentation';
 import { parseTableText } from '../lib/table';
 import { subtreeIds } from '../lib/nodeTree';
@@ -15,7 +15,7 @@ import { usePresentStore } from '../store/usePresentStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import { nextFontSize } from '../lib/text';
-import type { ShapeKind, Tool } from '../types';
+import type { Direction, ShapeKind, Tool } from '../types';
 import { createRegistry } from './registry';
 import type { Command, CommandContext, DiagramState, Keybinding } from './types';
 
@@ -898,6 +898,7 @@ export const commandDeclarations: Command[] = [
   ...alignCommands(),
   ...distributeCommands(),
   ...layoutCommands(),
+  ...quickAddCommands(),
 
   // ---- view: canvas chrome -----------------------------------------------
   // All three live in `useViewPreferences` rather than the diagram store: they
@@ -1133,6 +1134,61 @@ function layoutCommands(): Command[] {
       void ctx.store.getState().layoutSelected(direction);
     },
   }));
+}
+
+/**
+ * Keyboard quick-add: ⌥ plus an arrow grows a connected shape that way and
+ * opens its label, the way the four buttons around a hovered shape do.
+ *
+ * The keystroke is Whimsical's, and ⌥ alone was free here: a bare arrow (and a
+ * shifted one) nudges the selection, and ⌥⇧ plus an arrow aligns it, so this
+ * is the one combination of the three that nothing owned.
+ *
+ * Where the pointer picks its source by being over it, the keyboard picks it
+ * by selection: exactly one shape, and one `canQuickAddFrom` allows — the same
+ * predicate the buttons are rendered on, so the two offers cannot drift apart.
+ *
+ * **The label is opened here and not in the store**, which is what tells the
+ * keyboard gesture from the button: ⌥→ is half of type-⌥→-type, and the click
+ * that lands on a button has the pointer somewhere else entirely. `addShape`
+ * and the mind map's actions open theirs the same way, from the thing that
+ * knows the user is typing.
+ *
+ * No `contextMenu` tag: a menu entry for "add a shape to the right" would be a
+ * fourth way of saying what the buttons already say twice. The ⌘K menu lists
+ * them, as it lists every command.
+ */
+function quickAddCommands(): Command[] {
+  const directions: [Direction, string, string, string][] = [
+    ['right', 'right', 'Quick-add to the right', 'ArrowRight'],
+    ['left', 'left', 'Quick-add to the left', 'ArrowLeft'],
+    ['bottom', 'down', 'Quick-add below', 'ArrowDown'],
+    ['top', 'up', 'Quick-add above', 'ArrowUp'],
+  ];
+
+  return directions.map(([direction, name, title, key]) => ({
+    id: `quickadd.${name}`,
+    title,
+    group: 'edit',
+    // ⌥ leaves an arrow's `event.key` alone (it is the letters macOS rewrites),
+    // and the registry's `event.code` fallback covers it either way.
+    shortcut: { key, alt: true },
+    when: (ctx) => quickAddSource(ctx) !== null,
+    run: (ctx) => {
+      const source = quickAddSource(ctx);
+      if (!source) return;
+      const state = ctx.store.getState();
+      const id = state.addConnectedShape(source.id, direction);
+      if (id) state.setEditingNodeId(id);
+    },
+  }));
+}
+
+/** The one selected shape quick-add would grow from, or `null`. */
+function quickAddSource(ctx: CommandContext): { id: string } | null {
+  const selected = selectedNodes(ctx.store.getState());
+  if (selected.length !== 1) return null;
+  return canQuickAddFrom(selected[0]) ? selected[0] : null;
 }
 
 /**

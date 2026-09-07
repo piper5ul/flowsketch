@@ -318,6 +318,69 @@ describe('the align and distribute shortcuts', () => {
   });
 });
 
+describe('the ⌥+arrow quick-add shortcuts', () => {
+  /** A context whose selection is exactly the nodes given. */
+  function withNodes(nodes: unknown[]): CommandContext {
+    return { store: { getState: () => ({ nodes, edges: [] }) } } as unknown as CommandContext;
+  }
+
+  const shape = (extra: Record<string, unknown> = {}) => ({
+    id: 'n1',
+    type: 'shape',
+    selected: true,
+    data: { shape: 'rectangle', fill: '#fff', stroke: '#000', ...extra },
+  });
+
+  const ARROWS: [string, string][] = [
+    ['quickadd.right', 'ArrowRight'],
+    ['quickadd.left', 'ArrowLeft'],
+    ['quickadd.down', 'ArrowDown'],
+    ['quickadd.up', 'ArrowUp'],
+  ];
+
+  it('grows a shape out of the one that is selected', () => {
+    for (const [id, arrow] of ARROWS) {
+      expect(registry.matchEvent(key(arrow, { alt: true }), withNodes([shape()]))?.id, id).toBe(id);
+    }
+  });
+
+  it('needs exactly one shape selected', () => {
+    for (const [, arrow] of ARROWS) {
+      const event = key(arrow, { alt: true });
+      expect(registry.matchEvent(event, withNodes([]))).toBeUndefined();
+      expect(registry.matchEvent(event, withNodes([shape(), { ...shape(), id: 'n2' }]))).toBeUndefined();
+    }
+  });
+
+  it('is withheld from the shapes quick-add has never been offered on', () => {
+    const event = key('ArrowRight', { alt: true });
+    // A text shape, a mind-map node, a floating arrow's invisible endpoint…
+    expect(registry.matchEvent(event, withNodes([shape({ shape: 'text' })]))).toBeUndefined();
+    expect(registry.matchEvent(event, withNodes([shape({ mindMap: { root: 'n1' } })]))).toBeUndefined();
+    expect(
+      registry.matchEvent(event, withNodes([shape({ fill: 'transparent', stroke: 'transparent' })])),
+    ).toBeUndefined();
+    // …and anything that is not a drawn shape at all.
+    for (const nodeType of ['group', 'frame', 'table', 'wire', 'ink']) {
+      expect(registry.matchEvent(event, withNodes([{ ...shape(), type: nodeType }])), nodeType).toBeUndefined();
+    }
+  });
+
+  it('leaves the nudge and align arrows exactly where they were', () => {
+    const one = withNodes([shape()]);
+    const two = withNodes([shape(), { ...shape(), id: 'n2' }]);
+    expect(registry.matchEvent(key('ArrowRight'), one)?.id).toBe('arrange.nudgeRight');
+    expect(registry.matchEvent(key('ArrowRight', { shift: true }), one)?.id).toBe('arrange.nudgeRightFar');
+    expect(registry.matchEvent(key('ArrowRight', { alt: true, shift: true }), two)?.id).toBe('arrange.alignRight');
+  });
+
+  it('carries no context-menu tag: the buttons on the shape are that offer', () => {
+    for (const [id] of ARROWS) {
+      expect(registry.find(id)?.contextMenu, id).toBeUndefined();
+    }
+  });
+});
+
 describe('the canvas chrome toggles', () => {
   const TOGGLES = [
     ['view.toggleMinimap', 'minimap'],
