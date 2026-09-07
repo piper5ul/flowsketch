@@ -75,11 +75,25 @@ export type FontSize = 'small' | 'medium' | 'large';
 export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 
+/**
+ * Which of a shape's two colours is drawn. `filled` paints the fill and no
+ * outline; `outline` paints white and draws the stroke around it. Absent means
+ * `filled` — see `src/lib/shapeStyle.ts`, which is where the choice is resolved.
+ */
+export type FillStyle = 'filled' | 'outline';
+
 export interface ShapeData {
   label: string;
   shape: ShapeKind;
   fill: string;
   stroke: string;
+  /**
+   * Which of the two above is drawn. Absent — as it is on every shape saved
+   * before this existed — reads as `'filled'`: the fill, and no outline at all.
+   * `'outline'` paints white and draws `stroke` around it. Neither spelling
+   * rewrites the pair, so the toggle is lossless.
+   */
+  fillStyle?: FillStyle;
   /**
    * The label's size in pixels. Diagrams saved before the scale existed hold
    * one of the three preset names instead; `resolveFontSize` reads both, which

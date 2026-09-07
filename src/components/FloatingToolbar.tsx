@@ -4,19 +4,14 @@ import * as Popover from '@radix-ui/react-popover';
 import {
   Trash2,
   CornerDownRight,
-  Group,
-  Ungroup,
   ArrowRight,
-  BringToFront,
-  SendToBack,
-  ChevronUp,
-  ChevronDown,
   Link2,
   Shapes,
   RotateCcw,
   SlidersHorizontal,
   Spline,
   Tag,
+  Type,
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -25,8 +20,10 @@ import { canGroupSelection, useDiagramStore } from '../store/useDiagramStore';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
 import { TextFormatControls } from './TextFormatControls';
+import type { TextFormatValue } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import { resolveFillStyle } from '../lib/shapeStyle';
 import {
   CONNECTOR_STROKE_PX,
   DEFAULT_EDGE_STROKE,
@@ -37,7 +34,15 @@ import {
 import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode } from '../lib/nodeKinds';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
 import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
-import type { ArrowStyle, ConnectorKind, ShapeData, ShapeKind, StrokeStyle, StrokeWidth } from '../types';
+import type {
+  ArrowStyle,
+  ConnectorKind,
+  FillStyle,
+  ShapeData,
+  ShapeKind,
+  StrokeStyle,
+  StrokeWidth,
+} from '../types';
 
 /** How far a corner can be rounded, and how transparent a shape can get. */
 const CORNER_RADIUS_MAX = 40;
@@ -136,6 +141,140 @@ function ArrowEndIcon({ style, side }: { style: ArrowStyle; side: 'start' | 'end
       {style === 'circle' && <circle cx="13.5" cy="9" r="3.5" fill="currentColor" />}
       {style === 'diamond' && <polygon points="10,9 13.5,5.5 17,9 13.5,12.5" fill="currentColor" />}
     </svg>
+  );
+}
+
+/** A filled square and an outlined one: the two ways a shape can be painted. */
+function FillStyleIcon({ variant }: { variant: FillStyle }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16">
+      <rect
+        x="2.75"
+        y="2.75"
+        width="10.5"
+        height="10.5"
+        rx="2.5"
+        fill={variant === 'filled' ? 'currentColor' : 'none'}
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+/**
+ * How a connector's line is drawn — three styles and three widths, six buttons
+ * that were half the edge toolbar. The trigger draws the line the selection
+ * actually wears, so the choice reads without opening it.
+ */
+function LinePopover({
+  strokeStyle,
+  strokeWidth,
+  onChange,
+}: {
+  strokeStyle: StrokeStyle;
+  strokeWidth: StrokeWidth;
+  onChange: (patch: { strokeStyle?: StrokeStyle; strokeWidth?: StrokeWidth }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Tooltip label="Line" side="top">
+        <Popover.Trigger asChild>
+          <button aria-label="Line" className={clsx(BUTTON_CLASS, 'data-[state=open]:bg-white/10 data-[state=open]:text-white')}>
+            <svg width="18" height="18" viewBox="0 0 18 18">
+              <line
+                x1="2"
+                y1="9"
+                x2="16"
+                y2="9"
+                stroke="currentColor"
+                strokeWidth={CONNECTOR_STROKE_PX[strokeWidth]}
+                strokeLinecap="round"
+                strokeDasharray={STROKE_STYLE_DASH[strokeStyle]}
+              />
+            </svg>
+          </button>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          sideOffset={10}
+          aria-label="Line"
+          className="panel-in z-50 flex flex-col gap-1 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          <div className="flex items-center gap-0.5">
+            {(['solid', 'dashed', 'dotted'] as StrokeStyle[]).map((s) => (
+              <Tooltip key={s} label={s[0].toUpperCase() + s.slice(1)} side="bottom">
+                <button
+                  onClick={() => onChange({ strokeStyle: s })}
+                  className={clsx(BUTTON_CLASS, strokeStyle === s && ACTIVE_BUTTON_CLASS)}
+                >
+                  <StrokeStyleIcon style={s} />
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+          <div className="flex items-center gap-0.5">
+            {STROKE_WIDTHS.map(([width, label]) => (
+              <Tooltip key={width} label={label} side="bottom">
+                <button
+                  onClick={() => onChange({ strokeWidth: width })}
+                  className={clsx(BUTTON_CLASS, strokeWidth === width && ACTIVE_BUTTON_CLASS)}
+                >
+                  <StrokeWidthIcon width={width} />
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
+/**
+ * The whole of `TextFormatControls`, behind one button.
+ *
+ * Twelve controls of typography were more than half the shape toolbar and are
+ * not what a shape is usually selected for; folded away, the bar reads as the
+ * handful of things that change what is *drawn*. The controls themselves are
+ * the same component the format bar renders over a label being edited — this
+ * only decides where they are shown.
+ */
+function TextPopover({
+  value,
+  onChange,
+}: {
+  value: TextFormatValue;
+  onChange: (patch: Partial<TextFormatValue>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Tooltip label="Text" side="top">
+        <Popover.Trigger asChild>
+          <button aria-label="Text" className={clsx(BUTTON_CLASS, 'data-[state=open]:bg-white/10 data-[state=open]:text-white')}>
+            <Type size={16} />
+          </button>
+        </Popover.Trigger>
+      </Tooltip>
+      <Popover.Portal>
+        <Popover.Content
+          side="bottom"
+          sideOffset={10}
+          aria-label="Text"
+          className="panel-in z-50 flex items-center gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          <TextFormatControls value={value} onChange={onChange} />
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
@@ -401,12 +540,9 @@ export function FloatingToolbar() {
   const setSelectedShapeKind = useDiagramStore((s) => s.setSelectedShapeKind);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
-  const groupSelected = useDiagramStore((s) => s.groupSelected);
-  const ungroupSelected = useDiagramStore((s) => s.ungroupSelected);
-  const bringToFront = useDiagramStore((s) => s.bringToFront);
-  const sendToBack = useDiagramStore((s) => s.sendToBack);
-  const bringForward = useDiagramStore((s) => s.bringForward);
-  const sendBackward = useDiagramStore((s) => s.sendBackward);
+  // Z order, grouping and the lock are read by `ArrangeMenu` itself — this bar
+  // only tells it what the selection is, so the popover owns the whole of what
+  // "arrange" means.
   const viewport = useViewport();
   // The hook's `getNodesBounds`, not the bare export: only this one can see the
   // node lookup, and a node inside a container holds a position relative to it —
@@ -500,13 +636,51 @@ export function FloatingToolbar() {
   const endArrowStyle = selectedEdges[0]?.data?.endArrowStyle ?? DEFAULT_END_ARROW;
   // Only a dragged bend can be reset, so the button is dead weight without one.
   const hasWaypoints = selectedEdges.some((e) => (e.data?.waypoints?.length ?? 0) > 0);
+  // Which of the two paint styles the selection wears, or `null` when it is
+  // holding both — neither button is lit then, and pressing one settles it.
+  const firstStyleable = styleableNodes[0];
+  const fillStyle: FillStyle | null =
+    firstStyleable &&
+    styleableNodes.every((n) => resolveFillStyle(n.data) === resolveFillStyle(firstStyleable.data))
+      ? resolveFillStyle(firstStyleable.data)
+      : null;
+  const locked = selectedNodes.some((n) => n.data.locked);
 
   return (
     <div
       className="pointer-events-none absolute z-30"
       style={{ left: screenX, top: screenY, transform: 'translate(-50%, calc(-100% - 20px))' }}
     >
-      <div className="panel-in pointer-events-auto flex items-center gap-1 rounded-2xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur">
+      {/* Named, because several of its buttons share a label with the rail's
+          tools — "Text" opens the typography popover here and picks the text
+          tool there — and a name is what tells the two apart. */}
+      <div
+        role="toolbar"
+        aria-label="Selection toolbar"
+        className="panel-in pointer-events-auto flex items-center gap-0.5 rounded-xl bg-ink-950/95 ring-1 ring-white/[0.07] p-1 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)] backdrop-blur"
+      >
+        {/* Typography, folded away: a shape is selected to be moved, coloured
+            or reshaped far more often than to be re-typeset. */}
+        {styleableNodes.length > 0 && (
+          <TextPopover
+            value={{
+              fontSize: styleableNodes[0].data.fontSize ?? DEFAULT_FONT_SIZE,
+              bold: styleableNodes[0].data.bold ?? false,
+              italic: styleableNodes[0].data.italic ?? false,
+              underline: styleableNodes[0].data.underline ?? false,
+              strikethrough: styleableNodes[0].data.strikethrough ?? false,
+              textColor: styleableNodes[0].data.textColor,
+              textAlign:
+                styleableNodes[0].data.textAlign ??
+                (styleableNodes[0].data.shape === 'text' ? 'left' : 'center'),
+              verticalAlign: styleableNodes[0].data.verticalAlign ?? 'middle',
+            }}
+            // The patch lands on every selected shape, images excepted — which
+            // is what makes the popover work for a multi-selection unchanged.
+            onChange={updateSelectedNodesData}
+          />
+        )}
+
         {(isEdgeMode || styleableNodes.length > 0) && (
           <ColorPalette
             activeStroke={activeStroke}
@@ -520,16 +694,31 @@ export function FloatingToolbar() {
           />
         )}
 
-        {swappableNodes.length > 0 && (
+        {swappableNodes.length > 0 && <ShapePicker current={currentShapeKind} onPick={setSelectedShapeKind} />}
+
+        {/* Which of the two colours the swatch above carries is drawn. Two
+            buttons rather than one toggle: the pair says what the choice *is*
+            without the user having to press it to find out. */}
+        {styleableNodes.length > 0 && (
           <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <ShapePicker current={currentShapeKind} onPick={setSelectedShapeKind} />
+            <div className="mx-0.5 h-5 w-px bg-white/10" />
+            {(['filled', 'outline'] as FillStyle[]).map((style) => (
+              <Tooltip key={style} label={style === 'filled' ? 'Filled' : 'Outline'} side="top">
+                <button
+                  aria-label={style === 'filled' ? 'Filled' : 'Outline'}
+                  onClick={() => updateSelectedNodesData({ fillStyle: style })}
+                  className={clsx(BUTTON_CLASS, fillStyle === style && ACTIVE_BUTTON_CLASS)}
+                >
+                  <FillStyleIcon variant={style} />
+                </button>
+              </Tooltip>
+            ))}
           </>
         )}
 
         {isEdgeMode && (
           <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <div className="mx-0.5 h-5 w-px bg-white/10" />
             {CONNECTOR_KINDS.map(([kind, Icon, label]) => (
               <Tooltip key={kind} label={label} side="top">
                 <button
@@ -540,42 +729,13 @@ export function FloatingToolbar() {
                 </button>
               </Tooltip>
             ))}
-            <Tooltip label="Reset route" side="top">
-              <button
-                aria-label="Reset route"
-                onClick={() => updateSelectedEdgesStyle({ waypoints: [] })}
-                disabled={!hasWaypoints}
-                className={BUTTON_CLASS}
-              >
-                <RotateCcw size={16} />
-              </button>
-            </Tooltip>
 
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            {(['solid', 'dashed', 'dotted'] as StrokeStyle[]).map((s) => (
-              <Tooltip key={s} label={s[0].toUpperCase() + s.slice(1)} side="top">
-                <button
-                  onClick={() => updateSelectedEdgesStyle({ strokeStyle: s })}
-                  className={clsx(BUTTON_CLASS, strokeStyle === s && ACTIVE_BUTTON_CLASS)}
-                >
-                  <StrokeStyleIcon style={s} />
-                </button>
-              </Tooltip>
-            ))}
-
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            {STROKE_WIDTHS.map(([width, label]) => (
-              <Tooltip key={width} label={label} side="top">
-                <button
-                  onClick={() => updateSelectedEdgesStyle({ strokeWidth: width })}
-                  className={clsx(BUTTON_CLASS, strokeWidth === width && ACTIVE_BUTTON_CLASS)}
-                >
-                  <StrokeWidthIcon width={width} />
-                </button>
-              </Tooltip>
-            ))}
-
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <div className="mx-0.5 h-5 w-px bg-white/10" />
+            <LinePopover
+              strokeStyle={strokeStyle}
+              strokeWidth={strokeWidth}
+              onChange={updateSelectedEdgesStyle}
+            />
             <ArrowStylePicker
               side="start"
               value={startArrowStyle}
@@ -587,128 +747,67 @@ export function FloatingToolbar() {
               onChange={(endArrowStyle) => updateSelectedEdgesStyle({ endArrowStyle })}
             />
 
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <div className="mx-0.5 h-5 w-px bg-white/10" />
             <Tooltip label="Add label" shortcut="↵" side="top">
-              <button
-                onClick={() => setEditingEdgeId(selectedEdges[0].id)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-              >
+              <button aria-label="Add label" onClick={() => setEditingEdgeId(selectedEdges[0].id)} className={BUTTON_CLASS}>
                 <Tag size={16} />
               </button>
             </Tooltip>
-          </>
-        )}
-
-        {styleableNodes.length > 0 && (
-          <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <TextFormatControls
-              value={{
-                fontSize: styleableNodes[0].data.fontSize ?? DEFAULT_FONT_SIZE,
-                bold: styleableNodes[0].data.bold ?? false,
-                italic: styleableNodes[0].data.italic ?? false,
-                underline: styleableNodes[0].data.underline ?? false,
-                strikethrough: styleableNodes[0].data.strikethrough ?? false,
-                textColor: styleableNodes[0].data.textColor,
-                textAlign: styleableNodes[0].data.textAlign ?? (styleableNodes[0].data.shape === 'text' ? 'left' : 'center'),
-                verticalAlign: styleableNodes[0].data.verticalAlign ?? 'middle',
-              }}
-              onChange={updateSelectedNodesData}
-            />
-            <StylePopover
-              cornerRadius={styleableNodes[0].data.cornerRadius ?? 0}
-              opacity={styleableNodes[0].data.opacity ?? 1}
-              shadow={styleableNodes[0].data.shadow ?? false}
-              // Only offered when every shape in the selection has corners to
-              // round; an ellipse in the mix would sit through the whole drag.
-              showCornerRadius={styleableNodes.every((n) => canRoundCorners(n.data.shape))}
-              onDragStart={beginInteraction}
-              onPreview={updateSelectedNodesDataTransient}
-              onCommit={updateSelectedNodesData}
-            />
+            {/* Only a dragged bend can be reset, so without one the button is
+                not greyed out but gone: nothing was routed to undo. */}
+            {hasWaypoints && (
+              <Tooltip label="Reset route" side="top">
+                <button
+                  aria-label="Reset route"
+                  onClick={() => updateSelectedEdgesStyle({ waypoints: [] })}
+                  className={BUTTON_CLASS}
+                >
+                  <RotateCcw size={16} />
+                </button>
+              </Tooltip>
+            )}
           </>
         )}
 
         {!isEdgeMode && (
           <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <Tooltip label="Bring forward" side="top">
-              <button
-                onClick={bringForward}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-              >
-                <ChevronUp size={16} />
-              </button>
-            </Tooltip>
-            <Tooltip label="Send backward" side="top">
-              <button
-                onClick={sendBackward}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-              >
-                <ChevronDown size={16} />
-              </button>
-            </Tooltip>
-            <Tooltip label="Bring to front" side="top">
-              <button
-                onClick={bringToFront}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-              >
-                <BringToFront size={16} />
-              </button>
-            </Tooltip>
-            <Tooltip label="Send to back" side="top">
-              <button
-                onClick={sendToBack}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white"
-              >
-                <SendToBack size={16} />
-              </button>
-            </Tooltip>
+            <div className="mx-0.5 h-5 w-px bg-white/10" />
+            <ArrangeMenu
+              selectedCount={selectedNodes.length}
+              canGroup={canGroup}
+              hasGroup={hasGroup}
+              locked={locked}
+            />
           </>
         )}
 
-        {!isEdgeMode && (canGroup || hasGroup) && (
-          <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            {canGroup && (
-              <Tooltip label="Group" shortcut="⌘G" side="top">
-                <button aria-label="Group" onClick={groupSelected} className={BUTTON_CLASS}>
-                  <Group size={16} />
-                </button>
-              </Tooltip>
-            )}
-            {hasGroup && (
-              <Tooltip label="Ungroup" shortcut="⌘⇧G" side="top">
-                <button aria-label="Ungroup" onClick={ungroupSelected} className={BUTTON_CLASS}>
-                  <Ungroup size={16} />
-                </button>
-              </Tooltip>
-            )}
-          </>
-        )}
-
-        {!isEdgeMode && selectedNodes.length > 1 && (
-          <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
-            <ArrangeMenu selectedCount={selectedNodes.length} />
-          </>
+        {styleableNodes.length > 0 && (
+          <StylePopover
+            cornerRadius={styleableNodes[0].data.cornerRadius ?? 0}
+            opacity={styleableNodes[0].data.opacity ?? 1}
+            shadow={styleableNodes[0].data.shadow ?? false}
+            // Only offered when every shape in the selection has corners to
+            // round; an ellipse in the mix would sit through the whole drag.
+            showCornerRadius={styleableNodes.every((n) => canRoundCorners(n.data.shape))}
+            onDragStart={beginInteraction}
+            onPreview={updateSelectedNodesDataTransient}
+            onCommit={updateSelectedNodesData}
+          />
         )}
 
         {!isEdgeMode && selectedNodes.length === 1 && (
           <>
-            <div className="mx-0.5 h-6 w-px bg-white/10" />
+            <div className="mx-0.5 h-5 w-px bg-white/10" />
             <Tooltip label="Add link" side="top">
               <button
+                aria-label="Add link"
                 onClick={() => {
                   const link = selectedNodes[0]?.data?.link ?? '';
                   setLinkValue(link);
                   setLinkOpen((v) => !v);
                   setTimeout(() => linkInputRef.current?.focus(), 50);
                 }}
-                className={clsx(
-                  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white',
-                  selectedNodes[0]?.data?.link && 'bg-accent-500 text-white hover:bg-accent-500',
-                )}
+                className={clsx(BUTTON_CLASS, selectedNodes[0]?.data?.link && ACTIVE_BUTTON_CLASS)}
               >
                 <Link2 size={16} />
               </button>
@@ -716,9 +815,10 @@ export function FloatingToolbar() {
           </>
         )}
 
-        <div className="mx-0.5 h-6 w-px bg-white/10" />
+        <div className="mx-0.5 h-5 w-px bg-white/10" />
         <Tooltip label="Delete" shortcut="⌫" side="top">
           <button
+            aria-label="Delete"
             onClick={deleteSelection}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-red-500/20 hover:text-red-400"
           >

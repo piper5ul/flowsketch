@@ -250,8 +250,11 @@ test('the selection toolbar aligns, distributes and bolds a multi-selection', as
   // Close the popover by toggling its trigger — Escape would reach the canvas.
   await page.getByRole('button', { name: 'Arrange' }).click();
 
-  // Text formatting on the selection toolbar applies to every selected node.
-  await page.getByRole('button', { name: 'Bold' }).click();
+  // Text formatting lives behind the toolbar's Text button now, and still
+  // applies to every selected node. The bar is named because the rail carries
+  // a "Text" button of its own — the text *tool*.
+  await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Text' }).click();
+  await page.getByRole('dialog', { name: 'Text' }).getByRole('button', { name: 'Bold' }).click();
   for (let i = 0; i < 3; i++) {
     await expect(page.locator('.react-flow__node [contenteditable]').nth(i)).toHaveCSS('font-weight', '700');
   }
@@ -861,6 +864,43 @@ test('the Style popover shadows and fades a shape', async ({ page }) => {
   await expect(shape).toHaveCSS('opacity', '0.5');
 });
 
+test('a new shape is a borderless white card, and Outline hands it its stroke back', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  // The box inside the wrapper: the wrapper carries opacity and the shadow the
+  // user can switch on, the box the fill, the border and the resting shadow.
+  const box = node.locator('.shape-wrapper > div').first();
+
+  // Deselect, or the selection ring is the box-shadow being read.
+  await pane.click({ position: { x: 1000, y: 600 } });
+  await expect(box).toHaveCSS('border-top-width', '0px');
+  await expect(box).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  // Nothing outlines a filled shape, so the shadow is what separates it from
+  // the board — white on white would otherwise be invisible.
+  await expect(box).not.toHaveCSS('box-shadow', 'none');
+
+  await node.click();
+  await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Outline' }).click();
+  await pane.click({ position: { x: 1000, y: 600 } });
+  // The width is asked for as 1.5px and reported as whatever the device
+  // pixel ratio snaps that to, so what is asserted is that there *is* a border
+  // and that it is drawn in the swatch's stroke.
+  await expect(box).not.toHaveCSS('border-top-width', '0px');
+  await expect(box).toHaveCSS('border-top-color', 'rgb(203, 213, 225)');
+  // The border does the separating now, so the shadow stands down.
+  await expect(box).toHaveCSS('box-shadow', 'none');
+
+  await node.click();
+  await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Filled' }).click();
+  await pane.click({ position: { x: 1000, y: 600 } });
+  await expect(box).toHaveCSS('border-top-width', '0px');
+});
+
 test('the format bar underlines a label being edited', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);
@@ -1457,7 +1497,7 @@ const LIGHT_CANVAS = 'rgb(246, 247, 251)';
 /** `--canvas` and `--canvas-dot` in the dark theme, and the default shape fill. */
 const DARK_CANVAS = 'rgb(13, 14, 19)';
 const DARK_CANVAS_DOT = 'rgb(48, 52, 70)';
-const DEFAULT_SHAPE_FILL = 'rgb(219, 234, 254)';
+const DEFAULT_SHAPE_FILL = 'rgb(255, 255, 255)';
 
 test('dark mode follows the system, can be pinned, and never repaints the diagram itself', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'dark' });

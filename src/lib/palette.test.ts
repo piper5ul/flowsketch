@@ -12,8 +12,15 @@ describe('PALETTE', () => {
     }
   });
 
-  it('defaults to a light swatch so new shapes get dark text', () => {
+  it('keeps its 8-column grid across the tiers it names', () => {
+    expect(PALETTE).toHaveLength(32);
+    expect(COLS).toBe(8);
+  });
+
+  it('defaults to white, so a new shape is paper and takes dark text', () => {
     expect(PALETTE).toContain(DEFAULT_SWATCH);
+    expect(DEFAULT_SWATCH.id).toBe('white');
+    expect(DEFAULT_SWATCH.fill).toBe('#FFFFFF');
     expect(isDarkFill(DEFAULT_SWATCH.fill)).toBe(false);
   });
 

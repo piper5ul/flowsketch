@@ -9,9 +9,17 @@ import {
   AlignEndHorizontal,
   AlignHorizontalDistributeCenter,
   AlignVerticalDistributeCenter,
+  BringToFront,
+  ChevronDown,
+  ChevronUp,
+  Group,
+  Lock,
   MoveHorizontal,
   MoveVertical,
   Scaling,
+  SendToBack,
+  Ungroup,
+  Unlock,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useDiagramStore } from '../store/useDiagramStore';
@@ -51,16 +59,43 @@ function Row({ title, children }: { title: string; children: React.ReactNode }) 
 }
 
 /**
- * The arrange commands, folded into one popover so the selection toolbar keeps
- * its size. Distribute needs a middle node to move, so its two buttons are
- * disabled — rather than hidden — below three selected nodes; the row jumping
- * in and out as the selection grows would be worse than a greyed-out button.
+ * Everything that moves the selection without changing how it is drawn — z
+ * order, grouping and the lock, plus align / distribute / match size — folded
+ * into one popover so the selection toolbar keeps its size.
+ *
+ * Ordering and locking apply to a single shape, so those two rows are always
+ * there; the geometry rows need something to line a shape up *against* and are
+ * dropped below two selected nodes. Distribute needs a middle node to move, so
+ * its two buttons are disabled — rather than hidden — below three; the row
+ * jumping in and out as the selection grows would be worse than a greyed-out
+ * button.
  */
-export function ArrangeMenu({ selectedCount }: { selectedCount: number }) {
+export function ArrangeMenu({
+  selectedCount,
+  canGroup,
+  hasGroup,
+  locked,
+}: {
+  selectedCount: number;
+  /** Whether the selection is one `groupSelected` would actually make a group of. */
+  canGroup: boolean;
+  /** Whether the selection holds a group to break apart. */
+  hasGroup: boolean;
+  /** Whether the shape the button would unlock is already locked. */
+  locked: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const alignSelected = useDiagramStore((s) => s.alignSelected);
   const distributeSelected = useDiagramStore((s) => s.distributeSelected);
   const matchSizeSelected = useDiagramStore((s) => s.matchSizeSelected);
+  const bringToFront = useDiagramStore((s) => s.bringToFront);
+  const sendToBack = useDiagramStore((s) => s.sendToBack);
+  const bringForward = useDiagramStore((s) => s.bringForward);
+  const sendBackward = useDiagramStore((s) => s.sendBackward);
+  const groupSelected = useDiagramStore((s) => s.groupSelected);
+  const ungroupSelected = useDiagramStore((s) => s.ungroupSelected);
+  const toggleLock = useDiagramStore((s) => s.toggleLock);
+  const canArrange = selectedCount > 1;
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
@@ -80,37 +115,90 @@ export function ArrangeMenu({ selectedCount }: { selectedCount: number }) {
           sideOffset={10}
           className="panel-in z-50 flex flex-col gap-2.5 rounded-xl bg-ink-950 p-2 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
         >
-          <Row title="Align">
-            {ALIGN_BUTTONS.map(([mode, Icon, label]) => (
-              <Tooltip key={mode} label={label} side="bottom">
-                <button onClick={() => alignSelected(mode)} className={BUTTON_CLASS}>
-                  <Icon size={16} />
-                </button>
-              </Tooltip>
-            ))}
+          <Row title="Order">
+            <Tooltip label="Bring forward" side="bottom">
+              <button aria-label="Bring forward" onClick={bringForward} className={BUTTON_CLASS}>
+                <ChevronUp size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Send backward" side="bottom">
+              <button aria-label="Send backward" onClick={sendBackward} className={BUTTON_CLASS}>
+                <ChevronDown size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Bring to front" side="bottom">
+              <button aria-label="Bring to front" onClick={bringToFront} className={BUTTON_CLASS}>
+                <BringToFront size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Send to back" side="bottom">
+              <button aria-label="Send to back" onClick={sendToBack} className={BUTTON_CLASS}>
+                <SendToBack size={16} />
+              </button>
+            </Tooltip>
           </Row>
-          <Row title="Distribute">
-            {DISTRIBUTE_BUTTONS.map(([axis, Icon, label]) => (
-              <Tooltip key={axis} label={label} side="bottom">
-                <button
-                  onClick={() => distributeSelected(axis)}
-                  disabled={selectedCount < 3}
-                  className={BUTTON_CLASS}
-                >
-                  <Icon size={16} />
-                </button>
-              </Tooltip>
-            ))}
+          <Row title="Group">
+            <Tooltip label="Group" shortcut="⌘G" side="bottom">
+              <button
+                aria-label="Group"
+                onClick={groupSelected}
+                disabled={!canGroup}
+                className={BUTTON_CLASS}
+              >
+                <Group size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label="Ungroup" shortcut="⌘⇧G" side="bottom">
+              <button
+                aria-label="Ungroup"
+                onClick={ungroupSelected}
+                disabled={!hasGroup}
+                className={BUTTON_CLASS}
+              >
+                <Ungroup size={16} />
+              </button>
+            </Tooltip>
+            <Tooltip label={locked ? 'Unlock' : 'Lock'} shortcut="⌘⇧L" side="bottom">
+              <button aria-label={locked ? 'Unlock' : 'Lock'} onClick={toggleLock} className={BUTTON_CLASS}>
+                {locked ? <Unlock size={16} /> : <Lock size={16} />}
+              </button>
+            </Tooltip>
           </Row>
-          <Row title="Match size">
-            {MATCH_BUTTONS.map(([dim, Icon, label]) => (
-              <Tooltip key={dim} label={label} side="bottom">
-                <button onClick={() => matchSizeSelected(dim)} className={BUTTON_CLASS}>
-                  <Icon size={16} />
-                </button>
-              </Tooltip>
-            ))}
-          </Row>
+          {canArrange && (
+            <>
+              <Row title="Align">
+                {ALIGN_BUTTONS.map(([mode, Icon, label]) => (
+                  <Tooltip key={mode} label={label} side="bottom">
+                    <button onClick={() => alignSelected(mode)} className={BUTTON_CLASS}>
+                      <Icon size={16} />
+                    </button>
+                  </Tooltip>
+                ))}
+              </Row>
+              <Row title="Distribute">
+                {DISTRIBUTE_BUTTONS.map(([axis, Icon, label]) => (
+                  <Tooltip key={axis} label={label} side="bottom">
+                    <button
+                      onClick={() => distributeSelected(axis)}
+                      disabled={selectedCount < 3}
+                      className={BUTTON_CLASS}
+                    >
+                      <Icon size={16} />
+                    </button>
+                  </Tooltip>
+                ))}
+              </Row>
+              <Row title="Match size">
+                {MATCH_BUTTONS.map(([dim, Icon, label]) => (
+                  <Tooltip key={dim} label={label} side="bottom">
+                    <button onClick={() => matchSizeSelected(dim)} className={BUTTON_CLASS}>
+                      <Icon size={16} />
+                    </button>
+                  </Tooltip>
+                ))}
+              </Row>
+            </>
+          )}
           <Popover.Arrow className="fill-ink-950" />
         </Popover.Content>
       </Popover.Portal>

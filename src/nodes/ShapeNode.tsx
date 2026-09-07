@@ -9,6 +9,13 @@ import type { Direction, VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
 import { canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
+import {
+  CYLINDER_SEAM,
+  SHAPE_RESTING_SHADOW,
+  SHAPE_RESTING_SHADOW_FILTER,
+  hasRestingShadow,
+  shapePaint,
+} from '../lib/shapeStyle';
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
 import { useShiftKey } from '../lib/useShiftKey';
 
@@ -195,7 +202,15 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   const textAlign = data.textAlign ?? (isText ? 'left' : 'center');
   const verticalAlign: VerticalAlign = data.verticalAlign ?? 'middle';
   const fontSizePx = resolveFontSize(data.fontSize);
-  const darkBg = isDarkFill(data.fill);
+  // Which of the shape's two colours is actually drawn. A filled shape wears no
+  // outline at all and rests on a shadow instead; an outline one is white with
+  // its stroke around it. Neither reads the stored pair differently — see
+  // `src/lib/shapeStyle.ts`.
+  const paint = shapePaint(data);
+  const resting = hasRestingShadow(data);
+  // The contrast that decides the label's colour is against what is *painted*,
+  // so an outline shape takes dark text however deep its stored fill is.
+  const darkBg = isDarkFill(paint.fill);
   // Both decorations can be worn at once, and CSS spells that as one property.
   const textDecoration = [data.underline && 'underline', data.strikethrough && 'line-through']
     .filter(Boolean)
@@ -238,7 +253,9 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
     textAlign === 'left' && 'text-left',
     textAlign === 'center' && 'text-center',
     textAlign === 'right' && 'text-right',
-    !isText && !hasClipShape && !isCylinder && 'border-[1.5px]',
+    // The border is the outline style's alone: a filled shape has none, which
+    // is why the box below sets a width of 0 rather than a transparent colour.
+    !isText && !hasClipShape && !isCylinder && 'border-solid',
     isEllipse && 'rounded-full',
     isPill && 'rounded-full',
     isSticky && 'rounded-md shadow-[0_10px_20px_-8px_rgba(30,20,0,0.25)]',
@@ -265,23 +282,34 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
         style={{
           ...labelPadding,
           borderRadius: canRoundCorners(data.shape) ? data.cornerRadius : undefined,
-          background: hasClipShape || isCylinder ? 'transparent' : data.fill,
-          borderColor: data.stroke,
+          background: hasClipShape || isCylinder ? 'transparent' : paint.fill,
+          borderColor: paint.stroke ?? 'transparent',
+          borderWidth: paint.stroke ? 1.5 : 0,
           boxShadow: hasClipShape || isCylinder
             ? undefined
             : selected
               ? '0 0 0 1.5px var(--color-accent-500), 0 6px 16px -8px rgba(30,20,60,0.22)'
-              : !isText && !isSticky
-                ? '0 1px 2px rgba(20, 20, 40, 0.06)'
+              : resting
+                ? SHAPE_RESTING_SHADOW
                 : undefined,
         }}
       >
         {isClipShape(data.shape) && (
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none" overflow="visible">
+          <svg
+            className="absolute inset-0 h-full w-full"
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            overflow="visible"
+            // A silhouette has no box for a resting shadow to trace, so it
+            // casts one through its own alpha. It goes on the `<svg>` rather
+            // than the wrapper so the label above it is not shadowed too, and
+            // so the heavier shadow the user can switch on still composes over it.
+            style={{ filter: resting ? SHAPE_RESTING_SHADOW_FILTER : undefined }}
+          >
             <path
               d={svgPaths[data.shape]}
-              fill={data.fill}
-              stroke={data.stroke}
+              fill={paint.fill}
+              stroke={paint.stroke ?? 'none'}
               strokeWidth="1.5"
               vectorEffect="non-scaling-stroke"
               strokeLinejoin="round"
@@ -290,21 +318,39 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
         )}
 
         {isCylinder && (
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 120 130" preserveAspectRatio="none" overflow="visible">
+          <svg
+            className="absolute inset-0 h-full w-full"
+            viewBox="0 0 120 130"
+            preserveAspectRatio="none"
+            overflow="visible"
+            style={{ filter: resting ? SHAPE_RESTING_SHADOW_FILTER : undefined }}
+          >
             <path
               d="M0,20 Q0,0 60,0 Q120,0 120,20 L120,110 Q120,130 60,130 Q0,130 0,110 Z"
-              fill={data.fill}
+              fill={paint.fill}
               stroke="none"
             />
             <path
               d="M0,20 L0,110 Q0,130 60,130 Q120,130 120,110 L120,20"
               fill="none"
-              stroke={data.stroke}
+              stroke={paint.stroke ?? 'none'}
               strokeWidth="1.5"
               vectorEffect="non-scaling-stroke"
               strokeLinejoin="round"
             />
-            <ellipse cx="60" cy="20" rx="60" ry="20" fill={data.fill} stroke={data.stroke} strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+            {/* The cap. A cylinder is the one silhouette made of two surfaces,
+                so a filled one keeps a hairline across its shoulder — without it
+                the shape reads as a rounded rectangle. */}
+            <ellipse
+              cx="60"
+              cy="20"
+              rx="60"
+              ry="20"
+              fill={paint.fill}
+              stroke={paint.stroke ?? CYLINDER_SEAM}
+              strokeWidth="1.5"
+              vectorEffect="non-scaling-stroke"
+            />
           </svg>
         )}
 
