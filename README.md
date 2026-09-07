@@ -42,7 +42,8 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 
 ### Canvas
 - Infinite pan and zoom canvas
-- **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Select some shapes and choose **Wrap in frame** from the right-click menu to put a frame around them, and pick a colour for a frame to tint it. Unlike a group, a frame is part of the drawing and appears in exports
+- **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Select some shapes and choose **Wrap in frame** from the right-click menu to put a frame around them, and pick a colour for a frame to tint it.
+- **Filter selection** — with several shapes selected, the toolbar's filter narrows the selection to one kind or one colour, so a sweep-select becomes "every sticky" or "every yellow thing" in one click Unlike a group, a frame is part of the drawing and appears in exports
 - Undo / redo history
 - Export to PNG or SVG at 1× or 2×, with or without the board background, the whole board or just the selection; `⌘⇧C` copies the selection (or the board) to the clipboard as a transparent PNG
 - Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
@@ -190,6 +191,9 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `0` | Reset zoom to 100% |
 | `1` | Fit all shapes in view |
 | `2` | Zoom to the selection |
+| `⌘` + drag | Move without snapping to neighbours |
+| `` ` `` + drag | Move without snapping to neighbours or the grid |
+| `⌥` + hover | Measure the gap between the selected shape and the one under the pointer |
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |

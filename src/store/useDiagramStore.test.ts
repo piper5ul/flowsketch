@@ -556,6 +556,18 @@ describe('alignment guides while dragging', () => {
     expect(store().guides.length).toBeGreaterThan(0);
   });
 
+  it('lands exactly where the pointer put it while ⌘ or ` is held', () => {
+    rect(500, 1000);
+    const moving = rect(0, 0);
+    store().setSnapOverride('guides');
+    store().onNodesChange([drag(moving, 497, 0)]);
+    expect(posOf(moving).x).toBe(497);
+    expect(store().guides).toHaveLength(0);
+    store().setSnapOverride('none');
+    store().onNodesChange([drag(moving, 497, 0)]);
+    expect(posOf(moving).x).toBe(500);
+  });
+
   it('snaps a two-node drag as one box, moving both by the same delta', () => {
     rect(500, 1000);
     const a = rect(0, 0);
