@@ -1815,3 +1815,45 @@ test('a diagram can be filed in a folder, found there, and outlives the folder',
   await expect(page.getByText('Untitled')).toBeVisible();
   await expect(page.getByText('No folders yet.')).toBeVisible();
 });
+
+test('a connector between shapes inside a frame is drawn where the shapes are', async ({ page }) => {
+  await signUp(page);
+
+  // Children of a frame store parent-relative positions; the edge must still
+  // be routed in board coordinates. Build the diagram through the API so the
+  // parentage is exact.
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number, y: number) => ({
+      id, type: 'shape', position: { x, y }, width: 180, height: 70, parentId: 'f', extent: 'parent',
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const body = {
+      title: 'Framed connector',
+      data: {
+        version: 3,
+        nodes: [
+          { id: 'f', type: 'frame', position: { x: 300, y: 200 }, width: 700, height: 300, data: { label: 'Frame', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' } },
+          shape('a', 40, 100),
+          shape('b', 440, 100),
+        ],
+        edges: [{ id: 'e', source: 'a', target: 'b', type: 'connector', data: { connectorType: 'elbow', stroke: '#6B7080', strokeStyle: 'solid', label: '', startArrowStyle: 'none', endArrowStyle: 'arrow' } }],
+      },
+    };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await page.keyboard.press('1');
+
+  const box = async (sel: string) => (await page.locator(sel).first().boundingBox())!;
+  const a = await box('[data-id="a"]');
+  const b = await box('[data-id="b"]');
+  const edge = await box('.react-flow__edge path');
+  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 6) =>
+    edge.x < n.x + n.width + tol && edge.x + edge.width > n.x - tol && edge.y < n.y + n.height + tol && edge.y + edge.height > n.y - tol;
+  expect(touches(a), 'edge should start at the source shape').toBe(true);
+  expect(touches(b), 'edge should end at the target shape').toBe(true);
+  // The straight elbow between two shapes on one row stays on their row.
+  expect(Math.abs(edge.y + edge.height / 2 - (a.y + a.height / 2))).toBeLessThan(a.height / 2);
+});
