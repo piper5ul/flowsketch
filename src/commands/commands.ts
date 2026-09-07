@@ -90,8 +90,10 @@ const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[] }[] = [
   { tool: 'text', title: 'Text', keys: ['t'] },
   // A frame is not a shape — it is a section other shapes go into — so it has
   // no `ShapeKind` and is placed by `addFrame`, but it is picked like any tool.
-  { tool: 'frame', title: 'Frame', keys: ['f'] },
-  { tool: 'connector', title: 'Connector', keys: ['a', 'l'] },
+  // Whimsical calls a frame a section and reaches it with `.`; its connector
+  // key is C. Both are kept alongside ours so either habit works.
+  { tool: 'frame', title: 'Frame', keys: ['f', '.'] },
+  { tool: 'connector', title: 'Connector', keys: ['c', 'a', 'l'] },
 ];
 
 const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys }) => ({
@@ -224,6 +226,17 @@ export const commandDeclarations: Command[] = [
     run: (ctx) => ctx.store.getState().duplicateSelection(),
   },
 
+  {
+    id: 'edit.link',
+    title: 'Add link',
+    group: 'edit',
+    // Whimsical's K. The toolbar owns the popover; the store carries the ask.
+    shortcut: { key: 'k' },
+    contextMenu: 'node',
+    when: (ctx) => selectedNodes(ctx.store.getState()).length === 1,
+    run: (ctx) => ctx.store.getState().requestLinkEditor(),
+  },
+
   // ---- clipboard ---------------------------------------------------------
   {
     id: 'clipboard.copy',
@@ -267,8 +280,10 @@ export const commandDeclarations: Command[] = [
     title: 'Copy as image',
     group: 'clipboard',
     shortcut: { key: 'c', meta: true, shift: true },
+    // Whimsical's "Copy as PNG": the selection if there is one, else the
+    // board, on a transparent background so it drops into a doc or a chat.
     run: () => {
-      void renderDiagramPng().then(async (dataUrl) => {
+      void renderDiagramPng({ selectionOnly: true, background: null }).then(async (dataUrl) => {
         if (!dataUrl) return;
         const res = await fetch(dataUrl);
         const blob = await res.blob();

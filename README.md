@@ -20,7 +20,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - **Curved connectors** that leave each shape square to the side they attach to
 - Three line styles: solid, dashed, dotted
 - Three line thicknesses: thin, regular, bold — arrowheads scale to match
-- Five arrowhead styles per end: none, arrow, open, circle, diamond
+- Eight arrowhead styles per end: none, arrow, open, circle, diamond, bar, half circle, dot — the line stops at the head, so the point is always crisp
 - Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter)
 - Draggable bend points — drag a segment to add one, double-click a bend to remove it — and a Reset route button to clear them all
 - Free-standing arrows that can be placed and dragged anywhere
@@ -44,7 +44,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Infinite pan and zoom canvas
 - **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Unlike a group, a frame is part of the drawing and appears in exports
 - Undo / redo history
-- Export to PNG
+- Export to PNG or SVG at 1× or 2×, with or without the board background, the whole board or just the selection; `⌘⇧C` copies the selection (or the board) to the clipboard as a transparent PNG
 - Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
 - Lock / unlock shapes (`⌘⇧L`)
 - Z-order controls: bring forward / backward, bring to front / send to back
@@ -124,8 +124,9 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `Y` | Cylinder |
 | `S` / `N` | Sticky note |
 | `T` | Text |
-| `F` | Frame |
-| `A` / `L` | Connector |
+| `F` / `.` | Frame |
+| `C` / `A` / `L` | Connector |
+| `K` | Add a link to the selected shape |
 
 Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.
 
@@ -187,6 +188,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `-` | Zoom out |
 | `0` | Reset zoom to 100% |
 | `1` | Fit all shapes in view |
+| `2` | Zoom to the selection |
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -76,6 +76,9 @@ const ARROW_STYLES: [ArrowStyle, string][] = [
   ['open', 'Open'],
   ['circle', 'Circle'],
   ['diamond', 'Diamond'],
+  ['bar', 'Bar'],
+  ['halfcircle', 'Half circle'],
+  ['dot', 'Dot'],
 ];
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
@@ -143,6 +146,9 @@ function ArrowEndIcon({ style, side }: { style: ArrowStyle; side: 'start' | 'end
       )}
       {style === 'circle' && <circle cx="13.5" cy="9" r="3.5" fill="currentColor" />}
       {style === 'diamond' && <polygon points="10,9 13.5,5.5 17,9 13.5,12.5" fill="currentColor" />}
+      {style === 'bar' && <line x1="14.5" y1="4.5" x2="14.5" y2="13.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
+      {style === 'halfcircle' && <path d="M 12 4.5 A 4.5 4.5 0 0 1 12 13.5 Z" fill="currentColor" />}
+      {style === 'dot' && <circle cx="14.5" cy="9" r="2.5" fill="currentColor" />}
     </svg>
   );
 }
@@ -585,6 +591,16 @@ export function FloatingToolbar() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const linkInputRef = useRef<HTMLInputElement>(null);
+  // The K shortcut: same as pressing the link button.
+  const linkEditorRequest = useDiagramStore((s) => s.linkEditorRequest);
+  useEffect(() => {
+    if (!linkEditorRequest || isEdgeMode || selectedNodes.length !== 1) return;
+    setLinkValue(selectedNodes[0]?.data?.link ?? '');
+    setLinkOpen(true);
+    setTimeout(() => linkInputRef.current?.focus(), 50);
+    // Only the request should reopen it, not every re-render of the selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkEditorRequest]);
 
   const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
   const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);

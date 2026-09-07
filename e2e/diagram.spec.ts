@@ -1890,8 +1890,9 @@ test('a connector between shapes inside a frame is drawn where the shapes are', 
   const a = await box('[data-id="a"]');
   const b = await box('[data-id="b"]');
   const edge = await box('.react-flow__edge path');
-  // A connector stops `CONNECTOR_STANDOFF_PX` (6px) clear of its shape, plus a hair of antialiasing.
-  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 10) =>
+  // A connector's line stops `CONNECTOR_STANDOFF_PX` (6px) clear of its shape
+  // plus the arrowhead's depth (the head, not the line, reaches the standoff).
+  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 24) =>
     edge.x < n.x + n.width + tol && edge.x + edge.width > n.x - tol && edge.y < n.y + n.height + tol && edge.y + edge.height > n.y - tol;
   expect(touches(a), 'edge should start at the source shape').toBe(true);
   expect(touches(b), 'edge should end at the target shape').toBe(true);
@@ -2032,4 +2033,67 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   const third = page.locator('.react-flow__node').nth(2);
   await expect(third).toBeVisible();
   await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+});
+
+test('K opens the link editor for the selected shape', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 500, y: 400 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.click();
+  await page.keyboard.press('k');
+  const input = page.getByPlaceholder('https://...');
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+});
+
+test('export options: selection only at 1× frames just the selected shape', async ({ page }) => {
+  await signUp(page);
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number) => ({
+      id, type: 'shape', position: { x, y: 0 }, width: 100, height: 100,
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const body = { title: 'Export options', data: { version: 3, nodes: [shape('a', 0), shape('b', 1000)], edges: [] } };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  // PNG dimensions live in the IHDR chunk: width at bytes 16–19, height at 20–23.
+  const pngSize = async (path: string) => {
+    const fs = await import('node:fs/promises');
+    const buf = await fs.readFile(path);
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+  };
+  // The menu's own button is a prefix of its items' names, so `exact`.
+  const exportPng = async (prepare: () => Promise<void>) => {
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      (async () => {
+        await page.getByRole('button', { name: 'Export', exact: true }).click();
+        await page.getByRole('button', { name: '1×' }).click();
+        await prepare();
+        await page.getByRole('button', { name: 'Export as PNG' }).click();
+      })(),
+    ]);
+    return pngSize((await download.path())!);
+  };
+
+  const whole = await exportPng(async () => {});
+  // Two 100px shapes 1000px apart plus the export padding, at 1×.
+  expect(whole.width).toBeGreaterThan(1000);
+
+  await page.locator('[data-id="a"]').click();
+  const part = await exportPng(async () => {
+    await page.getByLabel('Selection only').check();
+  });
+  expect(part.width).toBeLessThan(300);
+  expect(part.height).toBeLessThan(300);
 });

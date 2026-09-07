@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeExportViewport, insertSvgBackground } from './exportImage';
+import { computeExportViewport, exportSubset, insertSvgBackground } from './exportImage';
 
 const opts = { padding: 20, pixelRatio: 2 };
 
@@ -82,5 +82,40 @@ describe('insertSvgBackground', () => {
   it('leaves a data URL it does not understand alone', () => {
     expect(insertSvgBackground('data:image/png;base64,AAAA', 'red')).toBe('data:image/png;base64,AAAA');
     expect(insertSvgBackground(url('not markup'), 'red')).toBe(url('not markup'));
+  });
+});
+
+describe('exportSubset', () => {
+  const frame = { id: 'f', position: { x: 100, y: 100 }, width: 400, height: 300, selected: true };
+  const child = { id: 'c', parentId: 'f', position: { x: 20, y: 30 }, width: 100, height: 50 };
+  const loose = { id: 'l', position: { x: 900, y: 900 }, width: 50, height: 50 };
+  const nodes = [frame, child, loose];
+  const edges = [
+    { id: 'in', source: 'f', target: 'c' },
+    { id: 'out', source: 'c', target: 'l' },
+  ];
+
+  it('is the whole board when nothing is asked of the selection', () => {
+    const all = exportSubset(nodes, edges, false);
+    expect(all.nodes.map((n) => n.id)).toEqual(['f', 'c', 'l']);
+    expect([...all.edgeIds]).toEqual(['in', 'out']);
+    expect(all.bounds).toEqual({ x: 100, y: 100, width: 850, height: 850 });
+  });
+
+  it('keeps a selected container with what is inside it, and only the connectors between them', () => {
+    const some = exportSubset(nodes, edges, true);
+    expect(some.nodes.map((n) => n.id)).toEqual(['f', 'c']);
+    expect([...some.edgeIds]).toEqual(['in']);
+    expect(some.bounds).toEqual({ x: 100, y: 100, width: 400, height: 300 });
+  });
+
+  it('frames a framed child where it really is', () => {
+    const only = exportSubset([frame, { ...child, selected: true }].map((n) => (n.id === 'f' ? { ...n, selected: false } : n)), [], true);
+    expect(only.bounds).toEqual({ x: 120, y: 130, width: 100, height: 50 });
+  });
+
+  it('falls back to the whole board when selection-only is asked with nothing selected', () => {
+    expect(exportSubset([loose], [], true).nodes.map((n) => n.id)).toEqual(['l']);
+    expect(exportSubset([], [], true).bounds).toBeNull();
   });
 });

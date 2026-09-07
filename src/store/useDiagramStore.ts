@@ -476,6 +476,12 @@ export interface DiagramState {
   conflict: SaveConflict | null;
   editingNodeId: string | null;
   editingEdgeId: string | null;
+  /**
+   * Bumped by `requestLinkEditor` (the K shortcut). The floating toolbar owns
+   * the link popover and its input, so a keystroke asks it to open rather
+   * than reaching into it; the count only ever goes up and is never saved.
+   */
+  linkEditorRequest: number;
   nodes: ShapeNode[];
   edges: ConnectorEdge[];
   guides: GuideLine[];
@@ -550,6 +556,7 @@ export interface DiagramState {
   setStarred: (starred: boolean) => void;
   setEditingNodeId: (id: string | null) => void;
   setEditingEdgeId: (id: string | null) => void;
+  requestLinkEditor: () => void;
 
   setTool: (tool: Tool) => void;
   /** Records a pan or zoom. Transient by design: moving the camera is not an edit. */
@@ -975,6 +982,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   conflict: null,
   editingNodeId: null,
   editingEdgeId: null,
+  linkEditorRequest: 0,
   nodes: [],
   edges: [],
   guides: [],
@@ -1115,6 +1123,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   setStarred: (starred) => set({ starred }),
   setEditingNodeId: (id) => set({ editingNodeId: id, editingEdgeId: null }),
   setEditingEdgeId: (id) => set({ editingEdgeId: id, editingNodeId: null }),
+  requestLinkEditor: () => set((s) => ({ linkEditorRequest: s.linkEditorRequest + 1 })),
 
   setTool: (tool) => set({ tool }),
 

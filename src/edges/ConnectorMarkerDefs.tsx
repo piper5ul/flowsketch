@@ -11,23 +11,15 @@
  */
 import { ViewportPortal } from '@xyflow/react';
 import { useMemo } from 'react';
-import { markerDefsForEdges, type MarkerDef, type VisibleArrowStyle } from '../lib/edgeMarkers';
+import { MARKER_GEOMETRY, markerDefsForEdges, type MarkerDef, type VisibleArrowStyle } from '../lib/edgeMarkers';
 import { useDiagramStore } from '../store/useDiagramStore';
 
 /**
- * Every shape is drawn in this box, tip to the right, and `REF_X` names the
- * point in it that lands on the connector's endpoint.
+ * Every shape is drawn in this box, tip to the right; `MARKER_GEOMETRY` says
+ * which point of it lands on the path's end, and `ConnectorEdge` stops the
+ * path that much short so the head fills the rest.
  */
 const VIEW_BOX = '0 0 10 10';
-
-const REF_X: Record<VisibleArrowStyle, number> = {
-  // The tip of the head sits on the endpoint...
-  arrow: 10,
-  diamond: 10,
-  open: 9.5,
-  // ...and a circle rests against it, so it reads as a terminal, not a joint.
-  circle: 9,
-};
 
 function MarkerShape({ style, color }: { style: VisibleArrowStyle; color: string }) {
   switch (style) {
@@ -36,7 +28,7 @@ function MarkerShape({ style, color }: { style: VisibleArrowStyle; color: string
       // the proportions measured off Whimsical's — with a hairline stroke of
       // its own colour so the corners are soft rather than cut. The path is
       // inset by half that stroke, so the painted extent is still the full
-      // box and the tip still lands on `REF_X`.
+      // box and the tip still lands where `MARKER_GEOMETRY` says.
       return (
         <path
           d="M 2.5 0.5 L 9.5 5 L 2.5 9.5 Z"
@@ -61,6 +53,13 @@ function MarkerShape({ style, color }: { style: VisibleArrowStyle; color: string
       return <circle cx={5} cy={5} r={4} fill={color} />;
     case 'diamond':
       return <path d="M 0 5 L 5 0 L 10 5 L 5 10 Z" fill={color} />;
+    case 'bar':
+      return <path d="M 5 0.75 L 5 9.25" fill="none" stroke={color} strokeWidth={1.8} strokeLinecap="round" />;
+    case 'halfcircle':
+      // Flat side to the line, round side at the tip.
+      return <path d="M 5 0.5 A 4.5 4.5 0 0 1 5 9.5 Z" fill={color} />;
+    case 'dot':
+      return <circle cx={7.5} cy={5} r={2.5} fill={color} />;
   }
 }
 
@@ -69,7 +68,7 @@ function Marker({ id, style, color, size }: MarkerDef) {
     <marker
       id={id}
       viewBox={VIEW_BOX}
-      refX={REF_X[style]}
+      refX={MARKER_GEOMETRY[style].refX}
       refY={5}
       markerWidth={size}
       markerHeight={size}

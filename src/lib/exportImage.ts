@@ -1,7 +1,8 @@
-import { getNodesBounds } from '@xyflow/react';
 import { toPng, toSvg } from 'html-to-image';
 import type { Options as HtmlToImageOptions } from 'html-to-image/lib/types';
 import { useDiagramStore } from '../store/useDiagramStore';
+import { boardRect, type HitNode } from './connectorGesture';
+import { subtreeIds } from './nodeTree';
 import { pinLightTheme } from './theme';
 
 export interface Rect {
@@ -121,8 +122,16 @@ async function waitForSelectionCleared(): Promise<void> {
 
 export interface CaptureOptions {
   pixelRatio?: number;
-  background?: string;
+  /** A CSS colour, or `null` for a transparent image. */
+  background?: string | null;
   maxSide?: number;
+  /**
+   * Only the selected shapes (with whatever is inside them) and the
+   * connectors that join two of them, framed by their own bounds. With
+   * nothing selected it is the whole board, so a caller can pass the user's
+   * preference through without checking.
+   */
+  selectionOnly?: boolean;
   /**
    * Keeps the user's selection on screen during the capture. Clearing it is
    * right for an export the user asked for, but a background capture (the
@@ -131,6 +140,64 @@ export interface CaptureOptions {
    * cheaper of the two costs.
    */
   preserveSelection?: boolean;
+}
+
+/** What an export subset needs to know about a connector: its two ends. */
+export interface SubsetEdge {
+  id: string;
+  source: string;
+  target: string;
+  selected?: boolean;
+}
+
+/**
+ * What an export draws: every node, or — for a selection-only export with
+ * something selected — the selected nodes with their subtrees, and only the
+ * connectors that join two nodes in that set. `bounds` frames them in board
+ * coordinates (a child's stored position is relative to its parent, so this
+ * goes through `boardRect`); it is `null` when there is nothing to draw.
+ */
+export function exportSubset<N extends HitNode & { selected?: boolean }, E extends SubsetEdge>(
+  nodes: readonly N[],
+  edges: readonly E[],
+  selectionOnly: boolean,
+): { nodes: N[]; edgeIds: Set<string>; bounds: Rect | null } {
+  const selected = selectionOnly ? nodes.filter((n) => n.selected).map((n) => n.id) : [];
+  const keep = selected.length > 0 ? subtreeIds(nodes, selected) : null;
+  const subset = keep ? nodes.filter((n) => keep.has(n.id)) : [...nodes];
+  const ids = new Set(subset.map((n) => n.id));
+  const edgeIds = new Set(edges.filter((e) => ids.has(e.source) && ids.has(e.target)).map((e) => e.id));
+
+  const byId = new Map(nodes.map((n) => [n.id, n] as const));
+  let bounds: Rect | null = null;
+  for (const node of subset) {
+    const r = boardRect(node, byId);
+    if (!r) continue;
+    bounds = bounds
+      ? {
+          x: Math.min(bounds.x, r.x),
+          y: Math.min(bounds.y, r.y),
+          width: Math.max(bounds.x + bounds.width, r.x + r.width) - Math.min(bounds.x, r.x),
+          height: Math.max(bounds.y + bounds.height, r.y + r.height) - Math.min(bounds.y, r.y),
+        }
+      : { ...r };
+  }
+  return { nodes: subset, edgeIds, bounds };
+}
+
+/**
+ * The capture filter for a subset: the usual chrome exclusions, plus any node
+ * or connector element that is not in it.
+ */
+function subsetFilter(nodeIds: Set<string>, edgeIds: Set<string>, everything: boolean) {
+  return (el: HTMLElement): boolean => {
+    if (!exportFilter(el)) return false;
+    if (everything || typeof el.matches !== 'function') return true;
+    const id = el.getAttribute('data-id');
+    if (id && el.matches('.react-flow__node')) return nodeIds.has(id);
+    if (id && el.matches('.react-flow__edge')) return edgeIds.has(id);
+    return true;
+  };
 }
 
 /** `toPng` / `toSvg`: what the shared capture hands the framed viewport to. */
@@ -144,13 +211,14 @@ type Renderer = (node: HTMLElement, options: HtmlToImageOptions) => Promise<stri
  */
 async function captureDiagram(render: Renderer, options: CaptureOptions): Promise<string | null> {
   const { nodes, edges } = useDiagramStore.getState();
-  if (nodes.length === 0) return null;
+  const subset = exportSubset(nodes, edges, options.selectionOnly ?? false);
+  if (!subset.bounds) return null;
 
   const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
   if (!viewportEl) return null;
 
   const pixelRatio = options.pixelRatio ?? 2;
-  const { width, height, viewport } = computeExportViewport(getNodesBounds(nodes), {
+  const { width, height, viewport } = computeExportViewport(subset.bounds, {
     padding: EXPORT_PADDING,
     pixelRatio,
     maxSide: options.maxSide,
@@ -186,14 +254,15 @@ async function captureDiagram(render: Renderer, options: CaptureOptions): Promis
     return await render(viewportEl, {
       width,
       height,
-      backgroundColor: options.background ?? DEFAULT_BACKGROUND,
+      // `undefined` leaves the PNG transparent.
+      backgroundColor: options.background === null ? undefined : (options.background ?? DEFAULT_BACKGROUND),
       pixelRatio,
       style: {
         width: `${width}px`,
         height: `${height}px`,
         transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
       },
-      filter: exportFilter,
+      filter: subsetFilter(new Set(subset.nodes.map((n) => n.id)), subset.edgeIds, subset.nodes.length === nodes.length),
     });
   } finally {
     restoreTheme();
@@ -247,5 +316,6 @@ export async function renderDiagramSvg(options: CaptureOptions = {}): Promise<st
   // the SVG's own coordinates. See `insertSvgBackground`.
   const dataUrl = await captureDiagram(toSvg, { ...options, background: 'transparent' });
   if (dataUrl === null) return null;
+  if (options.background === null) return dataUrl;
   return insertSvgBackground(dataUrl, options.background ?? DEFAULT_BACKGROUND);
 }
