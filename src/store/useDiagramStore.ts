@@ -188,6 +188,9 @@ export type ConnectorEdge = Edge<ConnectorData, 'connector'>;
 const GROUP_PADDING = 16;
 
 /** A frame's size when it is first drawn. */
+/** Room a wrapped frame leaves around its contents, and above them for the title. */
+const FRAME_PADDING = 24;
+const FRAME_TITLE_INSET = 36;
 const FRAME_WIDTH = 480;
 const FRAME_HEIGHT = 320;
 
@@ -554,6 +557,13 @@ export interface DiagramState {
    * not already travelling together, and selects the group it makes.
    */
   groupSelected: () => void;
+  /**
+   * Puts a titled frame around the selection — Whimsical's "Wrap in section".
+   * One shape is enough (a section of one is still a section); the frame is
+   * sized to the contents plus a margin and room for the title, takes the
+   * members' shared parent if they have one, and ends up selected.
+   */
+  wrapSelectionInFrame: () => void;
   /**
    * Undoes that for every selected group: its children go back to where they
    * are on the board and inherit the group's own parent, and the group itself
@@ -1229,6 +1239,57 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     // its children without having to thread the subtree back into place.
     set({
       nodes: [...rest.map((n) => ({ ...n, selected: false })), group, ...moved],
+      edges: state.edges.map((e) => ({ ...e, selected: false })),
+    });
+  },
+
+  wrapSelectionInFrame: () => {
+    const state = get();
+    const members = outermostSelected(state.nodes);
+    if (members.length < 1) return;
+
+    const byId = nodesById(state.nodes);
+    const bounds = boundsOf(members.map((n) => absoluteBounds(n, byId)));
+    if (!bounds) return;
+
+    const sharedParentId = members.every((n) => n.parentId === members[0].parentId)
+      ? members[0].parentId
+      : undefined;
+    const origin =
+      sharedParentId !== undefined && byId.has(sharedParentId)
+        ? absolutePosition(byId.get(sharedParentId)!, byId)
+        : { x: 0, y: 0 };
+
+    const x = bounds.x - FRAME_PADDING;
+    const y = bounds.y - FRAME_PADDING - FRAME_TITLE_INSET;
+    const frameId = nanoid(8);
+    const frame: ShapeNode = {
+      id: frameId,
+      type: 'frame',
+      position: { x: x - origin.x, y: y - origin.y },
+      width: bounds.w + FRAME_PADDING * 2,
+      height: bounds.h + FRAME_PADDING * 2 + FRAME_TITLE_INSET,
+      selected: true,
+      data: containerData(DEFAULT_FRAME_TITLE),
+      ...(sharedParentId !== undefined ? { parentId: sharedParentId } : {}),
+    };
+
+    const memberIds = new Set(members.map((n) => n.id));
+    const moving = subtreeIds(state.nodes, memberIds);
+    const rest = state.nodes.filter((n) => !moving.has(n.id));
+    const moved = state.nodes
+      .filter((n) => moving.has(n.id))
+      .map((n) => {
+        if (!memberIds.has(n.id)) return { ...n, selected: false };
+        const abs = absolutePosition(n, byId);
+        return { ...n, parentId: frameId, extent: 'parent' as const, position: { x: abs.x - x, y: abs.y - y }, selected: false };
+      });
+
+    pushHistory(state);
+    // Same placement as a new group: the frame and its contents go to the end,
+    // parents ahead of children by construction.
+    set({
+      nodes: [...rest.map((n) => ({ ...n, selected: false })), frame, ...moved],
       edges: state.edges.map((e) => ({ ...e, selected: false })),
     });
   },
