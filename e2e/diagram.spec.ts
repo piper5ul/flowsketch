@@ -2097,3 +2097,53 @@ test('export options: selection only at 1× frames just the selected shape', asy
   expect(part.width).toBeLessThan(300);
   expect(part.height).toBeLessThan(300);
 });
+
+test('⌘K opens a command menu that runs what you pick', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+
+  await page.keyboard.press('Meta+k');
+  const menu = page.getByRole('dialog', { name: 'Command menu' });
+  await expect(menu).toBeVisible();
+  await page.getByLabel('Search commands').fill('keyboard short');
+  await expect(menu.getByRole('option')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  // Used once, it leads the list next time.
+  await page.keyboard.press('Meta+k');
+  await expect(menu.getByRole('option').first()).toContainText('Keyboard shortcuts');
+  await expect(menu.getByRole('option').first()).toContainText('Recent');
+});
+
+test('Wrap in frame puts a titled frame around the selection', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 700, y: 300 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+a');
+
+  await page.locator('[data-node-type="shape"]').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Wrap in frame' }).click();
+
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  const frame = page.locator('[data-node-type="frame"]');
+  await expect(frame).toHaveCount(1);
+  await expect(frame).toContainText('Frame');
+  const frameId = await page.locator('.react-flow__node:has([data-node-type="frame"])').getAttribute('data-id');
+  for (const shape of await page.locator('[data-node-type="shape"]').all()) {
+    expect(await shape.getAttribute('data-parent-id')).toBe(frameId);
+  }
+});

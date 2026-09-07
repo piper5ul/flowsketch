@@ -41,6 +41,7 @@ import { CanvasMiniMap } from './CanvasMiniMap';
 import { TextFormatBar } from './TextFormatBar';
 import { SearchBar } from './SearchBar';
 import { ShortcutSheet } from './ShortcutSheet';
+import { CommandMenu } from './CommandMenu';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
 import type { Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
 
@@ -118,6 +119,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // because nothing renders from it — it is read once, by the command.
   const commentAnchorRef = useRef<CommentAnchor | null>(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [commandMenuOpen, setCommandMenuOpen] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
 
   // Read once, at mount: React Flow only reads `defaultViewport` and `fitView`
@@ -169,6 +171,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       },
       ui: {
         openShortcuts: () => setShortcutsOpen(true),
+        openCommandMenu: () => setCommandMenuOpen(true),
         // Supplied only where there is a session to attribute a comment to.
         // The public share page mounts this same canvas with nobody behind it,
         // and every comment route needs a name against the remark.
@@ -790,6 +793,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         <ContextMenu state={contextMenu} ctx={commandContext} onClose={closeContextMenu} />
       )}
       {shortcutsOpen && <ShortcutSheet onClose={closeShortcuts} />}
+      {commandMenuOpen && <CommandMenu ctx={commandContext} onClose={() => setCommandMenuOpen(false)} />}
     </div>
   );
 }

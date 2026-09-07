@@ -614,6 +614,12 @@ export function FloatingToolbar() {
     () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n)),
     [selectedNodes],
   );
+  // A frame takes a colour (a toned-down one — see `FrameNode`) though none of
+  // the other shape controls; a group draws nothing and takes none.
+  const colourableNodes = useMemo(
+    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isGroupNode(n)),
+    [selectedNodes],
+  );
   const canGroup = useMemo(() => canGroupSelection(nodes), [nodes]);
   const hasGroup = useMemo(() => selectedNodes.some(isGroupNode), [selectedNodes]);
   // The shapes `setSelectedShapeKind` would actually redraw, so the button is
@@ -740,7 +746,7 @@ export function FloatingToolbar() {
           />
         )}
 
-        {(isEdgeMode || styleableNodes.length > 0) && (
+        {(isEdgeMode || colourableNodes.length > 0) && (
           <ColorPalette
             activeStroke={activeStroke}
             onSelect={(swatch) => {

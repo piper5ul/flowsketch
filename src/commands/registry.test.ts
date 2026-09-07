@@ -279,6 +279,17 @@ describe('the align and distribute shortcuts', () => {
     expect(registry.matchEvent(key('f'), withSelection(0))?.id).toBe('tool.frame');
   });
 
+  it('offers Wrap in frame on the node menu for any selection', () => {
+    const cmd = commands.find((c) => c.id === 'arrange.wrapInFrame')!;
+    expect(cmd.contextMenu).toBe('node');
+    expect(cmd.when?.(withSelection(1))).toBe(true);
+    expect(cmd.when?.(withSelection(0))).toBe(false);
+  });
+
+  it('opens the command menu with ⌘K', () => {
+    expect(registry.matchEvent(key('k', { meta: true }), withSelection(0))?.id).toBe('view.commandMenu');
+  });
+
   it('zooms to the selection with 2 and to the board with 1', () => {
     expect(registry.matchEvent(key('2'), withSelection(1))?.id).toBe('view.fitSelection');
     expect(registry.matchEvent(key('2'), withSelection(0))).toBeUndefined();
