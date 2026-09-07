@@ -162,8 +162,8 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --canvas: #0d0e13;
-  --canvas-dot: #303446;
+  --canvas: #0f171f;
+  --canvas-dot: #2b3743;
   --panel: #1a1c25;
   --field: #101119;
 
