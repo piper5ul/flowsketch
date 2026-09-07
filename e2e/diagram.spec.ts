@@ -873,16 +873,16 @@ test('a new shape is a borderless white card, and Outline hands it its stroke ba
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
   // The box inside the wrapper: the wrapper carries opacity and the shadow the
-  // user can switch on, the box the fill, the border and the resting shadow.
+  // user can switch on, the box the fill and the border.
   const box = node.locator('.shape-wrapper > div').first();
 
   // Deselect, or the selection ring is the box-shadow being read.
   await pane.click({ position: { x: 1000, y: 600 } });
   await expect(box).toHaveCSS('border-top-width', '0px');
   await expect(box).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  // Nothing outlines a filled shape, so the shadow is what separates it from
-  // the board — white on white would otherwise be invisible.
-  await expect(box).not.toHaveCSS('box-shadow', 'none');
+  // Nothing outlines a filled shape and nothing shadows it either: the board's
+  // grey is what a white card stands out against, so the drawing stays flat.
+  await expect(box).toHaveCSS('box-shadow', 'none');
 
   await node.click();
   await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Outline' }).click();
