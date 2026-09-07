@@ -141,6 +141,75 @@ describe('the save-as-default command', () => {
   });
 });
 
+describe('the board-thumbnail commands', () => {
+  const set = registry.find('view.setThumbnail')!;
+  const clear = registry.find('view.clearThumbnail')!;
+
+  /** A context with these nodes selected and this thumbnail on the board. */
+  function ctxOf(selected: string[], thumbnailNodeIds: string[] | null): CommandContext {
+    const calls: (string[] | null)[] = [];
+    const ctx = {
+      store: {
+        getState: () => ({
+          readOnly: false,
+          thumbnailNodeIds,
+          nodes: ['a', 'b'].map((id) => ({ id, selected: selected.includes(id), data: {} })),
+          edges: [],
+          tool: 'select',
+          setThumbnailNodeIds: (ids: string[] | null) => calls.push(ids),
+        }),
+        setState: () => {},
+      },
+    } as unknown as CommandContext;
+    return Object.assign(ctx, { calls }) as CommandContext & { calls: (string[] | null)[] };
+  }
+
+  afterEach(() => useToastStore.getState().clear());
+
+  const messages = () => useToastStore.getState().toasts.map((t) => t.message);
+
+  it('sit on the right menus and carry no keystroke', () => {
+    expect(set.contextMenu).toBe('node');
+    // Clearing is on the pane menu too: the shape it was set on may be gone.
+    expect(clear.contextMenu).toEqual(['node', 'pane']);
+    expect(set.shortcut).toBeUndefined();
+    expect(clear.shortcut).toBeUndefined();
+  });
+
+  it('are edits, so both are withdrawn in read-only mode', () => {
+    expect(offered('view.setThumbnail', ctxWith(true))).toBe(false);
+    expect(offered('view.clearThumbnail', ctxWith(true))).toBe(false);
+  });
+
+  it('offers "set" for a selection that is not already the thumbnail', () => {
+    expect(set.when!(ctxOf(['a'], null))).toBe(true);
+    expect(set.when!(ctxOf(['a', 'b'], ['a']))).toBe(true);
+    // Nothing selected: there is no picture to make.
+    expect(set.when!(ctxOf([], null))).toBe(false);
+    // Already exactly this, in either order — the item would do nothing.
+    expect(set.when!(ctxOf(['a'], ['a']))).toBe(false);
+    expect(set.when!(ctxOf(['a', 'b'], ['b', 'a']))).toBe(false);
+  });
+
+  it('offers "remove" only while a custom thumbnail is set', () => {
+    expect(clear.when!(ctxOf([], ['a']))).toBe(true);
+    expect(clear.when!(ctxOf(['a'], null))).toBe(false);
+  });
+
+  it('write the selection, and clear it again, each with a word about it', () => {
+    const setting = ctxOf(['a', 'b'], null) as CommandContext & { calls: (string[] | null)[] };
+    set.run(setting);
+    expect(setting.calls).toEqual([['a', 'b']]);
+    expect(messages()).toEqual(['Board thumbnail set']);
+
+    useToastStore.getState().clear();
+    const clearing = ctxOf([], ['a']) as CommandContext & { calls: (string[] | null)[] };
+    clear.run(clearing);
+    expect(clearing.calls).toEqual([null]);
+    expect(messages()).toEqual(['Board thumbnail cleared']);
+  });
+});
+
 describe('the "paste as" commands', () => {
   const stickies = registry.find('clipboard.pasteAsStickies')!;
   const mermaid = registry.find('clipboard.pasteMermaid')!;

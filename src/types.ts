@@ -138,6 +138,14 @@ export interface ShapeData {
   mindMap?: MindMapNodeData;
   link?: string;
   locked?: boolean;
+  /**
+   * Where this frame sits in the running order when the diagram is presented —
+   * one slide per frame, see `src/lib/presentation.ts`. Only a frame carries
+   * one, and **absent means "not ordered"**: such a frame is presented after
+   * every ordered one, in reading order, so a section added to an arranged deck
+   * joins the end instead of shuffling into the middle of it.
+   */
+  slideOrder?: number;
   imageSrc?: string;
   /** Set on an `image` node whose bytes are still uploading. */
   uploading?: boolean;

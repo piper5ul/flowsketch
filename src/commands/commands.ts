@@ -1,13 +1,16 @@
 import { canAutoLayout } from '../lib/autoLayout';
 import { MIND_MAP_NODE_SIZE, childrenOf, mapOf } from '../lib/mindMap';
 import { linesOf } from '../lib/pasteAs';
+import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
-import { isGroupNode } from '../lib/nodeKinds';
+import { isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import { slidesOf } from '../lib/presentation';
 import { subtreeIds } from '../lib/nodeTree';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
 import { toastError, toastInfo } from '../store/useToastStore';
 import { useSearchStore } from '../store/useSearchStore';
+import { usePresentStore } from '../store/usePresentStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
 import { nextFontSize } from '../lib/text';
@@ -760,6 +763,45 @@ export const commandDeclarations: Command[] = [
     shortcut: { key: 'f', meta: true },
     run: () => useSearchStore.getState().openSearch(),
   },
+  // ---- presenting --------------------------------------------------------
+  // One slide per frame (`src/lib/presentation.ts`). Both commands are on
+  // `READ_ONLY_COMMAND_IDS`: presenting is looking, so a viewer's board and the
+  // public `/s/:token` page can both be presented. Neither writes anything —
+  // the running order is the one thing here that does, and that is the store's
+  // `setSlideOrder`, reached from the Present button rather than from a
+  // keystroke.
+  {
+    id: 'view.present',
+    title: 'Present',
+    group: 'view',
+    // ⌘⇧P is free (P alone is the parallelogram tool, and no other binding
+    // uses it with modifiers).
+    shortcut: { key: 'p', meta: true, shift: true },
+    // A board with no sections has no deck, and an empty presentation is not
+    // worth offering. `some` rather than `slidesOf`, because this runs on every
+    // render of the ⌘K menu and the answer is the same.
+    when: (ctx) => ctx.store.getState().nodes.some((n) => isFrameNode(n)),
+    run: () => usePresentStore.getState().start(),
+  },
+  {
+    id: 'view.presentFromFrame',
+    title: 'Present from this frame',
+    group: 'view',
+    // No keystroke: it is about the frame under the pointer, which is what the
+    // right-click menu says and a keystroke cannot.
+    contextMenu: 'node',
+    when: (ctx) => {
+      const selected = selectedNodes(ctx.store.getState());
+      return selected.length === 1 && isFrameNode(selected[0]);
+    },
+    run: (ctx) => {
+      const [node] = selectedNodes(ctx.store.getState());
+      if (!node) return;
+      const index = slidesOf(ctx.store.getState().nodes).findIndex((slide) => slide.id === node.id);
+      if (index >= 0) usePresentStore.getState().start(index);
+    },
+  },
+
   {
     id: 'view.commandMenu',
     title: 'Command menu',
@@ -793,6 +835,46 @@ export const commandDeclarations: Command[] = [
   // are per-browser preferences, not part of any diagram. None takes a
   // keystroke — the letters left are worth more to a tool — so they reach the
   // user through the bottom bar, and through here for the sake of one list.
+  // ---- view: the board's thumbnail ---------------------------------------
+  // Whimsical's "Set as board thumbnail": the dashboard card shows these shapes
+  // instead of a picture of the whole board. Both are edits — the ids are saved
+  // with the diagram and shared with everybody on it — so neither is on
+  // `READ_ONLY_COMMAND_IDS`. Neither takes a keystroke: this is a rare decision
+  // about how a board is filed, and the letters left are worth more elsewhere.
+  {
+    id: 'view.setThumbnail',
+    title: 'Set as board thumbnail',
+    group: 'view',
+    contextMenu: 'node',
+    // Something to make a picture of, and something to change: offering it for
+    // a selection that is already exactly the thumbnail would be an action with
+    // no effect.
+    when: (ctx) => {
+      const state = ctx.store.getState();
+      const selected = selectedNodes(state).map((n) => n.id);
+      if (selected.length === 0) return false;
+      return !isSameThumbnail(state.thumbnailNodeIds, selected);
+    },
+    run: (ctx) => {
+      const state = ctx.store.getState();
+      state.setThumbnailNodeIds(selectedNodes(state).map((n) => n.id));
+      toastInfo('Board thumbnail set');
+    },
+  },
+  {
+    id: 'view.clearThumbnail',
+    title: 'Remove from board thumbnail',
+    group: 'view',
+    // On the pane menu as well: undoing this is not something the user should
+    // have to find the right shape to do, least of all when the shape it was
+    // set on has since been deleted.
+    contextMenu: ['node', 'pane'],
+    when: (ctx) => ctx.store.getState().thumbnailNodeIds !== null,
+    run: (ctx) => {
+      ctx.store.getState().setThumbnailNodeIds(null);
+      toastInfo('Board thumbnail cleared');
+    },
+  },
   {
     id: 'view.toggleMinimap',
     title: 'Show minimap',
@@ -842,6 +924,10 @@ const READ_ONLY_COMMAND_IDS = new Set<string>([
   'view.fitView',
   'view.fitSelection',
   'view.find',
+  // Presenting is looking: a viewer's board and the public share page both
+  // have a deck, and neither command writes anything.
+  'view.present',
+  'view.presentFromFrame',
   'view.pan',
   'view.shortcuts',
   'view.toggleMinimap',

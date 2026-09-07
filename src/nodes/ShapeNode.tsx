@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useLayoutEffect } from 'react';
+import { useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
@@ -9,6 +9,8 @@ import type { Direction, VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
 import { canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
+import { hasMarkdown, parseMarkdown } from '../lib/markdown';
+import { MarkdownLabel } from '../components/MarkdownLabel';
 import {
   CYLINDER_SEAM,
   shapePaint,
@@ -117,6 +119,11 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
       sel?.addRange(range);
     }
   }, [editing]);
+
+  // Markdown in the label renders only while it is not being edited: the
+  // source stays what is stored, and editing shows it so the markers can be
+  // reached. Plain text — the usual case — never pays for a parse.
+  const markdown = useMemo(() => (!editing && hasMarkdown(data.label) ? parseMarkdown(data.label) : null), [editing, data.label]);
 
   const commit = useCallback(() => {
     if (consumeSuppressBlur()) return;
@@ -400,7 +407,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
               !darkBg && 'text-shape-ink',
             )}
           >
-            {data.label || null}
+            {!editing && markdown ? <MarkdownLabel blocks={markdown} /> : data.label || null}
           </div>
         )}
 

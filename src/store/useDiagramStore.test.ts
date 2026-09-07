@@ -1280,6 +1280,92 @@ describe('setDefaultStyle', () => {
   });
 });
 
+describe('setThumbnailNodeIds', () => {
+  it('records the ids the dashboard card is drawn from, and clears them again', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 500, y: 0 });
+
+    store().setThumbnailNodeIds([a, b]);
+    expect(store().thumbnailNodeIds).toEqual([a, b]);
+
+    store().setThumbnailNodeIds(null);
+    expect(store().thumbnailNodeIds).toBeNull();
+  });
+
+  it('reads an empty list as no custom thumbnail at all', () => {
+    store().setThumbnailNodeIds([]);
+    expect(store().thumbnailNodeIds).toBeNull();
+  });
+
+  it('is not undoable, in either history — it is filing, not a mark on the board', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    select(a);
+    const before = store().canUndo;
+
+    store().setThumbnailNodeIds([a]);
+
+    // No entry of its own: it lives in the document's `meta`, which the
+    // Y.UndoManager does not track, so the snapshot stack keeps the same rule.
+    expect(store().canUndo).toBe(before);
+    store().undo();
+    expect(store().thumbnailNodeIds).toEqual([a]);
+  });
+
+  it('round-trips through the saved JSON', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+
+    const saved = JSON.parse(
+      JSON.stringify(
+        serializeDiagram(store().nodes, store().edges, store().viewport, store().defaults, store().thumbnailNodeIds),
+      ),
+    );
+    expect(saved.thumbnailNodeIds).toEqual([a]);
+
+    store().loadDiagram('test', 'Test', false, saved);
+    expect(store().thumbnailNodeIds).toEqual([a]);
+  });
+
+  it('leaves the JSON of a board with the automatic thumbnail exactly as it was', () => {
+    store().addShape('rectangle', { x: 0, y: 0 });
+    const data = serializeDiagram(
+      store().nodes,
+      store().edges,
+      store().viewport,
+      store().defaults,
+      store().thumbnailNodeIds,
+    );
+    expect('thumbnailNodeIds' in data).toBe(false);
+  });
+
+  it('belongs to the board it was set on', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+    store().loadDiagram('other', 'Other', false, { nodes: [], edges: [] });
+    expect(store().thumbnailNodeIds).toBeNull();
+  });
+
+  it('drops a stored value that is not a list of ids', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [],
+      thumbnailNodeIds: ['a', '', null, 7, 'a'],
+    });
+    expect(store().thumbnailNodeIds).toEqual(['a']);
+  });
+
+  it('keeps an id whose shape has been deleted — the shape can come back', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+    select(a);
+    store().deleteSelection();
+    expect(store().thumbnailNodeIds).toEqual([a]);
+    store().undo();
+    expect(store().nodes.map((n) => n.id)).toEqual([a]);
+  });
+});
+
 describe('updateEdgeData', () => {
   /** An edge with the default styling, plus the id of its source shape. */
   function edgeId() {
@@ -2881,6 +2967,62 @@ describe('pasteMermaid', () => {
   it('places a chart with nothing to lay out at the origin anyway', async () => {
     await store().pasteMermaid('flowchart TD\n  A[Alone]', origin);
     expect(labelled('Alone').position).toEqual(origin);
+  });
+});
+
+describe('setSlideOrder', () => {
+  /** Three frames, top to bottom, so the unarranged deck reads a, b, c. */
+  function seedFrames() {
+    store().loadDiagram('test', 'Deck', false, {
+      nodes: ['a', 'b', 'c'].map((id, i) => ({
+        id,
+        type: 'frame' as const,
+        position: { x: 0, y: i * 1000 },
+        width: 400,
+        height: 300,
+        data: { label: id, shape: 'rectangle' as const, fill: 'transparent', stroke: 'transparent' },
+      })),
+      edges: [],
+    });
+  }
+
+  const orderOf = (id: string) => store().nodes.find((n) => n.id === id)!.data.slideOrder;
+
+  beforeEach(seedFrames);
+
+  it('writes slideOrder 0..n-1 onto the frames', () => {
+    store().setSlideOrder(['c', 'a', 'b']);
+    expect([orderOf('c'), orderOf('a'), orderOf('b')]).toEqual([0, 1, 2]);
+  });
+
+  it('is one history entry however many frames moved', () => {
+    expect(store().canUndo).toBe(false);
+    store().setSlideOrder(['c', 'b', 'a']);
+    expect(store().canUndo).toBe(true);
+
+    store().undo();
+    expect(orderOf('a')).toBeUndefined();
+    expect(orderOf('c')).toBeUndefined();
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('costs no history entry when the board is already in that order', () => {
+    store().setSlideOrder(['a', 'b', 'c']);
+    const before = store().canUndo;
+    store().setSlideOrder(['a', 'b', 'c']);
+    expect(store().canUndo).toBe(before);
+  });
+
+  it('leaves everything but slideOrder alone, the array order included', () => {
+    store().setSlideOrder(['b', 'a', 'c']);
+    expect(store().nodes.find((n) => n.id === 'b')!.data).toMatchObject({
+      label: 'b',
+      fill: 'transparent',
+      slideOrder: 0,
+    });
+    // The running order is a field on the frames, not a rearrangement of the
+    // board: a diagram's node array is its z-order and must not move with it.
+    expect(store().nodes.map((n) => n.id)).toEqual(['a', 'b', 'c']);
   });
 });
 

@@ -44,6 +44,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Infinite pan and zoom canvas
 - **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Select some shapes and choose **Wrap in frame** from the right-click menu to put a frame around them, and pick a colour for a frame to tint it. Unlike a group, a frame is part of the drawing and appears in exports
 - **Filter selection** — with several shapes selected, the toolbar's filter narrows the selection to one kind or one colour, so a sweep-select becomes "every sticky" or "every yellow thing" in one click
+- Markdown in labels: `# ` headings, `- ` bullets, `1. ` numbers, `[ ] ` checklists, `**bold**`, `_italic_` and `` `code` `` render as soon as you finish editing
 - Undo / redo history
 - Version history you can scrub through (‹ › and Play) and **fork** any version into a new diagram of your own
 - Export to PNG or SVG at 1× or 2×, with or without the board background, the whole board or just the selection; `⌘⇧C` copies the selection (or the board) to the clipboard as a transparent PNG
@@ -62,6 +63,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
 - Find shapes and connectors by their labels with `⌘F`: every match is ringed on the board, `Enter` / `⇧Enter` cycle through them, and each one is selected and framed as you reach it. Available on read-only and publicly shared boards too
+- **Present** — every frame is a slide. Press **Present** in the top bar (or `⌘⇧P`, or **Present from this frame** on a frame's right-click menu) and the board fills the window one section at a time: the frame is fitted to the screen, everything outside it is masked out in the frame's own colour, and the chrome gets out of the way. `→` / `Space` / `PageDown` advance, `←` / `PageUp` go back, `Home` / `End` jump to either end, a click anywhere advances and `Esc` puts you back exactly where you were. Slides run top to bottom by default; the caret next to **Present** opens **Arrange slides**, where `↑` / `↓` set the running order (saved with the diagram, one `⌘Z` to undo). Presenting is looking, so a read-only board and a publicly shared link can both be presented
 - Press `?` for a cheat sheet of every keyboard shortcut, generated from the command registry
 - Minimap overview of the whole board, toggled from the bottom bar and remembered per browser
 - Optional 10 px grid snapping, toggled from the bottom bar; the shape-to-shape alignment guides keep working either way
@@ -80,6 +82,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 ### Dashboard
 - **Folders** — file your diagrams into folders from the sidebar: **New folder** names one in place, and a card's ⋯ menu offers **Move to…** (or drag the card onto a folder). Selecting a folder filters the grid, and search and sort still apply inside it. Rename a folder in place from its ⋯ menu; deleting one asks first and keeps every diagram in it — they move back to **All diagrams**. Folders are personal: a diagram somebody shared with you is never in one of yours, and yours are never visible to anyone you share with. The sidebar collapses to a **Toggle folders** button on narrow screens
 - **All diagrams / Starred** — the two standing views above your folders. Starred diagrams are also pinned to the front of every grid, whatever the sort
+- **Board thumbnail** — a card shows a picture of the whole board, unless you pick one: select a shape or a few and choose **Set as board thumbnail** from the right-click menu, and the card is drawn from those alone. **Remove from board thumbnail** (on the shape menu and on the canvas menu) puts the whole board back. It is a property of the board, so everybody working on it sees the same card; delete the shape it was set on and the card falls back to the whole board until the shape comes back
 - Search by title and sort by last edited, title or creation date, within whatever the sidebar has selected
 - Import a diagram from an exported JSON file, and duplicate, rename, star or delete one from its card
 
@@ -221,6 +224,7 @@ Every one of these also works while you are typing into a mind-map node's label.
 | `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
+| `⌘⇧P` | Present: one slide per frame; `→` / `Space` next, `←` back, `Home` / `End` for either end, `Esc` exits |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
 | `⌘K` | Command menu: every command, searchable, recents first |
 | `?` | Show the keyboard shortcut cheat sheet |

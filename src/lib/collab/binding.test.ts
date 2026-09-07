@@ -54,8 +54,8 @@ function bindWithHistory(doc: Y.Doc, options: { readOnly?: boolean } = {}) {
 
 /** The diagram exactly as an autosave would have written it. */
 function snapshot() {
-  const { nodes, edges, viewport, defaults } = store();
-  return serializeDiagram(nodes, edges, viewport, defaults);
+  const { nodes, edges, viewport, defaults, thumbnailNodeIds } = store();
+  return serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds);
 }
 
 /** Select exactly these node ids, the way the canvas does. */
@@ -343,6 +343,97 @@ describe('board defaults', () => {
     saveDefault(a);
 
     expect(doc.getMap('meta').get('defaults')).toBeUndefined();
+  });
+});
+
+/**
+ * The board's custom thumbnail rides beside the defaults in `meta` and is
+ * shared the same way: the dashboard card is the same card in every window.
+ */
+describe('board thumbnail', () => {
+  it('writes a thumbnail this client sets into the document', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addShape('rectangle', { x: 900, y: 0 });
+
+    store().setThumbnailNodeIds([a]);
+
+    expect(docToDiagramData(doc).thumbnailNodeIds).toEqual([a]);
+    // And the snapshot the server would render is still exactly the JSON an
+    // autosave would have written.
+    expect(docToDiagramData(doc)).toEqual(snapshot());
+  });
+
+  it('renders a collaborator’s thumbnail onto this client', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    pushDiagramToDoc(peer, { ...docToDiagramData(peer), thumbnailNodeIds: [a] }, 'peer');
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().thumbnailNodeIds).toEqual([a]);
+  });
+
+  it('narrows a collaborator’s thumbnail to ids before acting on it', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+
+    // Written straight into the document, the way a browser running another
+    // build — or none of ours — could.
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    peer.getMap('meta').set('thumbnailNodeIds', ['a', '', null, 3, 'a']);
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().thumbnailNodeIds).toEqual(['a']);
+  });
+
+  it('clears it on every window when this one does', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+
+    store().setThumbnailNodeIds(null);
+
+    expect(doc.getMap('meta').get('thumbnailNodeIds')).toBeUndefined();
+    expect('thumbnailNodeIds' in docToDiagramData(doc)).toBe(false);
+  });
+
+  it('carries one set before the socket opened into the document', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const baseline = snapshot();
+    store().setThumbnailNodeIds([a]);
+
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, baseline, 'server');
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    expect(docToDiagramData(doc).thumbnailNodeIds).toEqual([a]);
+    expect(store().thumbnailNodeIds).toEqual([a]);
+  });
+
+  it('writes nothing for a board whose card is the automatic picture', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('rectangle', { x: 0, y: 0 });
+    expect(doc.getMap('meta').get('thumbnailNodeIds')).toBeUndefined();
+    expect('thumbnailNodeIds' in docToDiagramData(doc)).toBe(false);
+  });
+
+  it('is not something a viewer writes back', () => {
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, snapshot(), 'server');
+    bind(doc, { readOnly: true });
+
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().setThumbnailNodeIds([a]);
+
+    expect(doc.getMap('meta').get('thumbnailNodeIds')).toBeUndefined();
   });
 });
 
