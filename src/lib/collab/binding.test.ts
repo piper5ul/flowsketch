@@ -1000,6 +1000,102 @@ describe('undo', () => {
     expect(store().nodes).toHaveLength(2);
     expect(store().canUndo).toBe(false);
   });
+
+  /**
+   * The board's `meta` — its defaults, its thumbnail, its round of voting and
+   * its countdown — is inside the manager's scope, and the camera beside them
+   * is kept out of it by origin. That asymmetry is the whole of this block.
+   */
+  describe('board meta', () => {
+    it('takes back a saved default style, on this document and a peer’s', () => {
+      const doc = new Y.Doc();
+      bindWithHistory(doc);
+      const id = store().addShape('rectangle', { x: 0, y: 0 });
+      store().updateNodeData(id, { fill: '#FF0000' });
+      select(id);
+      const peer = peerOf(doc);
+
+      store().saveSelectionAsDefault();
+      expect(store().defaults.shape).toMatchObject({ fill: '#FF0000' });
+      converge(doc, peer);
+      expect(docToDiagramData(peer).defaults).toMatchObject({ shape: { fill: '#FF0000' } });
+
+      store().undo();
+      converge(doc, peer);
+      // Gone here and in their window — undoing is itself an edit — and the
+      // shape's own colour, which was the edit before it, is untouched.
+      expect(store().defaults.shape).toBeUndefined();
+      expect(docToDiagramData(peer).defaults).toBeUndefined();
+      expect(store().nodes[0].data.fill).toBe('#FF0000');
+    });
+
+    it('takes back a board thumbnail', () => {
+      const doc = new Y.Doc();
+      bindWithHistory(doc);
+      const id = store().addShape('rectangle', { x: 0, y: 0 });
+
+      store().setThumbnailNodeIds([id]);
+      expect(docToDiagramData(doc).thumbnailNodeIds).toEqual([id]);
+
+      store().undo();
+      expect(store().thumbnailNodeIds).toBeNull();
+      expect(docToDiagramData(doc).thumbnailNodeIds).toBeUndefined();
+      // Only the thumbnail: the shape it named is still on the board.
+      expect(store().nodes).toHaveLength(1);
+    });
+
+    it('takes back the board timer and the round of voting', () => {
+      const doc = new Y.Doc();
+      bindWithHistory(doc);
+      useDiagramStore.setState({ viewerId: 'ada' });
+
+      store().startVoting(3);
+      store().startTimer(60);
+      expect(docToDiagramData(doc).timer).toBeTruthy();
+
+      store().undo();
+      expect(store().timer).toBeNull();
+      expect(docToDiagramData(doc).timer).toBeUndefined();
+      // Two acts, two steps: the round is still open.
+      expect(store().voting).toMatchObject({ active: true });
+
+      store().undo();
+      expect(store().voting).toBeNull();
+      expect(docToDiagramData(doc).voting).toBeUndefined();
+    });
+
+    it('leaves no undo entry for the camera, which shares the same map', () => {
+      const doc = new Y.Doc();
+      bindWithHistory(doc);
+      expect(store().canUndo).toBe(false);
+
+      store().setViewport({ x: -40, y: 12, zoom: 1.5 });
+      // Written — it is what the diagram reopens at — and on nobody's stack.
+      expect(docToDiagramData(doc).viewport).toEqual({ x: -40, y: 12, zoom: 1.5 });
+      expect(store().canUndo).toBe(false);
+
+      // And it does not become the thing a later ⌘Z reaches for either.
+      const id = store().addShape('rectangle', { x: 0, y: 0 });
+      store().setViewport({ x: 0, y: 0, zoom: 1 });
+      store().undo();
+      expect(store().nodes).toHaveLength(0);
+      expect(docToDiagramData(doc).viewport).toEqual({ x: 0, y: 0, zoom: 1 });
+      expect(id).toBeTruthy();
+    });
+
+    it('does not read a peer’s camera back onto this canvas', () => {
+      const doc = new Y.Doc();
+      bindWithHistory(doc);
+      store().setViewport({ x: -40, y: 12, zoom: 1.5 });
+      const peer = peerOf(doc);
+
+      const theirs = docToDiagramData(peer);
+      pushDiagramToDoc(peer, { ...theirs, viewport: { x: 900, y: 900, zoom: 0.25 } }, 'peer');
+      converge(doc, peer);
+
+      expect(store().viewport).toEqual({ x: -40, y: 12, zoom: 1.5 });
+    });
+  });
 });
 
 describe('merging', () => {

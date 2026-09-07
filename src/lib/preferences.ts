@@ -14,7 +14,13 @@
 /** Namespaced so a value cannot collide with anything else on the origin. */
 const PREFIX = 'flowsketch:';
 
-export type PreferenceKey = 'minimap' | 'gridSnap' | 'theme' | 'commandRecents';
+export type PreferenceKey =
+  | 'minimap'
+  | 'gridSnap'
+  | 'theme'
+  | 'commandRecents'
+  /** Whether the board timer chimes when it runs out. Default on. */
+  | 'timerSound';
 
 function storage(): Pick<Storage, 'getItem' | 'setItem'> | null {
   try {
