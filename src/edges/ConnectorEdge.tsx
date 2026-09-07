@@ -271,7 +271,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
     },
-    [id, source, target, nodes, screenToFlowPosition, reconnectEdgeEndpoint],
+    [id, source, target, nodes, byId, screenToFlowPosition, reconnectEdgeEndpoint],
   );
 
   const onLabelPointerDown = useCallback(
