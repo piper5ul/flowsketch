@@ -89,6 +89,20 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Per-user diagram dashboard
 - RESTful API for diagram CRUD, folders, sharing, members, versions and comments
 
+## More screenshots
+
+**Editing together.** A teammate's cursor and selection show up live, and everyone on the board is in the presence strip.
+
+![Two people on the same board: Marco's named cursor and his selection outline on a shape, with both avatars in the header](docs/screenshot-collab.png)
+
+**Comments pinned to shapes.** Threads live where the conversation happened; the panel filters open and resolved ones.
+
+![A numbered comment pin on the "Verify email" shape and the Comments panel showing the thread and a reply](docs/screenshot-comments.png)
+
+**The dashboard.** Thumbnails, folders, starring and search across all your diagrams.
+
+![The dashboard with three diagram cards, a Product folder and the Starred filter](docs/screenshot-dashboard.png)
+
 ## Keyboard shortcuts
 
 On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
