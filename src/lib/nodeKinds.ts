@@ -25,6 +25,18 @@ export function isContainerNode(node: Typed): boolean {
 }
 
 /**
+ * True for one freehand pen stroke.
+ *
+ * Read from the `type` for the reason the containers are: an ink node carries
+ * an ordinary `ShapeData` (its `stroke` is the pen's colour, which is what lets
+ * the palette work on it unchanged), and its `shape` field is a rectangle
+ * nothing draws. The stroke itself is `data.ink` — see `src/lib/ink.ts`.
+ */
+export function isInkNode(node: Typed): boolean {
+  return node.type === 'ink';
+}
+
+/**
  * Every shape kind, at runtime. Built from an exhaustive record rather than
  * written out as an array, so adding a kind to `ShapeKind` and forgetting it
  * here is a type error rather than a table that silently misses a shape.
@@ -88,13 +100,17 @@ export function canRoundCorners(shape: ShapeKind): boolean {
  * thing that makes it what it is. An anchor node is not a shape the user drew
  * at all but one end of a floating arrow, and giving a 1×1 invisible endpoint a
  * silhouette would put a speck of a star on the canvas that nothing selected. A
- * locked shape sits the edit out, as it sits out every other one. The floating
- * toolbar and the store share this predicate so the button is offered exactly
- * when pressing it would do something.
+ * locked shape sits the edit out, as it sits out every other one. A freehand
+ * stroke is a line the user drew by hand and has no silhouette to exchange —
+ * and it is told by its `type`, which is why this takes the whole node rather
+ * than only its data. The floating toolbar and the store share this predicate
+ * so the button is offered exactly when pressing it would do something.
  */
 export function canSwapShapeKind(
-  data: Pick<ShapeData, 'shape' | 'locked' | 'fill' | 'stroke'>,
+  node: Typed & { data: Pick<ShapeData, 'shape' | 'locked' | 'fill' | 'stroke'> },
 ): boolean {
+  if (isContainerNode(node) || isInkNode(node)) return false;
+  const { data } = node;
   if (data.shape === 'image' || data.shape === 'text') return false;
   if (isAnchorNode(data)) return false;
   return !data.locked;

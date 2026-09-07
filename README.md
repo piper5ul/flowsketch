@@ -70,6 +70,12 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Light and dark themes, cycled from the bottom bar (system → light → dark) and remembered per browser. It ships following your OS, and only the app's own chrome changes: shapes, connectors and their labels keep the colours you gave them, and an exported PNG or SVG is captured light whichever theme you are working in
 - Auto-save to server (diagrams persist across sessions), including the pan and zoom the diagram was left at
 
+### Freehand
+- **Draw on the board.** `B` picks the pen, `⇧B` the highlighter — a marker draws a solid line in the current colour, a highlighter a wide translucent one you can still read the diagram through. The tool stays held, so you draw as many strokes as you like; `Esc` or `V` goes back to Select, and `Esc` mid-stroke abandons it
+- **A stroke is an object**, not a layer of paint: select it, move it, resize it (the line scales with the box), give it a colour from the palette, copy it, put it in a frame, lock it, and it appears in exports and in what your collaborators see
+- **`⇧E` is the eraser** — drag over the strokes you want gone and they go, whole strokes at a time, the wipe undone by a single `⌘Z`. It rubs out ink and nothing else: shapes and connectors are untouched
+- The keys are `B` / `⇧B` / `⇧E` rather than Whimsical's `H` / `⇧H` / `E`, because `H` is the hand tool here and `E` the table tool. All three are also on the rail, behind the pen button
+
 ### Mind maps
 - Press `M` to drop a root node in the middle of the view, already open for typing — a mind map is typed, not drawn
 - `Tab` adds a child, `Enter` a sibling below, `⌘Enter` a sibling above and `⌥Enter` a parent, each one selected and ready to type into. All four work while you are still typing into the node before them, so a whole map goes in without touching the mouse
@@ -142,6 +148,9 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `T` | Text |
 | `F` / `.` | Frame |
 | `C` / `A` / `L` | Connector |
+| `B` | Pen (freehand marker) |
+| `⇧B` | Highlighter |
+| `⇧E` | Eraser (rubs out whole strokes) |
 | `K` | Add a link to the selected shape |
 
 Pressing a tool key switches to that tool; clicking or dragging on the canvas then places the shape.

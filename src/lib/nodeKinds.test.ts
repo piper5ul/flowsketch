@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canRoundCorners, canSwapShapeKind, isAnchorNode } from './nodeKinds';
-import type { ShapeData, ShapeKind } from '../types';
+import { canRoundCorners, canSwapShapeKind, isAnchorNode, isInkNode } from './nodeKinds';
+import type { DiagramNodeType, ShapeData, ShapeKind } from '../types';
 
 const data = (patch: Partial<ShapeData>): ShapeData => ({
   label: '',
@@ -8,6 +8,12 @@ const data = (patch: Partial<ShapeData>): ShapeData => ({
   fill: '#DCEAFB',
   stroke: '#3B82F6',
   ...patch,
+});
+
+/** A node of `type` carrying that data — what `canSwapShapeKind` is asked about. */
+const node = (patch: Partial<ShapeData>, type: DiagramNodeType = 'shape') => ({
+  type,
+  data: data(patch),
 });
 
 describe('isAnchorNode', () => {
@@ -37,24 +43,46 @@ describe('isAnchorNode', () => {
   });
 });
 
+describe('isInkNode', () => {
+  it('reads the type, not the data', () => {
+    expect(isInkNode({ type: 'ink' })).toBe(true);
+    expect(isInkNode({ type: 'shape' })).toBe(false);
+    expect(isInkNode({})).toBe(false);
+  });
+
+  it('does not mistake a stroke for a floating arrow\'s anchor', () => {
+    // An ink node's fill is transparent but its stroke is the pen's colour, so
+    // the anchor test — which needs *both* — cannot match one.
+    expect(isAnchorNode(data({ fill: 'transparent', stroke: '#334155' }))).toBe(false);
+  });
+});
+
 describe('canSwapShapeKind', () => {
   it('accepts an ordinary drawn shape', () => {
-    expect(canSwapShapeKind(data({ shape: 'rectangle' }))).toBe(true);
-    expect(canSwapShapeKind(data({ shape: 'sticky' }))).toBe(true);
+    expect(canSwapShapeKind(node({ shape: 'rectangle' }))).toBe(true);
+    expect(canSwapShapeKind(node({ shape: 'sticky' }))).toBe(true);
   });
 
   it('refuses images and text, which are not outlines to swap', () => {
-    expect(canSwapShapeKind(data({ shape: 'image' }))).toBe(false);
-    expect(canSwapShapeKind(data({ shape: 'text' }))).toBe(false);
+    expect(canSwapShapeKind(node({ shape: 'image' }))).toBe(false);
+    expect(canSwapShapeKind(node({ shape: 'text' }))).toBe(false);
   });
 
   it('refuses a locked shape', () => {
-    expect(canSwapShapeKind(data({ locked: true }))).toBe(false);
+    expect(canSwapShapeKind(node({ locked: true }))).toBe(false);
   });
 
   it('refuses the anchor nodes a floating arrow hangs off', () => {
     // Redrawing one as a star would give a 1×1 invisible endpoint a silhouette.
-    expect(canSwapShapeKind(data({ fill: 'transparent', stroke: 'transparent' }))).toBe(false);
+    expect(canSwapShapeKind(node({ fill: 'transparent', stroke: 'transparent' }))).toBe(false);
+  });
+
+  it('refuses a container and a freehand stroke, whatever their data says', () => {
+    // All three carry an ordinary `ShapeData` whose `shape` is a rectangle
+    // nothing draws — the `type` is the only thing that tells them apart.
+    expect(canSwapShapeKind(node({}, 'group'))).toBe(false);
+    expect(canSwapShapeKind(node({}, 'frame'))).toBe(false);
+    expect(canSwapShapeKind(node({ fill: 'transparent' }, 'ink'))).toBe(false);
   });
 });
 

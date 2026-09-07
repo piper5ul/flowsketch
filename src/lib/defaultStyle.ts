@@ -123,7 +123,10 @@ export function pickConnectorStyle(data: Record<string, unknown>): Partial<Conne
  * container carries like any other node (see `nodeKinds.ts`).
  */
 export function kindOf(node: { type?: string; data?: { shape?: unknown } }): DefaultStyleKind | null {
-  if (node.type === 'group' || node.type === 'frame') return null;
+  // A container has no style to copy, and neither has a freehand stroke: its
+  // only style is a colour, and "make this the default shape" would carry a
+  // pen's ink onto every box drawn after it.
+  if (node.type === 'group' || node.type === 'frame' || node.type === 'ink') return null;
   const shape = node.data?.shape;
   if (shape === 'image') return null;
   if (shape === 'sticky') return 'sticky';

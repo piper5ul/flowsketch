@@ -36,7 +36,7 @@ import {
   DEFAULT_START_ARROW,
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
-import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode } from '../lib/nodeKinds';
+import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode, isInkNode } from '../lib/nodeKinds';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
 import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
 import type {
@@ -612,12 +612,17 @@ export function FloatingToolbar() {
   // holds a real shape gets both, and they apply to that shape.
   // A container paints itself from the theme rather than from a fill and a
   // stroke, so it sits the colour and text controls out alongside images.
+  // So does an ink stroke, and for the same kind of reason: it carries no
+  // label to typeset, has no box to fill, round or cast a shadow from, and is
+  // a line whose only style is the colour the palette below gives it.
   const styleableNodes = useMemo(
-    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n)),
+    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n) && !isInkNode(n)),
     [selectedNodes],
   );
   // A frame takes a colour (a toned-down one — see `FrameNode`) though none of
-  // the other shape controls; a group draws nothing and takes none.
+  // the other shape controls; a group draws nothing and takes none. An ink
+  // stroke takes one too — its `stroke` *is* the pen — which is why it is
+  // filtered out above and not here.
   const colourableNodes = useMemo(
     () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isGroupNode(n)),
     [selectedNodes],
@@ -627,7 +632,7 @@ export function FloatingToolbar() {
   const hasGroup = useMemo(() => selectedNodes.some(isGroupNode), [selectedNodes]);
   // The shapes `setSelectedShapeKind` would actually redraw, so the button is
   // offered exactly when pressing it would do something.
-  const swappableNodes = useMemo(() => selectedNodes.filter((n) => canSwapShapeKind(n.data)), [selectedNodes]);
+  const swappableNodes = useMemo(() => selectedNodes.filter((n) => canSwapShapeKind(n)), [selectedNodes]);
   const currentShapeKind = useMemo(() => {
     const first = swappableNodes[0]?.data.shape ?? null;
     return swappableNodes.every((n) => n.data.shape === first) ? first : null;

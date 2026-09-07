@@ -22,6 +22,13 @@ import {
   nodeAtPoint,
   sideAnchor,
 } from '../lib/connectorGesture';
+import {
+  HIGHLIGHTER_OPACITY,
+  INK_WIDTH,
+  inkKindOfTool,
+  inkPath,
+  isInkTool,
+} from '../lib/ink';
 import { useImageInsert } from '../lib/useImageInsert';
 import { parseMermaidFlowchart } from '../lib/mermaid';
 import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
@@ -47,7 +54,7 @@ import { CommandMenu } from './CommandMenu';
 import { MeasureOverlay } from './MeasureOverlay';
 import { PresentMode } from './PresentMode';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
-import type { Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
+import type { Direction, EdgeAnchor, InkKind, InkPoint, ShapeData, ShapeKind, Tool } from '../types';
 
 const SIDES: readonly string[] = ['top', 'right', 'bottom', 'left'];
 /** A React Flow handle id that names one of a shape's four sides. */
@@ -122,8 +129,18 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // public share page present too — so nothing here is gated on `readOnly`.
   const presenting = usePresentStore((s) => s.active);
 
-  /** True while a tool that places something is held, rather than Select or Pan. */
-  const isDrawingTool = tool === 'connector' || tool === 'frame' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
+  /**
+   * True while a tool that places something is held, rather than Select or Pan.
+   *
+   * The three freehand tools count: a stroke is drawn *across* the board, so
+   * nothing under the pointer may be dragged, and the eraser has to reach a
+   * stroke without selecting it first.
+   */
+  const isDrawingTool =
+    tool === 'connector' ||
+    tool === 'frame' ||
+    isInkTool(tool) ||
+    SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
 
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
@@ -134,6 +151,15 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // the gesture; the state is only what the preview line needs to draw.
   const gestureRef = useRef<{ sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean } | null>(null);
   const [connectDraft, setConnectDraft] = useState<{ from: Point; to: Point } | null>(null);
+  // A freehand stroke being drawn, and a wipe being made. Both are refs for the
+  // reason the connector gesture is: they *are* the gesture. The stroke's state
+  // twin is what the live preview draws; the eraser has no preview — what it
+  // does is visible as it goes, the strokes disappearing under the pointer.
+  const inkRef = useRef<{ kind: InkKind; width: number; points: InkPoint[] } | null>(null);
+  const eraseRef = useRef<{ erased: boolean } | null>(null);
+  const [inkDraft, setInkDraft] = useState<
+    { kind: InkKind; width: number; points: InkPoint[]; stroke: string } | null
+  >(null);
   // Set when a drag just made a connector, so the click the browser fires on
   // release does not also start (or finish) the old click-click connector.
   const swallowClickRef = useRef(false);
@@ -686,6 +712,120 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     [tool, readOnly, screenToFlowPosition, addEdges, createShapeWithConnector, setTool],
   );
 
+  /**
+   * The three freehand tools, as one gesture: press, drag, release.
+   *
+   * With a pen held, every pointer move is a sample — nothing is thrown away
+   * here, because a stroke's shape *is* those samples; the thinning happens
+   * once, in `addInk`, where a rule about how much detail is worth storing
+   * belongs. The line under the pointer is drawn by the same `inkPath` the
+   * committed node uses, in the same colour `addInk` will give it, so what is
+   * drawn is what appears. With the eraser held, each sample rubs out whatever
+   * strokes it crosses, and the whole wipe is one undo step (see `eraseInkAt`).
+   *
+   * The tool stays held after a release: you draw several strokes, and Escape
+   * or the select tool is the way back. Escape mid-stroke abandons it.
+   *
+   * Like `beginConnectorGesture`, the handlers live on `window` rather than
+   * capturing the pointer — a stroke that leaves the canvas and comes back is
+   * still one stroke, and a release outside it still ends it.
+   */
+  const beginInkGesture = useCallback(
+    (event: React.PointerEvent) => {
+      if (!isInkTool(tool) || event.button !== 0 || readOnly) return;
+      // The rail and the floating toolbars are inside this wrapper too, and
+      // pressing one of them is not the start of a stroke.
+      if (!(event.target as HTMLElement).closest('.react-flow')) return;
+
+      const kind = inkKindOfTool(tool);
+      const at = (e: { clientX: number; clientY: number }) =>
+        screenToFlowPosition({ x: e.clientX, y: e.clientY });
+      // Pressure only where there is a real one to report: a mouse says 0.5
+      // while a button is down, which is not a measurement of anything.
+      const sample = (e: { clientX: number; clientY: number; pointerType?: string; pressure?: number }): InkPoint => {
+        const { x, y } = at(e);
+        return e.pointerType === 'pen' && typeof e.pressure === 'number'
+          ? [x, y, e.pressure]
+          : [x, y];
+      };
+
+      if (!kind) {
+        // The eraser. `erased` is what folds a wipe across three strokes into
+        // one undo entry — see the `continuing` argument.
+        const erase = (point: { x: number; y: number }) => {
+          const gesture = eraseRef.current;
+          if (!gesture) return;
+          if (useDiagramStore.getState().eraseInkAt(point, gesture.erased) > 0) {
+            gesture.erased = true;
+          }
+        };
+        eraseRef.current = { erased: false };
+        erase(at(event));
+
+        const finishErase = () => {
+          window.removeEventListener('pointermove', onEraseMove);
+          window.removeEventListener('pointerup', onEraseUp);
+          window.removeEventListener('keydown', onEraseKey);
+          eraseRef.current = null;
+        };
+        const onEraseMove = (e: PointerEvent) => erase(at(e));
+        const onEraseUp = () => finishErase();
+        const onEraseKey = (e: KeyboardEvent) => {
+          if (e.key === 'Escape') finishErase();
+        };
+        window.addEventListener('pointermove', onEraseMove);
+        window.addEventListener('pointerup', onEraseUp);
+        window.addEventListener('keydown', onEraseKey);
+        return;
+      }
+
+      const width = INK_WIDTH[kind];
+      const stroke = useDiagramStore.getState().newInkStroke();
+      inkRef.current = { kind, width, points: [sample(event)] };
+      setInkDraft({ ...inkRef.current, stroke });
+
+      const finish = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('keydown', onKey);
+        inkRef.current = null;
+        setInkDraft(null);
+      };
+      const onMove = (e: PointerEvent) => {
+        const gesture = inkRef.current;
+        if (!gesture) return;
+        gesture.points.push(sample(e));
+        setInkDraft({ ...gesture, points: [...gesture.points], stroke });
+      };
+      const onUp = () => {
+        const gesture = inkRef.current;
+        finish();
+        if (!gesture) return;
+        // A press that never travelled draws nothing and costs no history
+        // entry — `addInk` is where that is decided, since it is the same rule
+        // for a stroke pasted in through the API.
+        useDiagramStore.getState().addInk(gesture.points, gesture.kind, gesture.width);
+      };
+      const onKey = (e: KeyboardEvent) => {
+        // Abandons the stroke: nothing is committed, and the pen stays held.
+        if (e.key === 'Escape') finish();
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('keydown', onKey);
+    },
+    [tool, readOnly, screenToFlowPosition],
+  );
+
+  /** One press: whichever of the two gestures the held tool means. */
+  const onWrapperPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      beginConnectorGesture(event);
+      beginInkGesture(event);
+    },
+    [beginConnectorGesture, beginInkGesture],
+  );
+
   // Dragging a connector out to empty canvas creates a new connected shape,
   // mirroring Whimsical's "drag to create" flow.
   const onConnectEnd = useCallback(
@@ -810,7 +950,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       onDoubleClick={onCanvasDoubleClick}
       onDragOver={onDragOver}
       onDrop={onDrop}
-      onPointerDown={beginConnectorGesture}
+      onPointerDown={onWrapperPointerDown}
       // Nobody to tell on the public share page — `canComment` stands for "a
       // signed-in member has this open", which is exactly who has presence.
       onPointerMove={canComment ? onPointerMove : undefined}
@@ -914,6 +1054,30 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
                 stroke="var(--color-accent-500)"
                 strokeWidth={2.5}
                 strokeLinecap="round"
+              />
+            </svg>
+          </ViewportPortal>
+        )}
+        {/* The stroke under the pointer, drawn in board coordinates through the
+            viewport portal — the same place the connector's draft line and the
+            comment pins live, so it pans and zooms with what it is being drawn
+            on. It is the same path and the same colour the committed node
+            gets: what you see drawn is what lands. */}
+        {inkDraft && inkDraft.points.length > 0 && (
+          <ViewportPortal>
+            <svg
+              aria-hidden="true"
+              data-testid="ink-draft"
+              style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
+            >
+              <path
+                d={inkPath(inkDraft.points)}
+                fill="none"
+                stroke={inkDraft.stroke}
+                strokeWidth={inkDraft.width}
+                strokeOpacity={inkDraft.kind === 'highlighter' ? HIGHLIGHTER_OPACITY : undefined}
+                strokeLinecap={inkDraft.kind === 'highlighter' ? 'square' : 'round'}
+                strokeLinejoin="round"
               />
             </svg>
           </ViewportPortal>

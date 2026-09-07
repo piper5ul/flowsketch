@@ -7,7 +7,10 @@ import {
   ArrowRight,
   CornerDownRight,
   ChevronRight,
+  Eraser,
   Frame,
+  Highlighter,
+  Pencil,
   Shapes,
   Spline,
 } from 'lucide-react';
@@ -111,6 +114,90 @@ const MORE_TOOLS: {
 ];
 
 const MORE_SHAPE_SET = new Set<Tool>(MORE_TOOLS.map((s) => s.tool));
+
+/**
+ * The freehand tools. The keys are B / ⇧B / ⇧E rather than Whimsical's
+ * H / ⇧H / E: H is this app's hand tool and E its table — see the note in
+ * `TOOL_COMMANDS`.
+ */
+const INK_TOOLS: { tool: Tool; label: string; shortcut: string; Icon: LucideIcon }[] = [
+  { tool: 'pen', label: 'Pen', shortcut: 'B', Icon: Pencil },
+  { tool: 'highlighter', label: 'Highlighter', shortcut: '⇧B', Icon: Highlighter },
+  { tool: 'eraser', label: 'Eraser', shortcut: '⇧E', Icon: Eraser },
+];
+
+const INK_TOOL_SET = new Set<Tool>(INK_TOOLS.map((t) => t.tool));
+
+/**
+ * One rail button for the three freehand tools, with the other two on a
+ * popover — the shape the connector button already has.
+ *
+ * A band of three buttons would read more directly, and the rail cannot afford
+ * it: it is a column beside the canvas, and it is already as tall as a laptop
+ * window can hold. The button wears the last pen picked, so the tool shows what
+ * it would draw before it draws it.
+ */
+function PenMenu() {
+  const tool = useDiagramStore((s) => s.tool);
+  const setTool = useDiagramStore((s) => s.setTool);
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Tool>('pen');
+  const current = INK_TOOLS.find((t) => t.tool === picked) ?? INK_TOOLS[0];
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <div className="relative">
+          <RailButton
+            active={INK_TOOL_SET.has(tool)}
+            label={current.label}
+            shortcut={current.shortcut}
+            onClick={() => setTool(current.tool)}
+          >
+            <current.Icon size={18} />
+          </RailButton>
+          <button
+            aria-label="More pens"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+            className="absolute -right-0.5 -bottom-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white/15 text-white/70"
+          >
+            <ChevronRight size={9} />
+          </button>
+        </div>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          side="right"
+          sideOffset={12}
+          aria-label="Pens"
+          className="panel-in z-50 flex flex-col gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
+        >
+          {INK_TOOLS.map(({ tool: pen, label, shortcut, Icon }) => (
+            <button
+              key={pen}
+              onClick={() => {
+                setPicked(pen);
+                setTool(pen);
+                setOpen(false);
+              }}
+              className={clsx(
+                'flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10',
+                tool === pen && 'bg-accent-500/90 text-white hover:bg-accent-500',
+              )}
+            >
+              <Icon size={16} /> {label}
+              <span className="ml-auto pl-3 text-[10px] font-semibold text-white/40">{shortcut}</span>
+            </button>
+          ))}
+          <Popover.Arrow className="fill-ink-950" />
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
 
 function ShapeToolButton({ tool, shortcut }: { tool: ShapeTool; shortcut?: string }) {
   const active = useDiagramStore((s) => s.tool === tool);
@@ -231,6 +318,11 @@ export function LeftRail() {
         />
 
         <div className="my-1 h-px bg-white/10" />
+
+        {/* The pen, the highlighter and the eraser. Each stays held after a
+            stroke — you draw several — and Escape (or the select tool) is the
+            way back. */}
+        <PenMenu />
 
         <Popover.Root open={connectorMenuOpen} onOpenChange={setConnectorMenuOpen}>
           <Popover.Trigger asChild>
