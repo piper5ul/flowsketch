@@ -2269,3 +2269,108 @@ test('Lay out vertically redraws a connected selection as a column', async ({ pa
     expect(path.x).toBeLessThan(Math.max(from.x + from.width, to.x + to.width) + 4);
   }
 });
+
+/**
+ * An empty diagram made through the API, opened and ready to paste onto.
+ *
+ * Reading the *system* clipboard is what "paste as" does, so the permission has
+ * to be granted and the page has to be focused before `writeText` will work —
+ * hence the click on the pane on the way in.
+ */
+/**
+ * Puts `text` on the system clipboard, from inside the page.
+ *
+ * Through a cast because the `navigator` this file's types know about is
+ * Node's, which has no `clipboard` — and widening the whole suite's globals to
+ * the DOM to reach one property would be a much bigger change than this.
+ */
+async function writeClipboard(page: Page, text: string): Promise<void> {
+  await page.evaluate(
+    (value) =>
+      (navigator as unknown as { clipboard: { writeText(t: string): Promise<void> } }).clipboard.writeText(value),
+    text,
+  );
+}
+
+async function openEmptyBoard(page: Page, title: string): Promise<void> {
+  const id = await page.evaluate(async (boardTitle) => {
+    const body = { title: boardTitle, data: { version: 3, nodes: [], edges: [] } };
+    const r = await fetch('/api/diagrams', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return ((await r.json()) as { id: string }).id;
+  }, title);
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+  await page.locator('.react-flow__pane').click({ position: { x: 400, y: 300 } });
+}
+
+test('"Paste as sticky notes" turns a pasted list into one note per line', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await signUp(page);
+  await openEmptyBoard(page, 'Paste as stickies');
+
+  await writeClipboard(page, '- milk\n- eggs\n- bread\n\n');
+
+  await page.locator('.react-flow__pane').click({ button: 'right', position: { x: 300, y: 220 } });
+  await page.getByRole('menuitem', { name: 'Paste as sticky notes' }).click();
+
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  for (const line of ['milk', 'eggs', 'bread']) {
+    await expect(page.locator('.react-flow__node').getByText(line, { exact: true })).toBeVisible();
+  }
+
+  // A block, not a column: two on the first row, the third under them. Read
+  // once the fit has settled, so the comparison is of one scaled picture.
+  await page.keyboard.press('1');
+  const boxes = await page.locator('.react-flow__node').evaluateAll((els) =>
+    els.map((el) => el.getBoundingClientRect()).map(({ x, y }) => ({ x, y })),
+  );
+  expect(boxes[0].y).toBeCloseTo(boxes[1].y, 0);
+  expect(boxes[1].x).toBeGreaterThan(boxes[0].x);
+  expect(boxes[2].y).toBeGreaterThan(boxes[0].y);
+
+  // The whole paste is one edit.
+  await page.keyboard.press('Meta+z');
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+});
+
+test('"Paste Mermaid as flowchart" builds the chart and lays it out', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await signUp(page);
+  await openEmptyBoard(page, 'Paste Mermaid');
+
+  await writeClipboard(page, 'flowchart TD\n  A[Start] --> B{Choose}\n  B -->|yes| C[Ship]');
+
+  await page.locator('.react-flow__pane').click({ button: 'right', position: { x: 300, y: 200 } });
+  await page.getByRole('menuitem', { name: 'Paste Mermaid as flowchart' }).click();
+
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  for (const label of ['Start', 'Choose', 'Ship', 'yes']) {
+    await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+  }
+
+  // The layout engine is fetched on first use, so this polls rather than
+  // reading the boxes once. `1` fits the new flow into frame each time.
+  const tops = async () => {
+    await page.keyboard.press('1');
+    return page.locator('.react-flow__node').evaluateAll((els) =>
+      els.map((el) => el.getBoundingClientRect().y),
+    );
+  };
+  await expect
+    .poll(async () => {
+      const [a, b, c] = await tops();
+      return a < b && b < c;
+    }, { message: 'the chart should end up in flow order down the page' })
+    .toBe(true);
+
+  // Shapes *and* connectors go back together: one paste is one undo step.
+  await page.keyboard.press('Meta+z');
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(0);
+});

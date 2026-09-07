@@ -81,6 +81,15 @@ export interface Holder<T> {
 export interface CommandContext {
   store: StoreAccess;
   view: ViewportAccess;
+  /**
+   * Where a command that *puts something on the board* should put it, in board
+   * coordinates: the point the pane's right-click menu was opened at, or the
+   * middle of what is on screen when the command came from ⌘K or the keyboard
+   * instead. Read at the moment the command runs — the user can pan between
+   * opening the menu and picking an item, and the paste belongs where they
+   * clicked rather than where that pixel ended up.
+   */
+  dropPoint: () => { x: number; y: number };
   /** What ⌘C captured; `null` until something has been copied. */
   clipboard: Holder<ClipboardPayload | null>;
   /** What ⌘⌥C captured. */

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { canEditDiagram, commandDeclarations, commands, registry } from './commands';
+import { parseMermaidFlowchart } from '../lib/mermaid';
+import { useToastStore } from '../store/useToastStore';
 import type { CommandContext } from './types';
 
 /**
@@ -136,6 +138,102 @@ describe('the save-as-default command', () => {
     expect(command.when!(ctxOf([{ ...shape, type: 'group' }]))).toBe(false);
     expect(command.when!(ctxOf([{ ...shape, type: 'frame' }]))).toBe(false);
     expect(command.when!(ctxOf([{ ...shape, data: { shape: 'image' } }]))).toBe(false);
+  });
+});
+
+describe('the "paste as" commands', () => {
+  const stickies = registry.find('clipboard.pasteAsStickies')!;
+  const mermaid = registry.find('clipboard.pasteMermaid')!;
+
+  /** A context whose store records what the two paste actions were handed. */
+  function ctxWithClipboard(text: string | Error) {
+    const calls: { action: string; text: string; origin: { x: number; y: number } }[] = [];
+    const ctx = {
+      store: {
+        getState: () => ({
+          readOnly: false,
+          nodes: [],
+          edges: [],
+          pasteAsStickies: (t: string, origin: { x: number; y: number }) => {
+            calls.push({ action: 'stickies', text: t, origin });
+            return ['n1'];
+          },
+          pasteMermaid: async (t: string, origin: { x: number; y: number }) => {
+            calls.push({ action: 'mermaid', text: t, origin });
+            return parseMermaidFlowchart(t) ? ['n1'] : null;
+          },
+        }),
+        setState: () => {},
+      },
+      dropPoint: () => ({ x: 12, y: 34 }),
+    } as unknown as CommandContext;
+
+    vi.stubGlobal('navigator', {
+      clipboard: {
+        readText: async () => {
+          if (text instanceof Error) throw text;
+          return text;
+        },
+      },
+    });
+    return { ctx, calls };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useToastStore.getState().clear();
+  });
+
+  const messages = () => useToastStore.getState().toasts.map((t) => t.message);
+
+  it('are on the canvas menu, carry no keystroke and are withdrawn in read-only mode', () => {
+    for (const command of [stickies, mermaid]) {
+      expect(command.contextMenu).toBe('pane');
+      expect(command.shortcut).toBeUndefined();
+      expect(command.group).toBe('clipboard');
+      expect(offered(command.id, ctxWith(true)), command.id).toBe(false);
+    }
+    // The text is only known once the clipboard has been read, so nothing else
+    // gates them: an editor is always offered both.
+    expect(offered(stickies.id, ctxWith(false))).toBe(true);
+    expect(offered(mermaid.id, ctxWith(false))).toBe(true);
+  });
+
+  it('hand the clipboard\'s text, and the drop point, to the store', async () => {
+    const { ctx, calls } = ctxWithClipboard('- one\n- two');
+    stickies.run(ctx);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toEqual({ action: 'stickies', text: '- one\n- two', origin: { x: 12, y: 34 } });
+    expect(messages()).toEqual([]);
+  });
+
+  it('build a flowchart from Mermaid text and say so when it is not one', async () => {
+    const good = ctxWithClipboard('flowchart TD\n A --> B');
+    mermaid.run(good.ctx);
+    await vi.waitFor(() => expect(good.calls).toHaveLength(1));
+    expect(messages()).toEqual([]);
+
+    const bad = ctxWithClipboard('shopping list');
+    mermaid.run(bad.ctx);
+    await vi.waitFor(() => expect(messages()).toEqual(["That isn't a Mermaid flowchart"]));
+  });
+
+  it('say so when the browser refuses the clipboard, and paste nothing', async () => {
+    const { ctx, calls } = ctxWithClipboard(new DOMException('denied'));
+    stickies.run(ctx);
+    await vi.waitFor(() => expect(messages()).toEqual(['Clipboard access was refused']));
+    expect(calls).toEqual([]);
+  });
+
+  it('say so when the clipboard holds no line worth a note', async () => {
+    const ctx = {
+      store: { getState: () => ({ pasteAsStickies: () => [] }), setState: () => {} },
+      dropPoint: () => ({ x: 0, y: 0 }),
+    } as unknown as CommandContext;
+    vi.stubGlobal('navigator', { clipboard: { readText: async () => '   \n\n' } });
+
+    stickies.run(ctx);
+    await vi.waitFor(() => expect(messages()).toEqual(['There are no lines of text on the clipboard']));
   });
 });
 
