@@ -169,31 +169,40 @@ function syncElements<T extends { id: string }>(map: Y.Map<DocEntry<T>>, element
 }
 
 /**
- * Push the store's diagram into the document, as one transaction.
+ * Push the store's diagram into the document, as **two** transactions: the
+ * viewport, and everything else.
  *
  * Nothing is written when nothing differs — an action that changed only the
  * selection, or one that a peer's identical edit has already landed, must not
  * put an empty update on the wire.
+ *
+ * The split is the whole of how the viewport stays out of undo while the rest
+ * of `meta` is in it. `meta` is in the `Y.UndoManager`'s scope (a board's
+ * defaults, its thumbnail, its round of voting and its countdown are all edits
+ * somebody made and can take back), but the camera is not an edit at all — it
+ * is written for the snapshot's sake, is never read back out, and an undo entry
+ * for panning would move nothing anybody can see. `viewportOrigin` is a second
+ * transaction origin the manager does not track, so the write lands in the same
+ * document and on nobody's stack. It defaults to `origin`, which is what a
+ * caller with no undo manager behind it (a test, a peer) wants.
  */
-export function pushDiagramToDoc(doc: Y.Doc, data: DiagramData, origin: unknown): boolean {
+export function pushDiagramToDoc(
+  doc: Y.Doc,
+  data: DiagramData,
+  origin: unknown,
+  viewportOrigin: unknown = origin,
+): boolean {
   let changed = false;
   doc.transact(() => {
     changed = syncElements(nodeEntries(doc), data.nodes) || changed;
     changed = syncElements(edgeEntries(doc), data.edges) || changed;
 
-    // The camera is this client's, and is written for the snapshot's sake
-    // alone: it is what a diagram reopens at. Nothing reads it back off the
-    // document — a peer scrolling their own window must not move yours.
     const meta = docMeta(doc);
-    if (data.viewport && !same(meta.get(VIEWPORT_KEY), data.viewport)) {
-      meta.set(VIEWPORT_KEY, plain(data.viewport));
-      changed = true;
-    }
 
-    // The board's defaults, on the other hand, *are* everybody's: a shape a
-    // collaborator draws after somebody pressed ⌘⇧D has to come out in the
-    // style that was saved. Written when they differ, deleted when the board
-    // has none, so a diagram nobody has set one on holds no key at all.
+    // The board's defaults *are* everybody's: a shape a collaborator draws
+    // after somebody pressed ⌘⇧D has to come out in the style that was saved.
+    // Written when they differ, deleted when the board has none, so a diagram
+    // nobody has set one on holds no key at all.
     changed = syncDefaults(meta, data.defaults as BoardDefaults | undefined) || changed;
 
     // And so is the board's own thumbnail: the dashboard card is the same card
@@ -207,6 +216,13 @@ export function pushDiagramToDoc(doc: Y.Doc, data: DiagramData, origin: unknown)
     changed = syncMetaValue(meta, VOTING_KEY, data.voting) || changed;
     changed = syncMetaValue(meta, TIMER_KEY, data.timer) || changed;
   }, origin);
+
+  // The camera, on its own and under its own origin — see the note above.
+  const meta = docMeta(doc);
+  if (data.viewport && !same(meta.get(VIEWPORT_KEY), data.viewport)) {
+    doc.transact(() => meta.set(VIEWPORT_KEY, plain(data.viewport)), viewportOrigin);
+    changed = true;
+  }
   return changed;
 }
 
@@ -397,6 +413,19 @@ export function bindDocToStore(
   options: BindDocOptions = {},
 ): DocBinding {
   const readOnly = options.readOnly ?? false;
+  /**
+   * The origin the camera is written under: this browser's, like everything
+   * else here, but deliberately *not* one the undo manager tracks.
+   *
+   * `meta` is in the manager's scope so that ⌘⇧D, "Set as board thumbnail", a
+   * round of voting and the board timer can be taken back like any other edit.
+   * The viewport lives in the same map and is not an edit — see
+   * `pushDiagramToDoc`. An object rather than a symbol so it reads as what it
+   * is in a debugger; it is only ever compared by identity.
+   */
+  const viewportOrigin = { origin, viewport: true };
+  /** True for a transaction this binding wrote, under either of its origins. */
+  const isLocalOrigin = (o: unknown) => o === origin || o === viewportOrigin;
   /** Set while `pull` is writing, so its own `setState` is not pushed back. */
   let applyingRemote = false;
   /** A gesture whose last frame has not been written yet. */
@@ -492,7 +521,7 @@ export function bindDocToStore(
   const push = (state: DiagramState) => {
     if (readOnly) return;
     const data = diagramOf(state);
-    pushDiagramToDoc(doc, data, origin);
+    pushDiagramToDoc(doc, data, origin, viewportOrigin);
     rendered = contentOf(data);
     // Offered to the provider: from here whether it has arrived is its answer.
     setPendingWrite(false);
@@ -541,11 +570,18 @@ export function bindDocToStore(
    * and an undo that emptied the canvas back to a document that was never there
    * would be the worst first impression this feature could make.
    *
-   * `meta` is deliberately out of scope. The viewport lives there, is written
-   * for the snapshot's sake and is never read back out, so tracking it would
-   * hand the user an undo entry for panning that changes nothing they can see.
+   * `meta` **is** in scope, and the viewport is kept out of it by origin rather
+   * than by key: the board's defaults, its thumbnail, its round of voting and
+   * its countdown are all things somebody chose and can un-choose, so ⌘Z has to
+   * reach them the way it reaches a shape. The camera is the one thing in that
+   * map that is not an edit — it is written for the snapshot's sake and is
+   * never read back out — so `push` writes it in a transaction of its own under
+   * `viewportOrigin`, which is not tracked here. Yjs scopes an undo manager by
+   * *type* and by *origin*, never by key, and a second origin is the cheapest
+   * thing that says "this write is not an edit" without splitting `meta` into
+   * two maps and changing the document format for every board already stored.
    */
-  const undoManager = new Y.UndoManager([nodeMap, edgeMap], {
+  const undoManager = new Y.UndoManager([nodeMap, edgeMap, metaMap], {
     trackedOrigins: new Set([origin]),
     // Never split an entry on a clock. Where one undo step ends is decided by
     // the store — every `pushHistory` call site, plus the start of a gesture —
@@ -654,8 +690,9 @@ export function bindDocToStore(
   let dirty = false;
   const markDirty = (_event: unknown, transaction: Y.Transaction) => {
     // Our own write, already in the store — reading it back would be a round
-    // trip that replaces every node object for nothing.
-    if (transaction.origin === origin) return;
+    // trip that replaces every node object for nothing. Either origin: the
+    // camera's is this browser's too, it is simply not one undo tracks.
+    if (isLocalOrigin(transaction.origin)) return;
     dirty = true;
   };
   const flush = () => {

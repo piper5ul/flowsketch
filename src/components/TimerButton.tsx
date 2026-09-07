@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import clsx from 'clsx';
-import { Square, Timer } from 'lucide-react';
+import { Square, Timer, Volume2, VolumeX } from 'lucide-react';
 import { useDiagramStore } from '../store/useDiagramStore';
+import { useViewPreferences } from '../store/useViewPreferences';
+import { canPlayChime, playChime } from '../lib/chime';
 import {
   MAX_TIMER_SECONDS,
   TIMER_PRESET_MINUTES,
@@ -27,6 +29,13 @@ const FLASH_MS = 1500;
  * running timer is offered to anybody who can edit, whoever started it — a
  * facilitator who has left the board should not be able to leave a countdown
  * nobody can take down.
+ *
+ * **Reaching zero flashes, says "Time's up" and chimes**, and the chime is the
+ * one of the three that is not about the board: it is generated here
+ * (`src/lib/chime.ts`), plays only on the transition seen *in this window*, and
+ * is switched off per browser through `useViewPreferences.timerSound` — the
+ * speaker in the panel. Everyone watching hears it, viewers and the public page
+ * included, because a countdown running out is the moment it exists for.
  */
 export function TimerButton() {
   const timer = useDiagramStore((s) => s.timer);
@@ -39,6 +48,7 @@ export function TimerButton() {
   const now = useTick(timer !== null);
   const state = timerState(timer, now);
   const flashing = useEndFlash(state);
+  useEndChime(state);
 
   useEffect(() => {
     if (!open) return;
@@ -125,8 +135,14 @@ function TimerPanel({ onStart }: { onStart: (seconds: number) => void }) {
       aria-label="Timer"
       className="panel-in absolute right-0 top-full mt-2 flex w-56 flex-col gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
     >
-      <div className="px-2.5 pb-1 pt-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/40">
-        Start a timer
+      <div className="flex items-center justify-between gap-2 px-2.5 pb-1 pt-1.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-white/40">
+          Start a timer
+        </span>
+        {/* Per browser, not per board — see `useViewPreferences.timerSound`.
+            It sits here because the panel is the one place the timer is
+            configured, and it is a mute switch rather than a menu item. */}
+        <SoundToggle />
       </div>
       {TIMER_PRESET_MINUTES.map((preset) => (
         <button
@@ -169,6 +185,25 @@ function TimerPanel({ onStart }: { onStart: (seconds: number) => void }) {
   );
 }
 
+/** Mute or unmute the chime for this browser. Nothing about it reaches the board. */
+function SoundToggle() {
+  const timerSound = useViewPreferences((s) => s.timerSound);
+  const toggle = useViewPreferences((s) => s.toggleTimerSound);
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-pressed={timerSound}
+      aria-label={timerSound ? 'Mute the timer chime' : 'Unmute the timer chime'}
+      title={timerSound ? 'Chime when the timer ends' : 'Timer chime is off'}
+      className="flex h-6 w-6 items-center justify-center rounded-lg text-white/50 hover:bg-white/10 hover:text-white/85"
+    >
+      {timerSound ? <Volume2 size={14} /> : <VolumeX size={14} />}
+    </button>
+  );
+}
+
 /**
  * `Date.now()`, re-read once a second while `running`.
  *
@@ -195,6 +230,33 @@ function useTick(running: boolean): number {
  * timer ran out an hour ago does not flash at somebody who was not there — the
  * label still says "Time's up", which is the part that has to survive.
  */
+/**
+ * Sound the chime once, on the same transition the flash watches.
+ *
+ * The transition and not the state, for the same reason: opening a board whose
+ * timer ran out an hour ago must not make a noise at somebody who was not there
+ * when it did. Three things have to be true before anything is played — the
+ * countdown reached zero *in this window*, the person at this browser has not
+ * muted it, and the page has been interacted with, or the browser would refuse
+ * the audio anyway (`canPlayChime`).
+ *
+ * The preference is read through `getState()` rather than subscribed to: this
+ * is a decision made at one instant, and a component that re-rendered every
+ * time somebody toggled the speaker would be watching for nothing.
+ */
+function useEndChime(state: ReturnType<typeof timerState>): void {
+  const previous = useRef(state);
+
+  useEffect(() => {
+    const was = previous.current;
+    previous.current = state;
+    if (was !== 'running' || state !== 'done') return;
+    if (!useViewPreferences.getState().timerSound) return;
+    if (!canPlayChime()) return;
+    playChime();
+  }, [state]);
+}
+
 function useEndFlash(state: ReturnType<typeof timerState>): boolean {
   const [flashing, setFlashing] = useState(false);
   const previous = useRef(state);
