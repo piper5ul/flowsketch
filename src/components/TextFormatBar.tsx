@@ -3,6 +3,7 @@ import { getNodesBounds, useViewport } from '@xyflow/react';
 import { useDiagramStore, suppressNextBlurCommit } from '../store/useDiagramStore';
 import { TextFormatControls, type TextFormatValue } from './TextFormatControls';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
+import { isTableNode } from '../lib/nodeKinds';
 import type { ConnectorData, FontSize, TextAlign, VerticalAlign } from '../types';
 
 export function TextFormatBar() {
@@ -14,10 +15,16 @@ export function TextFormatBar() {
   const updateEdgeData = useDiagramStore((s) => s.updateEdgeData);
   const viewport = useViewport();
 
-  const editingNode = useMemo(
-    () => (editingNodeId ? nodes.find((n) => n.id === editingNodeId) : null),
-    [nodes, editingNodeId],
-  );
+  // A table reports `editingNodeId` while one of its cells is open — that is
+  // what tells the rest of the app a text editor is up — but its typography is
+  // the whole grid's rather than one label's, and a bar offering vertical
+  // alignment and underline for a cell would be half-connected. Grid-wide
+  // typography is a follow-up; until then a table has no format bar, exactly as
+  // it has no text controls on the floating toolbar.
+  const editingNode = useMemo(() => {
+    const node = editingNodeId ? nodes.find((n) => n.id === editingNodeId) : null;
+    return node && isTableNode(node) ? null : node;
+  }, [nodes, editingNodeId]);
 
   const editingEdge = useMemo(
     () => (editingEdgeId ? edges.find((e) => e.id === editingEdgeId) : null),

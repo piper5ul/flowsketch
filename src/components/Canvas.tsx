@@ -31,6 +31,13 @@ import {
 } from '../lib/ink';
 import { useImageInsert } from '../lib/useImageInsert';
 import { parseMermaidFlowchart } from '../lib/mermaid';
+import {
+  DEFAULT_COLUMN_WIDTH,
+  DEFAULT_ROW_HEIGHT,
+  DEFAULT_TABLE_COLUMNS,
+  DEFAULT_TABLE_ROWS,
+  parseTableText,
+} from '../lib/table';
 import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
 import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
@@ -73,6 +80,16 @@ const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 /** Half a new frame's box, so the click that places one lands in its middle. */
 const FRAME_OFFSET = { x: 240, y: 160 };
 
+/**
+ * Half a new 3×3 table's box, so the click that places one lands in its middle.
+ * Spelled out rather than derived: a table's size comes from its grid, and this
+ * is the one grid the tool ever draws.
+ */
+const TABLE_OFFSET = {
+  x: (DEFAULT_TABLE_COLUMNS * DEFAULT_COLUMN_WIDTH) / 2,
+  y: (DEFAULT_TABLE_ROWS * DEFAULT_ROW_HEIGHT) / 2,
+};
+
 function isTypingTarget(el: EventTarget | null) {
   if (!(el instanceof HTMLElement)) return false;
   return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
@@ -110,6 +127,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const onConnect = useDiagramStore((s) => s.onConnect);
   const addShape = useDiagramStore((s) => s.addShape);
   const addFrame = useDiagramStore((s) => s.addFrame);
+  const addTable = useDiagramStore((s) => s.addTable);
   const tool = useDiagramStore((s) => s.tool);
   const setTool = useDiagramStore((s) => s.setTool);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
@@ -139,6 +157,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const isDrawingTool =
     tool === 'connector' ||
     tool === 'frame' ||
+    tool === 'table' ||
     isInkTool(tool) ||
     SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
 
@@ -401,13 +420,18 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         setTool('select');
         return;
       }
+      if (tool === 'table') {
+        addTable({ x: point.x - TABLE_OFFSET.x, y: point.y - TABLE_OFFSET.y });
+        setTool('select');
+        return;
+      }
       if (!SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) return;
       const shape = tool as ShapeKind;
       const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
       addShape(shape, { x: point.x - sizeOffset.x, y: point.y - sizeOffset.y });
       setTool('select');
     },
-    [tool, screenToFlowPosition, addShape, addFrame, setTool],
+    [tool, screenToFlowPosition, addShape, addFrame, addTable, setTool],
   );
 
   /**
@@ -432,7 +456,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       // A frame is a node, so a click inside one never reaches `onPaneClick`.
       // Drawing tools are served here too, or a frame would be a hole in the
       // board that nothing could be drawn into.
-      if (tool === 'frame' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) {
+      if (tool === 'frame' || tool === 'table' || SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) {
         placeTool(event);
         return;
       }
@@ -864,12 +888,14 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // blow a screenshot-sized paste past the 5 MB limit on the diagram's JSON
   // body, which failed the save rather than the paste.
   //
-  // Text is offered to the Mermaid parser, and becomes a flowchart when it is
-  // one — the same thing the "Paste Mermaid as flowchart" menu item does, at
-  // the middle of the view rather than at a click. Text that is *not* a Mermaid
-  // flowchart is left alone and behaves exactly as it always has: pasting a
-  // list is still the menu item's job, since a paragraph of prose is far more
-  // often meant as words than as a wall of sticky notes.
+  // Text is offered to two parsers in turn — **Mermaid first, then tables** —
+  // and becomes a flowchart or a table when it is one, the same thing the two
+  // menu items do, at the middle of the view rather than at a click. Mermaid
+  // goes first because its source is unmistakable and a `graph TD` line holds
+  // no delimiter a table parser would want. Text that is neither is left alone
+  // and behaves exactly as it always has: pasting a list is still the menu
+  // item's job, since a paragraph of prose is far more often meant as words
+  // than as a wall of sticky notes.
   useEffect(() => {
     if (readOnly) return;
     function onPaste(e: ClipboardEvent) {
@@ -890,9 +916,16 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       }
 
       const text = data.getData('text/plain');
-      if (!text || !parseMermaidFlowchart(text)) return;
+      if (!text) return;
+      if (parseMermaidFlowchart(text)) {
+        e.preventDefault();
+        void useDiagramStore.getState().pasteMermaid(text, dropPoint());
+        return;
+      }
+      const table = parseTableText(text);
+      if (!table) return;
       e.preventDefault();
-      void useDiagramStore.getState().pasteMermaid(text, dropPoint());
+      useDiagramStore.getState().addTable(dropPoint(), table);
     }
 
     window.addEventListener('paste', onPaste);

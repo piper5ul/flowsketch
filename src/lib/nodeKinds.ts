@@ -37,6 +37,22 @@ export function isInkNode(node: Typed): boolean {
 }
 
 /**
+ * True for a grid of editable cells.
+ *
+ * Read from the `type` for the same reason the containers are: a table's data
+ * is an ordinary `ShapeData` carrying `shape: 'rectangle'` and a fill, so
+ * asking the data would answer "rectangle". The grid itself lives in
+ * `data.table` — but a node with that field and the wrong `type` is not a
+ * table, and this is the predicate that says so.
+ *
+ * A table is **not** a container: nothing hangs off it through `parentId`, so
+ * `isContainerNode` deliberately stays the two it was.
+ */
+export function isTableNode(node: Typed): boolean {
+  return node.type === 'table';
+}
+
+/**
  * Every shape kind, at runtime. Built from an exhaustive record rather than
  * written out as an array, so adding a kind to `ShapeKind` and forgetting it
  * here is a type error rather than a table that silently misses a shape.
@@ -100,16 +116,17 @@ export function canRoundCorners(shape: ShapeKind): boolean {
  * thing that makes it what it is. An anchor node is not a shape the user drew
  * at all but one end of a floating arrow, and giving a 1×1 invisible endpoint a
  * silhouette would put a speck of a star on the canvas that nothing selected. A
- * locked shape sits the edit out, as it sits out every other one. A freehand
- * stroke is a line the user drew by hand and has no silhouette to exchange —
- * and it is told by its `type`, which is why this takes the whole node rather
- * than only its data. The floating toolbar and the store share this predicate
+ * locked shape sits the edit out, as it sits out every other one. A table is a
+ * grid of cells and a freehand stroke a line drawn by hand: neither has a
+ * silhouette to exchange, and both are told by their `type` — which is why
+ * this takes the whole node rather than only its data, their data being an
+ * ordinary rectangle's. The floating toolbar and the store share this predicate
  * so the button is offered exactly when pressing it would do something.
  */
 export function canSwapShapeKind(
   node: Typed & { data: Pick<ShapeData, 'shape' | 'locked' | 'fill' | 'stroke'> },
 ): boolean {
-  if (isContainerNode(node) || isInkNode(node)) return false;
+  if (isContainerNode(node) || isTableNode(node) || isInkNode(node)) return false;
   const { data } = node;
   if (data.shape === 'image' || data.shape === 'text') return false;
   if (isAnchorNode(data)) return false;

@@ -10,7 +10,15 @@
 export interface SearchableNode {
   id: string;
   position: { x: number; y: number };
-  data: { label?: string };
+  data: {
+    label?: string;
+    /**
+     * A table's grid, when the node is one. Searched cell by cell — a table
+     * says what it says in its cells, and a find that could not reach them
+     * would miss most of the words on a board that uses them.
+     */
+    table?: { rows: { cells: string[] }[] };
+  };
 }
 
 export interface SearchableEdge {
@@ -43,6 +51,27 @@ function hitIn(kind: SearchHitKind, id: string, text: string, needle: string): S
 }
 
 /**
+ * The one hit a shape is worth: its label, or — for a table — the first of its
+ * cells that holds the query, read row by row.
+ *
+ * Still **at most one hit per element**: a table full of the word is one thing
+ * on the board and counts once, exactly as a label that says it three times
+ * does. The `text` reported is the cell the match was found in, which is what
+ * the find bar would highlight if it drew the words rather than a ring.
+ */
+function hitInNode(node: SearchableNode, needle: string): SearchHit[] {
+  const label = hitIn('node', node.id, node.data.label ?? '', needle);
+  if (label.length > 0) return label;
+  for (const row of node.data.table?.rows ?? []) {
+    for (const cell of row.cells) {
+      const hit = hitIn('node', node.id, cell, needle);
+      if (hit.length > 0) return hit;
+    }
+  }
+  return [];
+}
+
+/**
  * Reading order: down the board, then across it, so the cycle moves the way
  * the eye does. Two shapes a pixel apart vertically are two rows rather than
  * one — a rule that is wrong about a hand-drawn row is also one nobody can
@@ -56,9 +85,10 @@ function byReadingOrder(a: SearchableNode, b: SearchableNode): number {
 }
 
 /**
- * Every shape and connector whose label contains `query`, case-insensitively,
- * in the order the find bar cycles them: shapes first in reading order, then
- * connectors in the order the diagram holds them.
+ * Every shape and connector whose label — or, for a table, whose cells —
+ * contains `query`, case-insensitively, in the order the find bar cycles them:
+ * shapes first in reading order, then connectors in the order the diagram
+ * holds them.
  *
  * An empty query matches nothing rather than everything — an empty find bar
  * should light the board up no more than a closed one does. A query that is
@@ -75,7 +105,7 @@ export function searchDiagram(
   return [
     ...[...nodes]
       .sort(byReadingOrder)
-      .flatMap((node) => hitIn('node', node.id, node.data.label ?? '', needle)),
+      .flatMap((node) => hitInNode(node, needle)),
     ...edges.flatMap((edge) => hitIn('edge', edge.id, edge.data?.label ?? '', needle)),
   ];
 }

@@ -25,13 +25,17 @@ export type ShapeKind =
  * `shape` is everything the user draws with a shape tool. Two of the others are
  * containers other nodes hang off through `parentId`: a `group` is an invisible
  * box that makes a handful of shapes move as one, and a `frame` is a titled
- * section shapes join by being dropped into it. `ink` is one freehand stroke —
- * a pen mark, with a polyline for a body instead of a silhouette. All of them
- * carry a `ShapeData` like any other node — the store's array is homogeneous —
- * so `type`, never the data, is what tells them apart (`isGroupNode` /
- * `isFrameNode` / `isInkNode` in `src/lib/nodeKinds.ts`).
+ * section shapes join by being dropped into it. A `table` is neither — it is one
+ * object with a grid of editable cells inside it, whose box follows its own
+ * columns and rows — and neither is `ink`, which is one freehand stroke: a pen
+ * mark with a polyline for a body instead of a silhouette.
+ *
+ * All of them carry a `ShapeData` like any other node — the store's array is
+ * homogeneous — so `type`, never the data, is what tells them apart
+ * (`isGroupNode` / `isFrameNode` / `isTableNode` / `isInkNode` in
+ * `src/lib/nodeKinds.ts`).
  */
-export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'ink';
+export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'table' | 'ink';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
@@ -61,6 +65,8 @@ export type Tool =
   // Not a `ShapeKind`: a frame is a container, not a silhouette, so it has no
   // entry in the shape tables and is placed by `addFrame` rather than `addShape`.
   | 'frame'
+  // Nor is a table: it is a grid of cells, placed by `addTable`.
+  | 'table'
   // The three freehand tools. None of them places a `ShapeKind` either: a
   // stroke is drawn by dragging (`addInk`), not dropped by clicking, and the
   // eraser places nothing at all. They are three tools rather than one tool
@@ -130,6 +136,26 @@ import type { MindMapNodeData } from './lib/mindMap.js';
 
 export type { MindMapNodeData };
 
+/**
+ * The grid inside a `table` node: what is in each cell, how wide each column
+ * is, and whether the first row is a header.
+ *
+ * Cell text is **plain text**. Rendering Markdown inside a cell is a follow-up;
+ * a label does it (`src/lib/markdown.ts`) and a cell deliberately does not yet,
+ * so what is typed is what is drawn and what search and export see.
+ *
+ * Every row holds one entry per column — `src/lib/table.ts` is the only place
+ * this is edited, and every function there keeps that rectangle true.
+ */
+export interface TableData {
+  /** One per column, left to right. `width` is in board pixels. */
+  columns: { width: number }[];
+  /** One per row, top to bottom, each with one string per column. */
+  rows: { cells: string[] }[];
+  /** Whether the first row is drawn as a header. */
+  header: boolean;
+}
+
 export interface ShapeData {
   label: string;
   shape: ShapeKind;
@@ -198,6 +224,12 @@ export interface ShapeData {
   imageSrc?: string;
   /** Set on an `image` node whose bytes are still uploading. */
   uploading?: boolean;
+  /**
+   * The grid, on a node of type `table` and nowhere else. Optional and absent
+   * everywhere else, which is why tables needed no migration: a diagram written
+   * before they existed holds no node that would look for one.
+   */
+  table?: TableData;
   [key: string]: unknown;
 }
 

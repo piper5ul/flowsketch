@@ -3,6 +3,15 @@ import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramS
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
 import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
+import {
+  DEFAULT_COLUMN_WIDTH,
+  DEFAULT_ROW_HEIGHT,
+  addColumn,
+  addRow,
+  removeColumn,
+  setCell,
+  setColumnWidth,
+} from '../lib/table';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import type { InkPoint } from '../types';
 import {
@@ -3105,6 +3114,154 @@ describe('pasteMermaid', () => {
   it('places a chart with nothing to lay out at the origin anyway', async () => {
     await store().pasteMermaid('flowchart TD\n  A[Alone]', origin);
     expect(labelled('Alone').position).toEqual(origin);
+  });
+});
+
+describe('tables', () => {
+  const tableOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+  const cells = (id: string) => tableOf(id).data.table!.rows.map((r) => r.cells);
+
+  it('addTable draws a 3×3 with a header, boxed to its grid', () => {
+    const id = store().addTable({ x: 40, y: 60 });
+    const node = tableOf(id);
+    expect(node).toMatchObject({
+      type: 'table',
+      position: { x: 40, y: 60 },
+      width: DEFAULT_COLUMN_WIDTH * 3,
+      height: DEFAULT_ROW_HEIGHT * 3,
+    });
+    expect(node.data.table).toMatchObject({ header: true });
+    expect(cells(id)).toEqual([['', '', ''], ['', '', ''], ['', '', '']]);
+  });
+
+  it('addTable takes a parsed grid, and squares it up on the way in', () => {
+    const id = store().addTable({ x: 0, y: 0 }, {
+      header: true,
+      columns: [],
+      rows: [{ cells: ['a', 'b'] }, { cells: ['c'] }],
+    });
+    expect(cells(id)).toEqual([['a', 'b'], ['c', '']]);
+    expect(tableOf(id).width).toBe(DEFAULT_COLUMN_WIDTH * 2);
+  });
+
+  it('addTable is one history entry', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    expect(store().canUndo).toBe(true);
+    store().undo();
+    expect(store().nodes.find((n) => n.id === id)).toBeUndefined();
+  });
+
+  it('commits a cell through updateNodeData, one entry per commit', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    store().updateNodeData(id, { table: setCell(tableOf(id).data.table!, 0, 1, 'Role') });
+    expect(cells(id)[0]).toEqual(['', 'Role', '']);
+
+    store().undo();
+    expect(cells(id)[0]).toEqual(['', '', '']);
+  });
+
+  it('costs no history entry when the cell already says that', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    // `setCell` hands back the grid it was given, which `isNoOpPatch` sees — so
+    // the only entry on the stack is still the one `addTable` pushed.
+    store().updateNodeData(id, { table: setCell(tableOf(id).data.table!, 0, 0, '') });
+    store().undo();
+    expect(store().nodes.find((n) => n.id === id)).toBeUndefined();
+  });
+
+  it('keeps the node box in step with every row and column change', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    store().updateNodeData(id, { table: addRow(tableOf(id).data.table!) });
+    expect(tableOf(id).height).toBe(DEFAULT_ROW_HEIGHT * 4);
+
+    store().updateNodeData(id, { table: removeColumn(tableOf(id).data.table!) });
+    expect(tableOf(id).width).toBe(DEFAULT_COLUMN_WIDTH * 2);
+
+    store().updateNodeData(id, { table: addColumn(tableOf(id).data.table!) });
+    expect(tableOf(id).width).toBe(DEFAULT_COLUMN_WIDTH * 3);
+  });
+
+  it('makes a row op and a column op one undo step each', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    store().updateNodeData(id, { table: addRow(tableOf(id).data.table!) });
+    store().updateNodeData(id, { table: addColumn(tableOf(id).data.table!) });
+    expect(cells(id)).toHaveLength(4);
+    expect(cells(id)[0]).toHaveLength(4);
+
+    store().undo();
+    expect(cells(id)[0]).toHaveLength(3);
+    store().undo();
+    expect(cells(id)).toHaveLength(3);
+  });
+
+  it('resizes a column transiently, inside the entry beginInteraction pushed', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    store().beginInteraction();
+    store().updateNodeDataTransient(id, { table: setColumnWidth(tableOf(id).data.table!, 0, 200) });
+    store().updateNodeDataTransient(id, { table: setColumnWidth(tableOf(id).data.table!, 0, 260) });
+    expect(tableOf(id).width).toBe(260 + DEFAULT_COLUMN_WIDTH * 2);
+
+    // One drag, one ⌘Z: back to the width it was drawn at.
+    store().undo();
+    expect(tableOf(id).data.table!.columns[0].width).toBe(DEFAULT_COLUMN_WIDTH);
+  });
+
+  it('survives a save and a load, squared up and re-boxed on the way back', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    store().updateNodeData(id, { table: setCell(tableOf(id).data.table!, 1, 0, 'Ada') });
+    const saved = serializeDiagram(store().nodes, store().edges);
+
+    store().loadDiagram('test', 'Test', false, saved);
+    expect(tableOf(id).type).toBe('table');
+    expect(cells(id)[1][0]).toBe('Ada');
+    expect(tableOf(id).width).toBe(DEFAULT_COLUMN_WIDTH * 3);
+  });
+
+  it('gives a stored table node with no grid at all an empty one rather than nothing', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [
+        {
+          id: 't',
+          type: 'table',
+          position: { x: 0, y: 0 },
+          data: { label: '', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+        },
+      ],
+      edges: [],
+    });
+    expect(tableOf('t').data.table).toEqual({
+      header: false,
+      columns: [{ width: DEFAULT_COLUMN_WIDTH }],
+      rows: [{ cells: [''] }],
+    });
+  });
+
+  it("is not redrawn as another shape kind — its data is a rectangle's", () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    select(id);
+    store().setSelectedShapeKind('star');
+    expect(tableOf(id).data.shape).toBe('rectangle');
+  });
+
+  it('sits "match size" out: its box is its grid', () => {
+    const table = store().addTable({ x: 0, y: 0 });
+    const big = store().addShape('rectangle', { x: 600, y: 0 });
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => (n.id === big ? { ...n, width: 900, height: 700 } : n)),
+    }));
+    select(table, big);
+    store().matchSizeSelected('both');
+    expect(tableOf(table).width).toBe(DEFAULT_COLUMN_WIDTH * 3);
+    expect(tableOf(table).height).toBe(DEFAULT_ROW_HEIGHT * 3);
+  });
+
+  it('records the cursor without costing a history entry', () => {
+    const id = store().addTable({ x: 0, y: 0 });
+    store().setActiveTableCell({ nodeId: id, row: 1, col: 2 });
+    expect(store().activeTableCell).toEqual({ nodeId: id, row: 1, col: 2 });
+    store().undo();
+    expect(store().nodes.find((n) => n.id === id)).toBeUndefined();
   });
 });
 
