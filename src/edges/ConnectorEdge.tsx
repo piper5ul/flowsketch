@@ -11,7 +11,9 @@ import {
 } from '../lib/edgeGeometry';
 import {
   buildConnectorPath,
+  estimateLabelWidth,
   interpolatePolyline,
+  labelLift,
   type PathSegment,
   type Point,
 } from '../lib/connectorPath';
@@ -410,7 +412,25 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   pathPointsRef.current = pathPoints;
 
   const labelT = data?.labelT ?? 0.5;
-  const labelPos = interpolatePolyline(pathPoints, labelT);
+  const labelAnchor = interpolatePolyline(pathPoints, labelT);
+  // On a run too short to carry its label between the arrowheads, the pill is
+  // lifted one pill-height off the line, along the line's normal there, so the
+  // line and both heads stay visible under it.
+  const lift = labelLift(
+    polylineLength(pathPoints),
+    estimateLabelWidth(data?.label ?? '', FONT_SIZE_PX[data?.labelFontSize ?? 'medium']),
+  );
+  const labelPos = (() => {
+    if (!lift) return labelAnchor;
+    const a = interpolatePolyline(pathPoints, Math.max(0, labelT - 0.02));
+    const b = interpolatePolyline(pathPoints, Math.min(1, labelT + 0.02));
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    // The normal that points "up" on screen, whichever way the line runs.
+    const nx = -(b.y - a.y) / len;
+    const ny = (b.x - a.x) / len;
+    const sign = ny <= 0 ? 1 : -1;
+    return { x: labelAnchor.x + nx * lift * sign, y: labelAnchor.y + ny * lift * sign };
+  })();
 
   /**
    * Where a bend dragged out of the path at `at` belongs in the list: after

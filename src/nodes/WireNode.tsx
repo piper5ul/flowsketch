@@ -82,6 +82,8 @@ export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeTy
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const searchHit = useSearchHighlight('node', id);
+  // Outlined while a connector being drawn would land here — see `connectTargetId`.
+  const isConnectTarget = useDiagramStore((s) => s.connectTargetId === id);
   const peerSelection = usePeerSelection(id);
   const labelRef = useRef<HTMLDivElement>(null);
 
@@ -355,6 +357,7 @@ export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeTy
       data-wire={component}
       data-parent-id={parentId}
       data-search-hit={searchHit}
+        data-connect-target={isConnectTarget ? 'true' : undefined}
       data-peer-selected={peerSelection?.name}
       className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
       style={{

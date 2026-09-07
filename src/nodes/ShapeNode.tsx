@@ -71,6 +71,8 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   // string so a shape the search never matched does not re-render as it is
   // typed. The ring itself is CSS — see `[data-search-hit]` in `index.css`.
   const searchHit = useSearchHighlight('node', id);
+  // Outlined while a connector being drawn would land here — see `connectTargetId`.
+  const isConnectTarget = useDiagramStore((s) => s.connectTargetId === id);
   // The collaborator holding this shape, if anyone is. Drawn as an outline in
   // their own colour — see `[data-peer-selected]` in `index.css`.
   const peerSelection = usePeerSelection(id);
@@ -156,6 +158,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
         data-node-type="shape"
         data-parent-id={parentId}
         data-search-hit={searchHit}
+        data-connect-target={isConnectTarget ? 'true' : undefined}
         data-peer-selected={peerSelection?.name}
         style={peerOutlineStyle(peerSelection)}
         className={clsx('shape-wrapper relative h-full w-full', selected && 'is-selected')}
@@ -290,6 +293,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
       data-node-type="shape"
       data-parent-id={parentId}
       data-search-hit={searchHit}
+        data-connect-target={isConnectTarget ? 'true' : undefined}
       data-peer-selected={peerSelection?.name}
       // Whether this shape is part of a mind map, and whether its branch is
       // folded — read by the tests, and by nothing else.
