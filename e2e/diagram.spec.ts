@@ -1980,6 +1980,23 @@ test('the connector tool draws from where you press to where you release', async
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
 });
 
+test('K opens the link editor for the selected shape', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 500, y: 400 } });
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.click();
+  await page.keyboard.press('k');
+  const input = page.getByPlaceholder('https://...');
+  await expect(input).toBeVisible();
+  await expect(input).toBeFocused();
+});
+
 test('export options: selection only at 1× frames just the selected shape', async ({ page }) => {
   await signUp(page);
   const id = await page.evaluate(async () => {

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -551,6 +551,16 @@ export function FloatingToolbar() {
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const linkInputRef = useRef<HTMLInputElement>(null);
+  // The K shortcut: same as pressing the link button.
+  const linkEditorRequest = useDiagramStore((s) => s.linkEditorRequest);
+  useEffect(() => {
+    if (!linkEditorRequest || isEdgeMode || selectedNodes.length !== 1) return;
+    setLinkValue(selectedNodes[0]?.data?.link ?? '');
+    setLinkOpen(true);
+    setTimeout(() => linkInputRef.current?.focus(), 50);
+    // Only the request should reopen it, not every re-render of the selection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkEditorRequest]);
 
   const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
   const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);

@@ -88,8 +88,10 @@ const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[] }[] = [
   { tool: 'text', title: 'Text', keys: ['t'] },
   // A frame is not a shape — it is a section other shapes go into — so it has
   // no `ShapeKind` and is placed by `addFrame`, but it is picked like any tool.
-  { tool: 'frame', title: 'Frame', keys: ['f'] },
-  { tool: 'connector', title: 'Connector', keys: ['a', 'l'] },
+  // Whimsical calls a frame a section and reaches it with `.`; its connector
+  // key is C. Both are kept alongside ours so either habit works.
+  { tool: 'frame', title: 'Frame', keys: ['f', '.'] },
+  { tool: 'connector', title: 'Connector', keys: ['c', 'a', 'l'] },
 ];
 
 const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys }) => ({
@@ -220,6 +222,17 @@ export const commandDeclarations: Command[] = [
     shortcut: { key: 'd', meta: true },
     contextMenu: 'node',
     run: (ctx) => ctx.store.getState().duplicateSelection(),
+  },
+
+  {
+    id: 'edit.link',
+    title: 'Add link',
+    group: 'edit',
+    // Whimsical's K. The toolbar owns the popover; the store carries the ask.
+    shortcut: { key: 'k' },
+    contextMenu: 'node',
+    when: (ctx) => selectedNodes(ctx.store.getState()).length === 1,
+    run: (ctx) => ctx.store.getState().requestLinkEditor(),
   },
 
   // ---- clipboard ---------------------------------------------------------
