@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeVersion, formatVersionTime } from './versionHistory';
+import { describeVersion, formatVersionTime, scrubIndex } from './versionHistory';
 import type { DiagramVersionMeta } from '../../shared/types';
 
 /**
@@ -69,5 +69,15 @@ describe('describeVersion', () => {
 
   it('carries no dangling separator when only the time is known', () => {
     expect(describeVersion(version(), NOW)).toBe('Today 14:03');
+  });
+});
+
+describe('scrubIndex', () => {
+  it('steps through the versions and stops at either end', () => {
+    expect(scrubIndex(0, 1, 5)).toBe(1);
+    expect(scrubIndex(4, 1, 5)).toBe(4);
+    expect(scrubIndex(0, -1, 5)).toBe(0);
+    expect(scrubIndex(2, -5, 5)).toBe(0);
+    expect(scrubIndex(3, 1, 0)).toBe(0);
   });
 });

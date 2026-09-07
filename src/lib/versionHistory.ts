@@ -63,3 +63,13 @@ export function describeVersion(version: DiagramVersionMeta, now?: Date): string
     .filter((part): part is string => typeof part === 'string' && part !== '')
     .join(' · ');
 }
+
+/**
+ * The scrubber's next stop: `index` moved by `delta` through `count` entries,
+ * clamped at both ends — a scrub never wraps, so "play" comes to rest on the
+ * newest version rather than starting over.
+ */
+export function scrubIndex(index: number, delta: number, count: number): number {
+  if (count <= 0) return 0;
+  return Math.min(count - 1, Math.max(0, index + delta));
+}
