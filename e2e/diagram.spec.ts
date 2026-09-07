@@ -1156,6 +1156,19 @@ test('a dropped connection says so, comes back, and brings the offline edit with
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
 
+  // Phase 4: she reloads, still with no socket. The board comes back — the
+  // offline shape included — out of `y-indexeddb`, not out of the server, which
+  // has never heard of it: `GET /api/diagrams/:id` still answers with the
+  // one-shape snapshot rendered before she went offline.
+  await page.reload();
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByText('Live')).toHaveCount(0);
+  // The provider is retrying on a backoff, so it alternates between saying it
+  // is reconnecting and saying it is offline; the promise it makes about the
+  // edits is the one worth asserting.
+  await expect(page.getByText('changes will sync when you’re back')).toBeVisible({ timeout: 30_000 });
+
   network.restore();
   await expect(page.getByText('Live')).toBeVisible({ timeout: 30_000 });
   await expectSynced(page);

@@ -11,6 +11,7 @@ import { WebSocket } from 'ws';
 import type { Hocuspocus, onAuthenticatePayload, ConnectionConfiguration } from '@hocuspocus/server';
 import type { AddressInfo } from 'node:net';
 import { serveForFile } from './testServer.js';
+import { COLLAB_FORBIDDEN, COLLAB_UNAUTHORIZED } from '../shared/collabAuth.js';
 
 const { authMock, accessMock, prismaMock } = vi.hoisted(() => ({
   authMock: { api: { getSession: vi.fn() } },
@@ -118,6 +119,40 @@ describe('onAuthenticate', () => {
     const server = createCollabServer();
     await expect(authenticate(server, 'diagram:d1')).rejects.toThrow();
     expect(accessMock.getDiagramAccess).toHaveBeenCalledWith('u1', 'd1', { id: true });
+  });
+
+  /**
+   * The refusal has to say *which* refusal it is.
+   *
+   * Hocuspocus puts `error.reason` into the permission-denied message and falls
+   * back to a `permission-denied` that tells the browser nothing — and the
+   * browser's two answers could hardly be further apart: sign back in and keep
+   * editing, or leave the diagram and drop the copy cached in this browser.
+   * `src/lib/collab/authFailure.ts` is the other end of these two strings.
+   */
+  async function refusalReason(server: CollabServer, documentName: string) {
+    try {
+      await authenticate(server, documentName);
+    } catch (err) {
+      return (err as { reason?: unknown }).reason;
+    }
+    throw new Error('expected the connection to be refused');
+  }
+
+  it('names an expired session as one to sign back in from', async () => {
+    authMock.api.getSession.mockResolvedValue(null);
+    expect(await refusalReason(createCollabServer(), 'diagram:d1')).toBe(COLLAB_UNAUTHORIZED);
+  });
+
+  it('names a diagram the user may not see as one to leave', async () => {
+    accessMock.getDiagramAccess.mockResolvedValue(null);
+    expect(await refusalReason(createCollabServer(), 'diagram:d1')).toBe(COLLAB_FORBIDDEN);
+  });
+
+  it('names an unrecognised document as one to leave, not one to re-auth', async () => {
+    // Signing in again cannot turn a string that is not a document name into
+    // one, so offering the dialog for it would be a loop.
+    expect(await refusalReason(createCollabServer(), 'notes:d1')).toBe(COLLAB_FORBIDDEN);
   });
 
   it('connects a viewer read-only', async () => {

@@ -11,6 +11,7 @@
  * have to diff it.
  */
 import type { CSSProperties } from 'react';
+import type * as Y from 'yjs';
 import { create } from 'zustand';
 import {
   connectPresence,
@@ -22,6 +23,8 @@ import {
   type PresenceUser,
 } from '../lib/collab/presence';
 import { bindDocToStore, type DocBinding } from '../lib/collab/binding';
+import { openOfflineDoc, type OfflineDoc } from '../lib/collab/offline';
+import { isSeeded } from '../../shared/collabDoc';
 import {
   serializeDiagram,
   setDocumentFlush,
@@ -85,6 +88,8 @@ interface CollabState {
 let connection: PresenceConnection | null = null;
 /** The store ↔ document binding, once the document has synced. */
 let binding: DocBinding | null = null;
+/** This browser's own copy of the document, when IndexedDB will have one. */
+let offline: OfflineDoc | null = null;
 /** Unsubscribes the selection mirror below. */
 let unsubscribeSelection: (() => void) | null = null;
 /** The two halves of "is anything still in this browser?" — see `synced`. */
@@ -119,6 +124,10 @@ function teardown() {
   setDocumentHistory(null);
   connection?.destroy();
   connection = null;
+  // After the binding, so the last gesture it wrote is in the document this
+  // stops mirroring. What is already stored stays stored — that is the point.
+  void offline?.destroy();
+  offline = null;
   providerPending = true;
   gesturePending = false;
 }
@@ -157,35 +166,45 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     const { nodes, edges, viewport } = useDiagramStore.getState();
     const baseline = serializeDiagram(nodes, edges, viewport);
 
-    connection = connectPresence({
+    /**
+     * Make the document the diagram, once it really holds one.
+     *
+     * Called from two places since phase 4 — the provider's first message, and
+     * the cached copy coming back out of IndexedDB — so it has to be
+     * idempotent in both directions: a binding that already exists is the
+     * right one, and whichever source got there first has already put the
+     * document in a state the other merges into.
+     */
+    const bind = (document: Y.Doc) => {
+      if (get().diagramId !== diagramId || binding) return;
+      // The page can have moved on to another diagram while the socket was
+      // opening. Binding then would push this board into that document.
+      if (useDiagramStore.getState().diagramId !== diagramId) return;
+      binding = bindDocToStore(document, useDiagramStore, LOCAL_ORIGIN, {
+        readOnly: options?.readOnly ?? false,
+        baseline,
+        onPendingWrite: (pending) => {
+          gesturePending = pending;
+          publishSynced();
+        },
+      });
+      set({ bound: true });
+      // From here the document is the save, the JSON `PUT` stops carrying
+      // diagram data at all, and ⌘Z is the document's per-user undo rather
+      // than the snapshot stack. A viewer gets neither: they write nothing,
+      // so there is nothing of theirs to flush or to take back.
+      if (!options?.readOnly) {
+        setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
+        setDocumentHistory(binding.history);
+      }
+    };
+
+    const active = connectPresence({
       diagramId,
       user,
       origin,
-      // Fires on the first sync and on every reconnect, so it has to be
-      // idempotent: a binding that already exists is the right one.
-      onSynced: () => {
-        if (get().diagramId !== diagramId || !connection || binding) return;
-        // The page can have moved on to another diagram while the socket was
-        // opening. Binding then would push this board into that document.
-        if (useDiagramStore.getState().diagramId !== diagramId) return;
-        binding = bindDocToStore(connection.document, useDiagramStore, LOCAL_ORIGIN, {
-          readOnly: options?.readOnly ?? false,
-          baseline,
-          onPendingWrite: (pending) => {
-            gesturePending = pending;
-            publishSynced();
-          },
-        });
-        set({ bound: true });
-        // From here the document is the save, the JSON `PUT` stops carrying
-        // diagram data at all, and ⌘Z is the document's per-user undo rather
-        // than the snapshot stack. A viewer gets neither: they write nothing,
-        // so there is nothing of theirs to flush or to take back.
-        if (!options?.readOnly) {
-          setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
-          setDocumentHistory(binding.history);
-        }
-      },
+      // Fires on the first sync and on every reconnect.
+      onSynced: () => bind(active.document),
       // Guarded on the diagram id: a callback from the connection being torn
       // down can still land after the next one has been opened, and it must not
       // wipe the new connection's peers.
@@ -198,6 +217,29 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         providerPending = pending;
         publishSynced();
       },
+      onAuthFailure: (failure) => {
+        if (get().diagramId !== diagramId) return;
+        // Removed from the diagram, or it is gone. The copy in this browser is
+        // not theirs to keep and nothing is ever going to sync it again, so it
+        // goes with the access it was made under. Best effort by design: the
+        // server has already stopped serving them the document.
+        if (failure === 'no-access') void offline?.clear();
+      },
+    });
+    connection = active;
+
+    // **This browser's own copy of the document** (phase 4). Attached after the
+    // provider and read *before* it: a diagram that was open yesterday draws
+    // itself out of IndexedDB without waiting for a round trip — or without a
+    // round trip ever arriving — and the server's state merges into it when it
+    // does, in whichever order they land. See `lib/collab/offline.ts`.
+    offline = openOfflineDoc(diagramId, active.document, () => {
+      if (get().diagramId !== diagramId) return;
+      // An empty cache is not a document, and binding to one would render an
+      // empty canvas over the board the page has already loaded over HTTP.
+      // The provider's own `synced` is what binds then, exactly as before.
+      if (!isSeeded(active.document)) return;
+      bind(active.document);
     });
 
     // Selection is mirrored rather than pushed by the actions that change it:
