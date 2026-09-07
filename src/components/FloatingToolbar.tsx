@@ -22,6 +22,7 @@ import { formatShortcut, registry } from '../commands/commands';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
+import { FilterSelectionMenu } from './FilterSelectionMenu';
 import { TextFormatControls } from './TextFormatControls';
 import type { TextFormatValue } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
@@ -843,6 +844,7 @@ export function FloatingToolbar() {
               hasGroup={hasGroup}
               locked={locked}
             />
+            {selectedNodes.length > 1 && <FilterSelectionMenu />}
           </>
         )}
 
