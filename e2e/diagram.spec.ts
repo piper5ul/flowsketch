@@ -2148,6 +2148,30 @@ test('Wrap in frame puts a titled frame around the selection', async ({ page }) 
   }
 });
 
+test('Filter selection narrows a multi-selection to one kind', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 300, y: 300 } });
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 600, y: 300 } });
+  await page.keyboard.press('o');
+  await pane.click({ position: { x: 900, y: 300 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+a');
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(3);
+
+  await page.getByRole('button', { name: 'Filter selection' }).click();
+  // The rail has an Ellipse tool too; the filter's options live in the popover.
+  await page.getByRole('dialog').getByRole('button', { name: /^Ellipse/ }).click();
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node.selected [data-shape="ellipse"]')).toHaveCount(1);
+});
+
 test('⌥-hover measures the gap between the selected shape and another', async ({ page }) => {
   await signUp(page);
   const id = await page.evaluate(async () => {
