@@ -81,6 +81,8 @@ export { computeMarkers };
 // Smart alignment guides — snap dragged nodes to other nodes' edges/centers
 // ---------------------------------------------------------------------------
 
+export type SnapOverride = 'none' | 'guides' | 'all';
+
 export interface GuideLine {
   axis: 'x' | 'y';
   pos: number;
@@ -498,6 +500,12 @@ export interface DiagramState {
   nodes: ShapeNode[];
   edges: ConnectorEdge[];
   guides: GuideLine[];
+  /**
+   * What a held key is telling the drag to ignore: `'guides'` while ⌘ is down
+   * (no snapping to neighbours), `'all'` while ` is down (nor to the grid).
+   * Transient — set by the canvas from the keyboard, never saved.
+   */
+  snapOverride: SnapOverride;
   /** Where the canvas was left, restored on the next open. `null` until it is reported. */
   viewport: DiagramViewport | null;
   tool: Tool;
@@ -599,6 +607,12 @@ export interface DiagramState {
    * members' shared parent if they have one, and ends up selected.
    */
   wrapSelectionInFrame: () => void;
+  setSnapOverride: (override: SnapOverride) => void;
+  /**
+   * Leaves exactly `ids` selected. A selection is not part of the diagram, so
+   * this pushes no history — the same as clicking would.
+   */
+  narrowSelection: (ids: ReadonlySet<string>) => void;
   /**
    * Undoes that for every selected group: its children go back to where they
    * are on the board and inherit the group's own parent, and the group itself
@@ -1152,6 +1166,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   nodes: [],
   edges: [],
   guides: [],
+  snapOverride: 'none',
   viewport: null,
   tool: 'select',
   defaults: {} as BoardDefaults,
@@ -1354,6 +1369,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
         }];
       });
 
+      // ⌘ (or `) held: the drag lands exactly where the pointer put it.
+      if (others.length > 0 && dragged.length > 0 && get().snapOverride !== 'none') {
+        set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides: [], ...transient(s) }));
+        return;
+      }
       if (others.length > 0 && dragged.length > 0) {
         // A multi-selection snaps as one rigid box: the guides are computed for
         // its bounding box and the resulting offset is applied to every node in
@@ -1504,6 +1524,15 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       edges: state.edges.map((e) => ({ ...e, selected: false })),
     });
   },
+
+  narrowSelection: (ids) => {
+    set((s) => ({
+      nodes: s.nodes.map((n) => (n.selected !== ids.has(n.id) ? { ...n, selected: ids.has(n.id) } : n)),
+      edges: s.edges.map((e) => (e.selected !== ids.has(e.id) ? { ...e, selected: ids.has(e.id) } : e)),
+    }));
+  },
+
+  setSnapOverride: (override) => set((s) => (s.snapOverride === override ? s : { snapOverride: override })),
 
   wrapSelectionInFrame: () => {
     const state = get();
