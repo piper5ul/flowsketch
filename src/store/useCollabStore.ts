@@ -11,6 +11,7 @@
  * have to diff it.
  */
 import type { CSSProperties } from 'react';
+import type * as Y from 'yjs';
 import { create } from 'zustand';
 import {
   connectPresence,
@@ -22,6 +23,8 @@ import {
   type PresenceUser,
 } from '../lib/collab/presence';
 import { bindDocToStore, type DocBinding } from '../lib/collab/binding';
+import { openOfflineDoc, type OfflineDoc } from '../lib/collab/offline';
+import { isSeeded } from '../../shared/collabDoc';
 import {
   serializeDiagram,
   setDocumentFlush,
@@ -59,6 +62,26 @@ interface CollabState {
    * the end-to-end tests wait on it where they used to wait on "Saved".
    */
   synced: boolean;
+  /**
+   * True while the socket has been refused for want of a session.
+   *
+   * The re-auth dialog used to be offered off `saveStatus === 'unauthorized'`,
+   * which only the JSON `PUT` can produce — so a session that expired under a
+   * *bound* diagram got a connection that would not open and a top bar that
+   * said "Reconnecting…", with a reload as the only way out. This is the
+   * socket's half of the same answer, and `CanvasPage` shows the dialog off
+   * either.
+   */
+  authFailed: boolean;
+  /**
+   * True when the server says this diagram is not this user's to open at all —
+   * they have been removed from it, or it has been deleted.
+   *
+   * Not something to sign in again for: the page says so and leaves. Kept
+   * separate from `authFailed` because the two refusals look identical on the
+   * wire and want opposite things done about them.
+   */
+  accessLost: boolean;
   /** The diagram this connection is for, or `null` when there is none. */
   diagramId: string | null;
   /**
@@ -77,6 +100,16 @@ interface CollabState {
     options?: { readOnly?: boolean },
   ) => void;
   disconnect: () => void;
+  /**
+   * Open a new socket now that the user has signed back in, and take the
+   * dialog down.
+   *
+   * The session rides the cookie on the *upgrade*, so the refused connection
+   * cannot be talked round: it has to be replaced. Nothing is lost by that —
+   * the document is in this browser (and, from phase 4, in IndexedDB), and
+   * everything written while the socket was refused syncs on the way back.
+   */
+  retryAuth: () => void;
   /** Report the pointer in flow coordinates, or `null` when it leaves. */
   reportCursor: (cursor: PresenceCursor | null) => void;
 }
@@ -85,6 +118,8 @@ interface CollabState {
 let connection: PresenceConnection | null = null;
 /** The store ↔ document binding, once the document has synced. */
 let binding: DocBinding | null = null;
+/** This browser's own copy of the document, when IndexedDB will have one. */
+let offline: OfflineDoc | null = null;
 /** Unsubscribes the selection mirror below. */
 let unsubscribeSelection: (() => void) | null = null;
 /** The two halves of "is anything still in this browser?" — see `synced`. */
@@ -119,6 +154,10 @@ function teardown() {
   setDocumentHistory(null);
   connection?.destroy();
   connection = null;
+  // After the binding, so the last gesture it wrote is in the document this
+  // stops mirroring. What is already stored stays stored — that is the point.
+  void offline?.destroy();
+  offline = null;
   providerPending = true;
   gesturePending = false;
 }
@@ -129,6 +168,8 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   status: 'disconnected',
   bound: false,
   synced: false,
+  authFailed: false,
+  accessLost: false,
   diagramId: null,
 
   connect: (diagramId, user, origin, options) => {
@@ -141,6 +182,8 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       status: 'connecting',
       bound: false,
       synced: false,
+      authFailed: false,
+      accessLost: false,
     });
 
     // Guarded on the diagram id like every other callback below: one of these
@@ -157,34 +200,50 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     const { nodes, edges, viewport } = useDiagramStore.getState();
     const baseline = serializeDiagram(nodes, edges, viewport);
 
-    connection = connectPresence({
+    /**
+     * Make the document the diagram, once it really holds one.
+     *
+     * Called from two places since phase 4 — the provider's first message, and
+     * the cached copy coming back out of IndexedDB — so it has to be
+     * idempotent in both directions: a binding that already exists is the
+     * right one, and whichever source got there first has already put the
+     * document in a state the other merges into.
+     */
+    const bind = (document: Y.Doc) => {
+      if (get().diagramId !== diagramId || binding) return;
+      // The page can have moved on to another diagram while the socket was
+      // opening. Binding then would push this board into that document.
+      if (useDiagramStore.getState().diagramId !== diagramId) return;
+      binding = bindDocToStore(document, useDiagramStore, LOCAL_ORIGIN, {
+        readOnly: options?.readOnly ?? false,
+        baseline,
+        onPendingWrite: (pending) => {
+          gesturePending = pending;
+          publishSynced();
+        },
+      });
+      set({ bound: true });
+      // From here the document is the save, the JSON `PUT` stops carrying
+      // diagram data at all, and ⌘Z is the document's per-user undo rather
+      // than the snapshot stack. A viewer gets neither: they write nothing,
+      // so there is nothing of theirs to flush or to take back.
+      if (!options?.readOnly) {
+        setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
+        setDocumentHistory(binding.history);
+      }
+    };
+
+    const active = connectPresence({
       diagramId,
       user,
       origin,
-      // Fires on the first sync and on every reconnect, so it has to be
-      // idempotent: a binding that already exists is the right one.
+      // Fires on the first sync and on every reconnect.
       onSynced: () => {
-        if (get().diagramId !== diagramId || !connection || binding) return;
-        // The page can have moved on to another diagram while the socket was
-        // opening. Binding then would push this board into that document.
-        if (useDiagramStore.getState().diagramId !== diagramId) return;
-        binding = bindDocToStore(connection.document, useDiagramStore, LOCAL_ORIGIN, {
-          readOnly: options?.readOnly ?? false,
-          baseline,
-          onPendingWrite: (pending) => {
-            gesturePending = pending;
-            publishSynced();
-          },
-        });
-        set({ bound: true });
-        // From here the document is the save, the JSON `PUT` stops carrying
-        // diagram data at all, and ⌘Z is the document's per-user undo rather
-        // than the snapshot stack. A viewer gets neither: they write nothing,
-        // so there is nothing of theirs to flush or to take back.
-        if (!options?.readOnly) {
-          setDocumentFlush(() => connection?.flush() ?? Promise.resolve(false));
-          setDocumentHistory(binding.history);
-        }
+        // A document message means this socket was authenticated, so whatever
+        // the dialog is up for has been resolved — here, or in another tab
+        // that signed in while this one waited.
+        if (get().diagramId === diagramId) set({ authFailed: false });
+        bind(active.document);
       },
       // Guarded on the diagram id: a callback from the connection being torn
       // down can still land after the next one has been opened, and it must not
@@ -198,6 +257,37 @@ export const useCollabStore = create<CollabState>((set, get) => ({
         providerPending = pending;
         publishSynced();
       },
+      onAuthFailure: (failure) => {
+        if (get().diagramId !== diagramId) return;
+        if (failure === 'no-access') {
+          // Removed from the diagram, or it is gone. The copy in this browser
+          // is not theirs to keep and nothing is ever going to sync it again,
+          // so it goes with the access it was made under. Best effort by
+          // design: the server has already stopped serving the document.
+          void offline?.clear();
+          set({ accessLost: true });
+          return;
+        }
+        // The session, not the diagram. The edits on screen are still theirs
+        // and still unsent, so the page offers the way back rather than
+        // leaving the bar to say "Reconnecting…" until somebody reloads.
+        if (failure === 'no-session') set({ authFailed: true });
+      },
+    });
+    connection = active;
+
+    // **This browser's own copy of the document** (phase 4). Attached after the
+    // provider and read *before* it: a diagram that was open yesterday draws
+    // itself out of IndexedDB without waiting for a round trip — or without a
+    // round trip ever arriving — and the server's state merges into it when it
+    // does, in whichever order they land. See `lib/collab/offline.ts`.
+    offline = openOfflineDoc(diagramId, active.document, () => {
+      if (get().diagramId !== diagramId) return;
+      // An empty cache is not a document, and binding to one would render an
+      // empty canvas over the board the page has already loaded over HTTP.
+      // The provider's own `synced` is what binds then, exactly as before.
+      if (!isSeeded(active.document)) return;
+      bind(active.document);
     });
 
     // Selection is mirrored rather than pushed by the actions that change it:
@@ -224,7 +314,15 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       status: 'disconnected',
       bound: false,
       synced: false,
+      authFailed: false,
+      accessLost: false,
     });
+  },
+
+  retryAuth: () => {
+    // Optimistic, and safe: a socket that is refused again says so again.
+    set({ authFailed: false });
+    connection?.reconnect();
   },
 
   reportCursor: (cursor) => connection?.setCursor(cursor),

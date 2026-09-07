@@ -34,6 +34,7 @@ import { imageIdsInDiagram } from './imageRefs.js';
 import { recordVersionIfDue } from './versions.js';
 import { docToDiagramData, seedDocFromDiagramData } from './collab/render.js';
 import { setLiveDiagramReader } from './collab/live.js';
+import { COLLAB_FORBIDDEN, COLLAB_UNAUTHORIZED } from '../shared/collabAuth.js';
 import type { DiagramRole } from '../shared/types.js';
 
 /** The path the browser opens its collaboration socket on. */
@@ -78,6 +79,28 @@ function debug(message: string): void {
  * hook which needs to tell "the server seeded this" from "somebody typed" can.
  */
 const SERVER_ORIGIN = Symbol('flowsketch:server');
+
+/**
+ * A refusal from `onAuthenticate` that says which refusal it is.
+ *
+ * Hocuspocus answers a rejected connection with a permission-denied message
+ * carrying `error.reason`, falling back to a `permission-denied` that tells the
+ * browser nothing — and the browser has two very different things to do about
+ * an expired session (offer to sign back in, keeping the edits on screen) and
+ * about a diagram it may no longer see (leave, and drop the copy it has cached
+ * offline). `shared/collabAuth.ts` holds the two strings; this is how they get
+ * onto the wire. The message is for the logs, the reason is for the client.
+ */
+class CollabAuthError extends Error {
+  /** Read by Hocuspocus, off the thrown value, on its way into the message. */
+  readonly reason: string;
+
+  constructor(reason: string, message: string) {
+    super(message);
+    this.name = 'CollabAuthError';
+    this.reason = reason;
+  }
+}
 
 /**
  * Persistence: `DiagramDoc.state` is the document, and `Diagram.data` is the
@@ -228,19 +251,24 @@ export function createCollabServer(
      */
     async onAuthenticate({ documentName, requestHeaders, connectionConfig }) {
       const diagramId = diagramIdFromDocumentName(documentName);
-      // Not a rejection of *this* diagram: there is no diagram to reject.
-      if (!diagramId) throw new Error('Unknown document');
+      // Not a rejection of *this* diagram: there is no diagram to reject. It
+      // is `forbidden` rather than `unauthorized` all the same — signing in
+      // again cannot turn a string that is not a document name into one.
+      if (!diagramId) throw new CollabAuthError(COLLAB_FORBIDDEN, 'Unknown document');
 
       // The same read `requireAuth` does. The upgrade request carries the
       // browser's cookies because the socket is same-origin with the API.
       const session = await auth.api.getSession({ headers: requestHeaders });
-      if (!session) throw new Error('Unauthorized');
+      // The one refusal the user can do something about: the browser offers the
+      // re-auth dialog and reconnects, rather than leaving them on a board that
+      // quietly stopped being shared.
+      if (!session) throw new CollabAuthError(COLLAB_UNAUTHORIZED, 'Unauthorized');
 
       // `getDiagramAccess` answers "nothing at all" for a diagram that is not
       // there as well as for one you may not see, and both are the same
       // rejection here — as they are over HTTP.
       const access = await getDiagramAccess(session.user.id, diagramId, { id: true });
-      if (!access) throw new Error('Forbidden');
+      if (!access) throw new CollabAuthError(COLLAB_FORBIDDEN, 'Forbidden');
 
       // A viewer is connected, not refused: they are entitled to see who else
       // is here and where. `readOnly` is what stops their socket from writing

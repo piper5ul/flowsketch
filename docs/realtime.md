@@ -1,6 +1,6 @@
 # Real-time collaboration
 
-Status: **design accepted 2026-09-06; phases 1, 2 and 3 shipped.** Tracked on the FlowSketch Roadmap as `realtime-p1` … `realtime-p4`.
+Status: **design accepted 2026-09-06; all four phases shipped.** Tracked on the FlowSketch Roadmap as `realtime-p1` … `realtime-p4`.
 
 ## Why
 
@@ -41,7 +41,7 @@ Considered and rejected: Server-Sent Events + POST for presence only (cheap, but
 1. ✅ **`realtime-p1` Infra + presence.** Hocuspocus attached to Express with cookie auth and role checks; awareness-based cursors, selections and "who's here"; no document sync yet (the doc is connected but empty — nothing reads it). Deliverable: two users see each other live. *No data-model change.*
 2. ✅ **`realtime-p2` Document sync.** `DiagramDoc` table + migration, database extension with lazy upgrade, the client binding, JSON snapshot rendering, `syncDiagramImages` on store; simultaneous editing works; the conflict banner and `ifUnmodifiedSince` are bypassed for collaborative diagrams. Import/restore/backfill write through the doc.
 3. ✅ **`realtime-p3` Undo + cleanup.** `Y.UndoManager` scoped to this client's origin; the autosave loop, its retry backoff, `ifUnmodifiedSince` and the conflict banner stop running for a bound diagram; the save indicator becomes a connection indicator; docs.
-4. **`realtime-p4` Offline (optional).** `y-indexeddb` so a dropped connection keeps working and merges on reconnect.
+4. ✅ **`realtime-p4` Offline.** `y-indexeddb` so a dropped connection keeps working and merges on reconnect — and so a reload with no connection at all still has the board. Carried the re-auth fix with it (`collab-reauth`), because a cached copy of somebody's diagram must not outlive their access to it, which meant the server had to say *why* it refused a socket.
 
 ## What phase 2 did differently
 
@@ -56,7 +56,7 @@ One thing the design left open: the **viewport** is written into the document's 
 Two limitations phase 2 shipped with, both listed against later phases:
 
 - **Undo is still the snapshot stack**, so ⌘Z can walk back over a collaborator's edit. That is phase 3's `Y.UndoManager` — done, below.
-- **A diagram whose socket will not open cannot be edited.** The document is the save, so a browser that reaches `/api` but not `/collab` (a proxy that will not upgrade, say) falls back to the JSON `PUT`, which the server refuses with `409` once the diagram has a document — the conflict banner's "Reload" is the way out, and the edits made in the meantime are lost. Making that survivable is phase 4's `y-indexeddb`.
+- **A diagram whose socket will not open cannot be edited.** The document is the save, so a browser that reaches `/api` but not `/collab` (a proxy that will not upgrade, say) falls back to the JSON `PUT`, which the server refuses with `409` once the diagram has a document — the conflict banner's "Reload" is the way out, and the edits made in the meantime are lost. Phase 4's `y-indexeddb` is what makes that survivable: a *dropped* socket now keeps its edits across a reload and merges them on the way back. A socket that never opened at all is still the unbound board, kept by the `PUT` — and that `PUT` is still refused for a diagram that already has a document.
 
 ## What phase 3 did differently
 
@@ -108,7 +108,8 @@ server renders from it. Without it, the public `/s/:token` page really can be a
 second behind the board its owner is looking at, which is what the design always
 said and is now what the test says too.
 
-Two things phase 3 does **not** fix, both pre-existing:
+Two things phase 3 does **not** fix, both pre-existing, **both closed in phase
+4** (see below):
 
 - **A session that expires under a bound diagram is not offered the re-auth
   dialog.** That dialog is shown off `saveStatus === 'unauthorized'`, which only
@@ -116,6 +117,57 @@ Two things phase 3 does **not** fix, both pre-existing:
   connection that will not open, so the bar says "Reconnecting…" and the user has
   to reload. Phase 2 made that true; phase 3 leaves it.
 - **A diagram whose socket will not open** is still the phase-2 limitation above.
+
+## What phase 4 did differently
+
+**The cache binds the document, not just the provider.** The design says
+`y-indexeddb` "so a dropped connection keeps working"; the interesting half
+turned out to be the *open*, not the drop. `useCollabStore` binds the store to
+the document once it really holds a diagram, and until now the only thing that
+could say so was the provider's first message. IndexedDB can say it too, and
+says it sooner — so a diagram opened here before draws itself out of the cache
+without waiting for a round trip, and the server's state merges in when it
+arrives. Whichever of the two gets there first binds; the other is a merge,
+which is the one thing a CRDT never needs to be told how to do. **An empty cache
+is not a document**, though: binding to one would draw a blank canvas over the
+board the page has already loaded over HTTP, so a diagram opened on this machine
+for the first time still waits for the server exactly as it did in phase 3.
+
+**The server had to say *why* it refused a socket.** Hocuspocus answers a
+rejected `onAuthenticate` with a permission-denied message carrying
+`error.reason`, falling back to a `permission-denied` that says nothing — and a
+cached copy of somebody's diagram is exactly the thing that must not outlive
+their access to it. So the two refusals are named on the wire
+(`shared/collabAuth.ts`): `unauthorized` for a dead session, whose unsent edits
+are the whole point of the cache and are kept, and `forbidden` for a user who
+has been removed or a diagram that is gone, whose cache is dropped
+(`IndexeddbPersistence.clearData`, best effort — the server has already stopped
+serving them the document). `src/lib/collab/authFailure.ts` is the browser's
+half, and anything it does not recognise is `unknown` and does nothing at all.
+
+**That is also the whole of the re-auth fix** (`collab-reauth`, the hole
+recorded against phase 3 above). With the reason on the wire, `useCollabStore`
+carries both answers — `authFailed`, which `CanvasPage` shows the *same*
+`ReauthDialog` for as a refused `PUT`, and `accessLost`, which is a toast and a
+trip back to the dashboard. Signing back in **replaces the socket** rather than
+nudging it: authentication here is the cookie on the *upgrade request*, so the
+refused connection is holding the session that expired and cannot be talked
+round with the new one. Hocuspocus refuses a document with a message rather
+than a close, so that socket is usually still open and the websocket provider
+will not `connect` while it believes so — `PresenceConnection.reconnect` closes
+it and waits for the close before reopening.
+
+**One database per diagram**, keyed `flowsketch:diagram:<id>`. The origin is
+shared with everything else this app stores in this browser, and one database
+each is what makes dropping a single diagram's cache leave the rest alone. The
+public `/s/:token` page reaches none of it: it never opens a collaboration
+connection, having no session to name a reader by, so an anonymous visitor
+leaves nothing behind.
+
+**Every failure is a missing cache, never a failed open.** No IndexedDB, a
+private window that throws on the attempt, a store that cannot be read or
+written or dropped — all of them return "no cache" and the diagram is the one
+phase 3 shipped. A board is worth more than a copy of it.
 
 ## Risks
 
@@ -125,9 +177,9 @@ Two things phase 3 does **not** fix, both pre-existing:
 
 ## Testing
 
-- Unit: binding round-trips (store ↔ doc), concurrent edits on different keys merge, same-key last-writer, `render` ↔ `migrateDiagramData` round-trip, awareness state shape, auth hook decisions (no access / viewer read-only / editor).
+- Unit: binding round-trips (store ↔ doc), concurrent edits on different keys merge, same-key last-writer, `render` ↔ `migrateDiagramData` round-trip, awareness state shape, auth hook decisions (no access / viewer read-only / editor) **and the reason each refusal carries**; a cached document (a stored update replayed with `Y.applyUpdate`, which is all `IndexeddbPersistence` contributes) renders before any provider sync and merges cleanly with the server's state afterwards; `useCollabStore`'s lifecycle with both halves of the connection stubbed — which of the two binds, and what each refusal does to the cache and to the dialog.
 - Integration: Hocuspocus started in-process on `127.0.0.1` (via `server/testServer.ts`), two `HocuspocusProvider`s in Node (`ws` polyfill), edit on one, observe on the other; persistence extension writes the snapshot.
-- E2E: two browser contexts on one diagram — cursors visible both ways (phase 1); both drag different shapes at once and both pages end equal, one page reloads and sees the same (phase 2); undo reverts only your own move, and a dropped socket says so and comes back with the edit made while it was gone (phase 3). Dropping the socket is `page.routeWebSocket`, not `context.setOffline`: Chromium's offline emulation refuses new connections and leaves an established WebSocket alone.
+- E2E: two browser contexts on one diagram — cursors visible both ways (phase 1); both drag different shapes at once and both pages end equal, one page reloads and sees the same (phase 2); undo reverts only your own move, and a dropped socket says so and comes back with the edit made while it was gone (phase 3); that same page then **reloads with the socket still down** and finds the offline edit waiting, because `GET /api/diagrams/:id` cannot have it — and a session cleared under a live diagram (`context.clearCookies()`, then a forced reconnect) is offered the dialog, signs back in and syncs the next edit to the other browser (phase 4). Dropping the socket is `page.routeWebSocket`, not `context.setOffline`: Chromium's offline emulation refuses new connections and leaves an established WebSocket alone.
 
 ## Versions (2026-09-06)
 

@@ -11,7 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { docToDiagramData } from '../../../server/collab/render';
-import { edgeEntries, nodeEntries } from '../../../shared/collabDoc';
+import { edgeEntries, nodeEntries, writeDiagramIntoDoc } from '../../../shared/collabDoc';
 import {
   serializeDiagram,
   setDocumentFlush,
@@ -768,6 +768,107 @@ describe('merging', () => {
     expect(docToDiagramData(a)).toEqual(docToDiagramData(b));
     expect(docToDiagramData(a).nodes.map((n) => n.id)).toEqual(['n2']);
     expect(edgeEntries(a).size).toBe(0);
+  });
+});
+
+describe('the offline cache', () => {
+  /**
+   * Phase 4 of `docs/realtime.md`: `y-indexeddb` keeps a copy of the document
+   * in the browser and replays it into the `Y.Doc` on the next open, before —
+   * or instead of — the server answering.
+   *
+   * The persistence layer itself is not what is under test here (it needs a
+   * browser, and its whole contribution is an encoded update), so the stored
+   * bytes are produced with `Y.encodeStateAsUpdate` and replayed with
+   * `Y.applyUpdate`, which is exactly what `IndexeddbPersistence` does with
+   * them. What *is* under test is the order the store sees it all in: the
+   * cached board has to render on its own, and the server's state has to merge
+   * into it afterwards rather than replace it.
+   */
+  const shape = (id: string, x: number, label: string) => ({
+    id,
+    type: 'shape',
+    position: { x, y: 0 },
+    data: { label },
+  });
+
+  /** The diagram as the server holds it, and the JSON the page loads. */
+  const serverJson = { version: 3, nodes: [shape('shared', 0, 'Shared')], edges: [] };
+
+  /**
+   * The state this browser left behind: the diagram as the server had it, plus
+   * the shape drawn while the socket was down and never sent to anybody.
+   */
+  function cachedUpdate() {
+    const cached = new Y.Doc();
+    writeDiagramIntoDoc(cached, serverJson, 'seed');
+    pushDiagramToDoc(
+      cached,
+      { ...serverJson, nodes: [...serverJson.nodes, shape('offline', 200, 'Drawn offline')] },
+      'offline-edit',
+    );
+    return Y.encodeStateAsUpdate(cached);
+  }
+
+  it('draws the cached board before the provider has synced anything', () => {
+    // The page has loaded the diagram over HTTP, which is the *snapshot* —
+    // rendered from the document, and missing everything this browser did
+    // while it was offline.
+    store().loadDiagram('test', 'Test', false, serverJson);
+    const baseline = snapshot();
+
+    // The provider's document, with IndexedDB replayed into it and nothing
+    // from the server in it at all.
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, cachedUpdate());
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    expect(store().nodes.map((n) => n.id)).toEqual(['shared', 'offline']);
+    expect(store().nodes[1].data.label).toBe('Drawn offline');
+  });
+
+  it('merges the server’s state into the cached one when the socket comes back', () => {
+    store().loadDiagram('test', 'Test', false, serverJson);
+    const baseline = snapshot();
+
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, cachedUpdate());
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    // Meanwhile, on the server: a collaborator drew something of their own on
+    // the same diagram, starting from the same seed.
+    const server = new Y.Doc();
+    writeDiagramIntoDoc(server, serverJson, 'seed');
+    pushDiagramToDoc(
+      server,
+      { ...serverJson, nodes: [...serverJson.nodes, shape('theirs', 400, 'Theirs')] },
+      'peer',
+    );
+
+    // The socket comes back and the two states are exchanged, in the order the
+    // provider does it: the server's into ours, then ours out to the server.
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(server));
+    Y.applyUpdate(server, Y.encodeStateAsUpdate(doc));
+
+    // Neither edit was lost, and neither window has to reload to see the other.
+    expect(docToDiagramData(doc)).toEqual(docToDiagramData(server));
+    expect(store().nodes.map((n) => n.id).sort()).toEqual(['offline', 'shared', 'theirs']);
+    // …and the canvas is the document, not a stale render of it.
+    expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(store().nodes.map((n) => n.id));
+  });
+
+  it('leaves the loaded board alone when the cache is empty', () => {
+    // Nothing stored yet — a diagram opened on this machine for the first
+    // time. Binding to that document must not empty the canvas the page has
+    // already drawn from the JSON.
+    store().loadDiagram('test', 'Test', false, serverJson);
+    const baseline = snapshot();
+
+    const doc = new Y.Doc();
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    expect(store().nodes.map((n) => n.id)).toEqual(['shared']);
+    expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['shared']);
   });
 });
 

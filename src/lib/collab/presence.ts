@@ -15,8 +15,9 @@
  * decisions are: what colour someone gets, who counts as a peer, and how often a
  * moving pointer is allowed to speak.
  */
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import { HocuspocusProvider, WebSocketStatus } from '@hocuspocus/provider';
 import type * as Y from 'yjs';
+import { collabAuthFailure, type CollabAuthFailure } from './authFailure';
 
 /** A pointer position, in flow coordinates — never screen pixels. */
 export interface PresenceCursor {
@@ -265,6 +266,16 @@ export interface ConnectPresenceOptions {
    * Fires again after a reconnect, so the callback has to be idempotent.
    */
   onSynced?: () => void;
+  /**
+   * Called when the server refuses the socket, with what the refusal was for.
+   *
+   * A rejected connection used to be silent, on the grounds that nothing on the
+   * page depended on presence. From phase 2 the document *is* the diagram, so a
+   * refusal is the difference between an edit that will sync and one that will
+   * not — and the two reasons want opposite things done about them (see
+   * `authFailure.ts`).
+   */
+  onAuthFailure?: (failure: CollabAuthFailure) => void;
 }
 
 export interface PresenceConnection {
@@ -283,6 +294,17 @@ export interface PresenceConnection {
    * know whether the edit has actually left the browser.
    */
   flush: () => Promise<boolean>;
+  /**
+   * Throw this socket away and open another one.
+   *
+   * For the one thing a live socket cannot do: present a session it was not
+   * opened with. Authentication here is the **cookie on the upgrade request**,
+   * so a user who has just signed back in is still, as far as this connection
+   * is concerned, the user whose session expired — and Hocuspocus refuses a
+   * document with a message rather than by closing, so the socket usually sits
+   * there open and useless until something asks for a new one.
+   */
+  reconnect: () => void;
   /** Close the socket and stop reporting. */
   destroy: () => void;
 }
@@ -310,15 +332,20 @@ export function connectPresence({
   onStatus,
   onSynced,
   onPending,
+  onAuthFailure,
 }: ConnectPresenceOptions): PresenceConnection {
   const provider = new HocuspocusProvider({
     url: collabUrl(origin),
     name: presenceDocumentName(diagramId),
     onStatus: ({ status }) => onStatus(status as PresenceStatus),
-    // A rejected connection is silent by design: nothing on the page depends on
-    // presence, and a viewer whose access was revoked mid-session is already
-    // being told so by the next thing they try to do.
-    onAuthenticationFailed: () => onStatus('disconnected'),
+    // The socket is open and useless: Hocuspocus answers a refused
+    // `onAuthenticate` with a message rather than a close, so nothing else
+    // would ever say this window has stopped being connected to anybody.
+    // Reporting it as `disconnected` is what puts "Offline" in the top bar.
+    onAuthenticationFailed: ({ reason }) => {
+      onStatus('disconnected');
+      onAuthFailure?.(collabAuthFailure(reason));
+    },
     // The document has arrived: from here it, and not the JSON the page loaded
     // over HTTP, is what this diagram is.
     onSynced: () => onSynced?.(),
@@ -390,6 +417,25 @@ export function connectPresence({
       sendCursor(cursor);
     },
     setSelection: (nodeIds) => provider.setAwarenessField('selection', nodeIds),
+    reconnect: () => {
+      const socket = provider.configuration.websocketProvider;
+      // Already down — the provider is between retries, or was disconnected —
+      // so there is nothing to close first and `connect` is the whole of it.
+      if (socket.status !== WebSocketStatus.Connected) {
+        void provider.connect();
+        return;
+      }
+      // `disconnect` closes asynchronously and `connect` returns early while
+      // the websocket provider still believes it is connected, so the reopen
+      // waits for the close it just asked for. A `destroy` in between takes
+      // every listener with it, this one included.
+      const reopen = () => {
+        socket.off('close', reopen);
+        void provider.connect();
+      };
+      socket.on('close', reopen);
+      provider.disconnect();
+    },
     destroy: () => {
       sendCursor.cancel();
       provider.off('synced', reportPending);

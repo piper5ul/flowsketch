@@ -1156,12 +1156,76 @@ test('a dropped connection says so, comes back, and brings the offline edit with
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
 
+  // Phase 4: she reloads, still with no socket. The board comes back — the
+  // offline shape included — out of `y-indexeddb`, not out of the server, which
+  // has never heard of it: `GET /api/diagrams/:id` still answers with the
+  // one-shape snapshot rendered before she went offline.
+  await page.reload();
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+  await expect(page.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
+  await expect(page.getByText('Live')).toHaveCount(0);
+  // The provider is retrying on a backoff, so it alternates between saying it
+  // is reconnecting and saying it is offline; the promise it makes about the
+  // edits is the one worth asserting.
+  await expect(page.getByText('changes will sync when you’re back')).toBeVisible({ timeout: 30_000 });
+
   network.restore();
   await expect(page.getByText('Live')).toBeVisible({ timeout: 30_000 });
   await expectSynced(page);
 
   // What she drew while she was gone is on Grace's board, merged rather than
   // sent as a whole copy of a diagram Grace was looking at the same time.
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
+  await expectSameBoard(page, guestPage);
+
+  await guest.close();
+});
+
+test('a session that expires under a live diagram is offered the way back in', async ({ page, browser, context }) => {
+  test.setTimeout(120_000);
+  // Installed before the first navigation, so it reaches every document — and
+  // used here only to make the provider re-open its socket on demand, which is
+  // the moment the server gets to look at a cookie that is no longer there.
+  const network = await collabNetwork(page);
+  const email = await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await expectSynced(page);
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.getByText('Live')).toBeVisible();
+
+  // Ada's session goes away under her. The socket authenticates off the cookie
+  // on its *upgrade* request, so the one she already has goes on working until
+  // it is replaced — which is what dropping it here forces.
+  await context.clearCookies();
+  await network.drop();
+  network.restore();
+
+  // Before phase 4's companion fix this was where it ended: the refused socket
+  // left the bar saying "Reconnecting…" for ever and a reload was the only way
+  // out. The dialog is offered off the socket now, not only off a refused
+  // `PUT` — which a diagram that lives in a document never sends.
+  const dialog = page.getByRole('dialog', { name: 'Session expired' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  // Nothing has been thrown away to show it: the board is still on screen.
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+  await dialog.getByLabel('Email').fill(email);
+  await dialog.getByLabel('Password').fill('correct-horse-battery');
+  await dialog.getByRole('button', { name: 'Sign in' }).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('Live')).toBeVisible({ timeout: 30_000 });
+  await expectSynced(page);
+
+  // …and the diagram is live again, not merely connected: an edit made after
+  // signing back in reaches Grace.
+  await drawShapeIn(page, pane, { x: 800, y: 300 });
   await expect(guestPage.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
   await expectSameBoard(page, guestPage);
 
