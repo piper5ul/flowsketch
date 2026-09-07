@@ -1493,10 +1493,10 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
 });
 
 /** The light canvas token. Nothing in dark mode may still be wearing it. */
-const LIGHT_CANVAS = 'rgb(246, 247, 251)';
+const LIGHT_CANVAS = 'rgb(234, 239, 244)';
 /** `--canvas` and `--canvas-dot` in the dark theme, and the default shape fill. */
-const DARK_CANVAS = 'rgb(13, 14, 19)';
-const DARK_CANVAS_DOT = 'rgb(48, 52, 70)';
+const DARK_CANVAS = 'rgb(15, 23, 31)';
+const DARK_CANVAS_DOT = 'rgb(43, 55, 67)';
 const DEFAULT_SHAPE_FILL = 'rgb(255, 255, 255)';
 
 test('dark mode follows the system, can be pinned, and never repaints the diagram itself', async ({ page }) => {
@@ -2006,8 +2006,8 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await page.getByRole('button', { name: 'blue-3' }).click();
   // The trigger toggles the palette shut again.
   await toolbar.getByRole('button', { name: 'Color' }).click();
-  // #2563EB — `blue-3`'s stroke, which is what an outline shape draws.
-  await expect(shapeBox(first)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+  // `blue-3`'s stroke (Whimsical's blue shaded a fifth towards black), which is what an outline shape draws.
+  await expect(shapeBox(first)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
 
   await toolbar.getByRole('button', { name: 'Style', exact: true }).click();
   await page.getByRole('button', { name: 'Save as default style' }).click();
@@ -2020,7 +2020,7 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await pane.click({ position: { x: 780, y: 460 } });
   const second = page.locator('.react-flow__node').nth(1);
   await expect(second).toBeVisible();
-  await expect(shapeBox(second)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+  await expect(shapeBox(second)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
   await expect(shapeBox(second)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
 
   // And it survives the round trip through the document and its snapshot: a
@@ -2032,7 +2032,7 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await page.locator('.react-flow__pane').click({ position: { x: 300, y: 620 } });
   const third = page.locator('.react-flow__node').nth(2);
   await expect(third).toBeVisible();
-  await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(37, 99, 235)');
+  await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
 });
 
 test('K opens the link editor for the selected shape', async ({ page }) => {
@@ -2146,4 +2146,53 @@ test('Wrap in frame puts a titled frame around the selection', async ({ page }) 
   for (const shape of await page.locator('[data-node-type="shape"]').all()) {
     expect(await shape.getAttribute('data-parent-id')).toBe(frameId);
   }
+});
+
+test('Filter selection narrows a multi-selection to one kind', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  const pane = page.locator('.react-flow__pane');
+  await expect(pane).toBeVisible();
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 300, y: 300 } });
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 600, y: 300 } });
+  await page.keyboard.press('o');
+  await pane.click({ position: { x: 900, y: 300 } });
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+a');
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(3);
+
+  await page.getByRole('button', { name: 'Filter selection' }).click();
+  // The rail has an Ellipse tool too; the filter's options live in the popover.
+  await page.getByRole('dialog').getByRole('button', { name: /^Ellipse/ }).click();
+  await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node.selected [data-shape="ellipse"]')).toHaveCount(1);
+});
+
+test('⌥-hover measures the gap between the selected shape and another', async ({ page }) => {
+  await signUp(page);
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number) => ({
+      id, type: 'shape', position: { x, y: 100 }, width: 100, height: 100,
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const body = { title: 'Measure', data: { version: 3, nodes: [shape('a', 100), shape('b', 260)], edges: [] } };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  await page.locator('[data-id="a"]').click();
+  await page.keyboard.down('Alt');
+  await page.locator('[data-id="b"]').hover();
+  const measure = page.getByTestId('measure');
+  await expect(measure).toBeVisible();
+  // The boxes are 100 wide at x = 100 and x = 260: a 60px gap.
+  await expect(measure).toContainText('60');
+  await page.keyboard.up('Alt');
+  await expect(measure).toBeHidden();
 });
