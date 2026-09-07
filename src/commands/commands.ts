@@ -278,8 +278,10 @@ export const commandDeclarations: Command[] = [
     title: 'Copy as image',
     group: 'clipboard',
     shortcut: { key: 'c', meta: true, shift: true },
+    // Whimsical's "Copy as PNG": the selection if there is one, else the
+    // board, on a transparent background so it drops into a doc or a chat.
     run: () => {
-      void renderDiagramPng().then(async (dataUrl) => {
+      void renderDiagramPng({ selectionOnly: true, background: null }).then(async (dataUrl) => {
         if (!dataUrl) return;
         const res = await fetch(dataUrl);
         const blob = await res.blob();

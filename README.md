@@ -44,7 +44,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Infinite pan and zoom canvas
 - **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Unlike a group, a frame is part of the drawing and appears in exports
 - Undo / redo history
-- Export to PNG
+- Export to PNG or SVG at 1× or 2×, with or without the board background, the whole board or just the selection; `⌘⇧C` copies the selection (or the board) to the clipboard as a transparent PNG
 - Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
 - Lock / unlock shapes (`⌘⇧L`)
 - Z-order controls: bring forward / backward, bring to front / send to back

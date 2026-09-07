@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef, useEffect } from 'react';
+import { useCallback, useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, Eye, History, MessageSquare, Star, Check, Loader2, Download, Image, FileText, FileJson, Shapes, Users } from 'lucide-react';
 import clsx from 'clsx';
@@ -271,6 +271,16 @@ function ExportMenu() {
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const title = useDiagramStore((s) => s.title);
+  // The options every image export takes (see `CaptureOptions`). Kept for the
+  // session, not the diagram: how you want a picture is not part of the board.
+  const [scale, setScale] = useState<1 | 2>(2);
+  const [withBackground, setWithBackground] = useState(true);
+  const [selectionOnly, setSelectionOnly] = useState(false);
+  const hasSelection = useDiagramStore((s) => s.nodes.some((n) => n.selected));
+  const capture = useMemo(
+    () => ({ pixelRatio: scale, background: withBackground ? undefined : null, selectionOnly: selectionOnly && hasSelection }),
+    [scale, withBackground, selectionOnly, hasSelection],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -284,10 +294,10 @@ function ExportMenu() {
   const exportPng = useCallback(async () => {
     setOpen(false);
     // Null for an empty diagram — nothing worth downloading.
-    const dataUrl = await renderDiagramPng();
+    const dataUrl = await renderDiagramPng(capture);
     if (!dataUrl) return;
     download(dataUrl, diagramFileName(title, 'png'));
-  }, [title]);
+  }, [title, capture]);
 
   const exportJson = useCallback(() => {
     setOpen(false);
@@ -303,14 +313,14 @@ function ExportMenu() {
 
   const exportSvg = useCallback(async () => {
     setOpen(false);
-    const dataUrl = await renderDiagramSvg();
+    const dataUrl = await renderDiagramSvg(capture);
     if (!dataUrl) return;
     download(dataUrl, diagramFileName(title, 'svg'));
-  }, [title]);
+  }, [title, capture]);
 
   const printDiagram = useCallback(async () => {
     setOpen(false);
-    const dataUrl = await renderDiagramPng();
+    const dataUrl = await renderDiagramPng(capture);
     if (!dataUrl) return;
     const printWindow = window.open('');
     if (!printWindow) return;
@@ -319,7 +329,7 @@ function ExportMenu() {
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
-  }, [title]);
+  }, [title, capture]);
 
   return (
     <div ref={menuRef} className="pointer-events-auto relative">
@@ -332,7 +342,40 @@ function ExportMenu() {
         </button>
       </div>
       {open && (
-        <div className="panel-in absolute right-0 top-full mt-2 flex w-44 flex-col gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]">
+        <div className="panel-in absolute right-0 top-full mt-2 flex w-52 flex-col gap-0.5 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]">
+          <div className="flex flex-col gap-1 px-1 pb-1.5 pt-0.5" role="group" aria-label="Export options">
+            <div className="flex items-center justify-between text-[12px] text-white/60">
+              <span>Scale</span>
+              <div className="flex gap-0.5 rounded-md bg-white/10 p-0.5">
+                {([1, 2] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    aria-pressed={scale === s}
+                    onClick={() => setScale(s)}
+                    className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${scale === s ? 'bg-accent-500 text-white' : 'text-white/70 hover:text-white'}`}
+                  >
+                    {s}×
+                  </button>
+                ))}
+              </div>
+            </div>
+            <label className="flex items-center justify-between text-[12px] text-white/60">
+              <span>Background</span>
+              <input type="checkbox" checked={withBackground} onChange={(e) => setWithBackground(e.target.checked)} className="accent-accent-500" />
+            </label>
+            <label className={`flex items-center justify-between text-[12px] ${hasSelection ? 'text-white/60' : 'text-white/30'}`}>
+              <span>Selection only</span>
+              <input
+                type="checkbox"
+                checked={selectionOnly && hasSelection}
+                disabled={!hasSelection}
+                onChange={(e) => setSelectionOnly(e.target.checked)}
+                className="accent-accent-500"
+              />
+            </label>
+          </div>
+          <div className="mx-1 mb-0.5 h-px bg-white/10" />
           <button
             onClick={exportPng}
             className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-white/85 hover:bg-white/10"
