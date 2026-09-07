@@ -89,6 +89,8 @@ export interface CommandContext {
   pan: { begin: () => void; end: () => void };
   ui: {
     openShortcuts: () => void;
+    /** The ⌘K command menu. */
+    openCommandMenu: () => void;
     /**
      * Starts a comment thread on whatever the right-click menu was opened
      * over — a shape, or the point on the canvas that was clicked.
