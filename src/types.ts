@@ -35,7 +35,7 @@ export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
 export type StrokeWidth = 1 | 2 | 3;
 /** What either end of a connector wears. `none` is a bare line. */
-export type ArrowStyle = 'none' | 'arrow' | 'open' | 'circle' | 'diamond';
+export type ArrowStyle = 'none' | 'arrow' | 'open' | 'circle' | 'diamond' | 'bar' | 'halfcircle' | 'dot';
 export type Direction = 'top' | 'right' | 'bottom' | 'left';
 export type Tool =
   | 'select'

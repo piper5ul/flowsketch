@@ -1890,8 +1890,9 @@ test('a connector between shapes inside a frame is drawn where the shapes are', 
   const a = await box('[data-id="a"]');
   const b = await box('[data-id="b"]');
   const edge = await box('.react-flow__edge path');
-  // A connector stops `CONNECTOR_STANDOFF_PX` (6px) clear of its shape, plus a hair of antialiasing.
-  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 10) =>
+  // A connector's line stops `CONNECTOR_STANDOFF_PX` (6px) clear of its shape
+  // plus the arrowhead's depth (the head, not the line, reaches the standoff).
+  const touches = (n: { x: number; y: number; width: number; height: number }, tol = 24) =>
     edge.x < n.x + n.width + tol && edge.x + edge.width > n.x - tol && edge.y < n.y + n.height + tol && edge.y + edge.height > n.y - tol;
   expect(touches(a), 'edge should start at the source shape').toBe(true);
   expect(touches(b), 'edge should end at the target shape').toBe(true);
@@ -2041,6 +2042,29 @@ test('export options: selection only at 1× frames just the selected shape', asy
   });
   expect(part.width).toBeLessThan(300);
   expect(part.height).toBeLessThan(300);
+});
+
+test('⌘K opens a command menu that runs what you pick', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+
+  await page.keyboard.press('Meta+k');
+  const menu = page.getByRole('dialog', { name: 'Command menu' });
+  await expect(menu).toBeVisible();
+  await page.getByLabel('Search commands').fill('keyboard short');
+  await expect(menu.getByRole('option')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  // Used once, it leads the list next time.
+  await page.keyboard.press('Meta+k');
+  await expect(menu.getByRole('option').first()).toContainText('Keyboard shortcuts');
+  await expect(menu.getByRole('option').first()).toContainText('Recent');
 });
 
 test('Wrap in frame puts a titled frame around the selection', async ({ page }) => {

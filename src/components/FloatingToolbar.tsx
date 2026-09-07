@@ -73,6 +73,9 @@ const ARROW_STYLES: [ArrowStyle, string][] = [
   ['open', 'Open'],
   ['circle', 'Circle'],
   ['diamond', 'Diamond'],
+  ['bar', 'Bar'],
+  ['halfcircle', 'Half circle'],
+  ['dot', 'Dot'],
 ];
 
 const STROKE_STYLE_DASH: Record<StrokeStyle, string | undefined> = {
@@ -140,6 +143,9 @@ function ArrowEndIcon({ style, side }: { style: ArrowStyle; side: 'start' | 'end
       )}
       {style === 'circle' && <circle cx="13.5" cy="9" r="3.5" fill="currentColor" />}
       {style === 'diamond' && <polygon points="10,9 13.5,5.5 17,9 13.5,12.5" fill="currentColor" />}
+      {style === 'bar' && <line x1="14.5" y1="4.5" x2="14.5" y2="13.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
+      {style === 'halfcircle' && <path d="M 12 4.5 A 4.5 4.5 0 0 1 12 13.5 Z" fill="currentColor" />}
+      {style === 'dot' && <circle cx="14.5" cy="9" r="2.5" fill="currentColor" />}
     </svg>
   );
 }
