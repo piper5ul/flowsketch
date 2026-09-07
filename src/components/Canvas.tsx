@@ -6,6 +6,7 @@ import {
   ConnectionMode,
   useReactFlow,
   ViewportPortal,
+  useConnection,
   type FinalConnectionState,
   type Viewport,
 } from '@xyflow/react';
@@ -177,6 +178,13 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // the gesture; the state is only what the preview line needs to draw.
   const gestureRef = useRef<{ sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean } | null>(null);
   const [connectDraft, setConnectDraft] = useState<{ from: Point; to: Point } | null>(null);
+  // A handle drag is React Flow's gesture, so its target comes from React Flow:
+  // the same outline as the connector tool's, for the same reason.
+  const connection = useConnection();
+  const rfTargetId = connection.inProgress ? (connection.toNode?.id ?? null) : null;
+  useEffect(() => {
+    useDiagramStore.getState().setConnectTarget(connection.inProgress ? rfTargetId : null);
+  }, [connection.inProgress, rfTargetId]);
   // A freehand stroke being drawn, and a wipe being made. Both are refs for the
   // reason the connector gesture is: they *are* the gesture. The stroke's state
   // twin is what the live preview draws; the eraser has no preview — what it
@@ -728,6 +736,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         window.removeEventListener('keydown', onKey);
         gestureRef.current = null;
         setConnectDraft(null);
+        useDiagramStore.getState().setConnectTarget(null);
       };
       const onMove = (e: PointerEvent) => {
         const g = gestureRef.current;
@@ -736,6 +745,11 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         if (!g.moved && Math.hypot(to.x - g.start.x, to.y - g.start.y) < DRAG_THRESHOLD_PX) return;
         g.moved = true;
         setConnectDraft({ from: g.from, to });
+        // Say where the release would land: the shape under the pointer, never
+        // the one the line is leaving or a floating arrow's anchor.
+        const state = useDiagramStore.getState();
+        const over = nodeAtPoint(state.nodes, to, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
+        state.setConnectTarget(over?.id ?? null);
       };
       const onUp = (e: PointerEvent) => {
         const g = gestureRef.current;

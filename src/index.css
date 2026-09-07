@@ -429,6 +429,12 @@ a:focus-visible {
    for the active one: the active hit also carries the selection, and the two
    rings are what tells "this is one of your matches" from "this is the one you
    are on". */
+/* The shape a connector being drawn would attach to on release. */
+[data-connect-target] {
+  outline: 2px solid var(--color-accent-500);
+  outline-offset: 3px;
+}
+
 [data-search-hit] {
   outline: 2px dashed var(--color-accent-500);
   outline-offset: 3px;
