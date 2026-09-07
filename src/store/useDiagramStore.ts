@@ -60,6 +60,14 @@ import {
   type DistributeAxis,
   type MatchDimension,
 } from '../lib/arrange';
+import {
+  applyLayout,
+  layoutAnchors,
+  layoutGraphFor,
+  layoutOrigin,
+  type LayoutDirection,
+} from '../lib/autoLayout';
+import { runElkLayout } from '../lib/elk';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import type { ImageBackfillPatch } from '../lib/imageBackfill';
 import { toastError } from './useToastStore';
@@ -692,6 +700,15 @@ export interface DiagramState {
   distributeSelected: (axis: DistributeAxis) => void;
   /** Resizes the selection to its largest node. Needs two. */
   matchSizeSelected: (dim: MatchDimension) => void;
+  /**
+   * Redraws a connected selection as a layered flow — top to bottom, or left to
+   * right — and re-routes the connectors between its members.
+   *
+   * Asynchronous because the layout engine is code-split (`src/lib/elk.ts`):
+   * the first call fetches it. The whole result still lands in **one** history
+   * entry and one `set`, so ⌘Z takes the layout back in one go.
+   */
+  layoutSelected: (direction: 'vertical' | 'horizontal') => Promise<void>;
 
   deleteSelection: () => void;
   undo: () => void;
@@ -800,6 +817,23 @@ function commitArrangedSizes(sizes: Record<string, ArrangeSize>) {
       resizedIds.has(n.id) ? { ...n, width: sizes[n.id].w, height: sizes[n.id].h } : n,
     ),
   });
+}
+
+/**
+ * True when an auto-layout would actually change how this connector is drawn:
+ * it has bends to clear, or an end that is not already pinned to the side the
+ * flow's direction calls for. Lets a second run of the same layout cost no
+ * history entry, the way an already-aligned selection costs none.
+ */
+function needsReroute(edge: ConnectorEdge, anchors: { source: EdgeAnchor; target: EdgeAnchor }): boolean {
+  const data = edge.data;
+  if (!data) return false;
+  if ((data.waypoints?.length ?? 0) > 0) return true;
+  return !sameAnchor(data.sourceAnchor, anchors.source) || !sameAnchor(data.targetAnchor, anchors.target);
+}
+
+function sameAnchor(a: EdgeAnchor | null | undefined, b: EdgeAnchor): boolean {
+  return a?.side === b.side && a?.t === b.t;
 }
 
 /** The `ConnectorData` fields `computeMarkers` reads. */
@@ -2000,6 +2034,72 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const rects = selectedRects(get().nodes);
     if (rects.length < 2) return;
     commitArrangedSizes(matchSize(rects, dim));
+  },
+
+  // Auto-layout. The graph, the translation back onto the board and the
+  // connectors' new anchors are all worked out in `src/lib/autoLayout.ts`; what
+  // is here is the trip through the layout engine and the single commit.
+  //
+  // Locked nodes stay where they are but still take part in the graph, exactly
+  // as they do in align and distribute: a lock means "do not move this", not
+  // "pretend it is not on the board", so the rest of the flow is laid out
+  // around the space it occupies.
+  layoutSelected: async (direction) => {
+    const elkDirection: LayoutDirection = direction === 'vertical' ? 'DOWN' : 'RIGHT';
+    const before = get();
+    const selectedIds = before.nodes.filter((n) => n.selected).map((n) => n.id);
+    const graph = layoutGraphFor(before.nodes, before.edges, selectedIds, elkDirection);
+    // The selection's bounding box before the command: what the laid-out flow's
+    // own top-left corner is moved onto, so the drawing does not jump.
+    const origin = layoutOrigin(before.nodes, selectedIds);
+    if (!graph || !origin) return;
+
+    const placed = await runElkLayout(graph);
+
+    // The board can have moved on while the engine was working — a
+    // collaborator's edit, or simply a second command — so the commit is
+    // computed against the state as it is *now*, and a node or edge that has
+    // gone in the meantime is quietly dropped.
+    const state = get();
+    const positions = applyLayout(state.nodes, placed, origin);
+    const anchors = layoutAnchors(elkDirection);
+    const laidOutEdgeIds = new Set(graph.edges.map((e) => e.id));
+
+    const moved = new Map<string, { x: number; y: number }>();
+    for (const node of state.nodes) {
+      const next = positions[node.id];
+      if (!next || node.data.locked) continue;
+      if (next.x !== node.position.x || next.y !== node.position.y) moved.set(node.id, next);
+    }
+    const rerouted = new Set(
+      state.edges.filter((e) => laidOutEdgeIds.has(e.id) && needsReroute(e, anchors)).map((e) => e.id),
+    );
+    // Nothing would change, so this must not cost the user a ⌘Z.
+    if (moved.size === 0 && rerouted.size === 0) return;
+
+    pushHistory(state);
+    set({
+      nodes: state.nodes.map((n) => {
+        const position = moved.get(n.id);
+        return position ? { ...n, position } : n;
+      }),
+      edges: state.edges.map((e) =>
+        rerouted.has(e.id)
+          ? {
+              ...e,
+              data: {
+                ...e.data!,
+                // Cleared through the same key the toolbar's "Reset route"
+                // writes, so an elbow re-routes rather than keeping the bends
+                // the user dragged into a layout that no longer exists.
+                waypoints: [],
+                sourceAnchor: anchors.source,
+                targetAnchor: anchors.target,
+              },
+            }
+          : e,
+      ),
+    });
   },
 
   // Arrow-key nudge. A burst of key repeats is one edit as far as the user is

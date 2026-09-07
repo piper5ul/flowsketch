@@ -2147,3 +2147,76 @@ test('Wrap in frame puts a titled frame around the selection', async ({ page }) 
     expect(await shape.getAttribute('data-parent-id')).toBe(frameId);
   }
 });
+
+test('Lay out vertically redraws a connected selection as a column', async ({ page }) => {
+  await signUp(page);
+
+  // Three shapes joined a → b → c, scattered so that no axis of the starting
+  // arrangement already agrees with the answer. Built through the API so the
+  // connectors and the boxes are exact.
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number, y: number, width: number, height: number) => ({
+      id, type: 'shape', position: { x, y }, width, height,
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const edge = (id: string, source: string, target: string) => ({
+      id, source, target, type: 'connector',
+      data: {
+        connectorType: 'elbow', stroke: '#6B7080', strokeStyle: 'solid', label: '',
+        startArrowStyle: 'none', endArrowStyle: 'arrow',
+        // Pinned across the flow on purpose: the layout has to re-pin them.
+        sourceAnchor: { side: 'right', t: 0.5 }, targetAnchor: { side: 'left', t: 0.5 },
+      },
+    });
+    const body = {
+      title: 'Auto layout',
+      data: {
+        version: 3,
+        nodes: [shape('a', 900, 40, 180, 70), shape('b', 100, 500, 120, 90), shape('c', 700, 300, 200, 60)],
+        edges: [edge('ab', 'a', 'b'), edge('bc', 'b', 'c')],
+      },
+    };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+a');
+  await page.locator('[data-node-type="shape"]').first().click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Lay out vertically' }).click();
+
+  // The layout engine is fetched on first use, so the assertion polls rather
+  // than reading the boxes once. Fit-to-view brings the new column into frame
+  // and scales it uniformly, which leaves every comparison below meaningful.
+  const box = async (nodeId: string) => (await page.locator(`[data-id="${nodeId}"]`).first().boundingBox())!;
+  await expect
+    .poll(async () => {
+      await page.keyboard.press('1');
+      const [a, b, c] = [await box('a'), await box('b'), await box('c')];
+      return a.y < b.y && b.y < c.y;
+    }, { message: 'the chain should end up in flow order down the page' })
+    .toBe(true);
+
+  const [a, b, c] = [await box('a'), await box('b'), await box('c')];
+  // A chain comes out centred on one line, whatever the boxes' widths.
+  const centre = (n: { x: number; width: number }) => n.x + n.width / 2;
+  expect(Math.abs(centre(a) - centre(b))).toBeLessThan(4);
+  expect(Math.abs(centre(b) - centre(c))).toBeLessThan(4);
+  // Laid out, not stacked: each shape clears the one above it.
+  expect(b.y).toBeGreaterThan(a.y + a.height);
+  expect(c.y).toBeGreaterThan(b.y + b.height);
+
+  // Both connectors survive and still run between the shapes they join.
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+  for (const [edgeId, from, to] of [['ab', a, b], ['bc', b, c]] as const) {
+    const path = (await page.locator(`.react-flow__edge[data-id="${edgeId}"] path`).first().boundingBox())!;
+    expect(path.y).toBeGreaterThan(from.y);
+    expect(path.y + path.height).toBeLessThan(to.y + to.height);
+    // Vertical now: it leaves the bottom of one shape and arrives at the top of
+    // the next, so it lives inside their shared horizontal band.
+    expect(path.x + path.width).toBeGreaterThan(Math.min(from.x, to.x) - 4);
+    expect(path.x).toBeLessThan(Math.max(from.x + from.width, to.x + to.width) + 4);
+  }
+});

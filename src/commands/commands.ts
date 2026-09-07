@@ -1,3 +1,4 @@
+import { canAutoLayout } from '../lib/autoLayout';
 import { renderDiagramPng } from '../lib/exportImage';
 import { isGroupNode } from '../lib/nodeKinds';
 import { subtreeIds } from '../lib/nodeTree';
@@ -582,6 +583,7 @@ export const commandDeclarations: Command[] = [
   // written here the way they are printed on the key.
   ...alignCommands(),
   ...distributeCommands(),
+  ...layoutCommands(),
 
   // ---- view: canvas chrome -----------------------------------------------
   // All three live in `useViewPreferences` rather than the diagram store: they
@@ -737,6 +739,40 @@ function distributeCommands(): Command[] {
     // The outermost two never move, so there is nothing to spread below three.
     when: (ctx) => selectedNodes(ctx.store.getState()).length >= 3,
     run: (ctx) => ctx.store.getState().distributeSelected(axis),
+  }));
+}
+
+/**
+ * Auto-layout, Whimsical's two "Lay out …" entries.
+ *
+ * **No keystroke**, deliberately: Whimsical has none either, and the command
+ * menu and the right-click menu both list a command whether or not it carries
+ * one. `canAutoLayout` is the gate — two outermost selected shapes with a
+ * connector between them — so the entry is offered exactly when running it
+ * would rearrange something.
+ *
+ * `layoutSelected` is asynchronous (the layout engine is code-split), and a
+ * command's `run` returns nothing; the promise is deliberately dropped, since
+ * the only thing that happens at the end of it is a `set` on the store.
+ */
+function layoutCommands(): Command[] {
+  const directions: ['vertical' | 'horizontal', string][] = [
+    ['vertical', 'Lay out vertically'],
+    ['horizontal', 'Lay out horizontally'],
+  ];
+
+  return directions.map(([direction, title]) => ({
+    id: `arrange.layout${direction[0].toUpperCase()}${direction.slice(1)}`,
+    title,
+    group: 'arrange',
+    contextMenu: 'node',
+    when: (ctx) => {
+      const state = ctx.store.getState();
+      return canAutoLayout(state.nodes, state.edges);
+    },
+    run: (ctx) => {
+      void ctx.store.getState().layoutSelected(direction);
+    },
   }));
 }
 

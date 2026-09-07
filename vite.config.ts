@@ -5,6 +5,15 @@ import tailwindcss from '@tailwindcss/vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // elkjs is CommonJS and is reached only through a dynamic `import()` in
+  // `src/lib/elk.ts`, so the dev server would otherwise discover it the first
+  // time somebody runs an auto-layout — and pay for that with a full page
+  // reload in the middle of the session. Naming it here pre-bundles it at
+  // startup instead. The production build needs nothing: Rollup splits the
+  // dynamic import into its own chunk on its own.
+  optimizeDeps: {
+    include: ['elkjs/lib/elk.bundled.js'],
+  },
   server: {
     port: 5199,
     allowedHosts: ['whimsical.vedalogy.com'],

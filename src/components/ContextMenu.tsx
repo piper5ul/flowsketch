@@ -60,17 +60,25 @@ export function ContextMenu({
 
   if (items.length === 0) return null;
 
-  const height = items.length * ITEM_HEIGHT + MENU_PADDING;
+  // The node menu is long — every arrange command is on it — and `ITEM_HEIGHT`
+  // is only an estimate: a title too wide for the panel wraps onto a second
+  // line, so a menu that was expected to fit can still run off the bottom of a
+  // short window, taking its last entries out of reach. The estimate still
+  // decides *where* the menu opens; what guarantees it stays on screen is the
+  // cap below, which is whatever room is left under that corner — and the menu
+  // scrolls inside it rather than overflowing.
+  const estimated = items.length * ITEM_HEIGHT + MENU_PADDING;
   const left = Math.min(state.x, window.innerWidth - MENU_WIDTH - 8);
-  const top = Math.min(state.y, window.innerHeight - height - 8);
+  const top = Math.max(8, Math.min(state.y, window.innerHeight - estimated - 8));
+  const maxHeight = window.innerHeight - top - 8;
 
   return (
     <div
       ref={ref}
       role="menu"
       aria-label="Canvas actions"
-      className="panel-in fixed z-50 flex flex-col gap-0.5 rounded-xl bg-panel p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.35)] ring-1 ring-line"
-      style={{ left: Math.max(8, left), top: Math.max(8, top), width: MENU_WIDTH }}
+      className="panel-in fixed z-50 flex flex-col gap-0.5 overflow-y-auto rounded-xl bg-panel p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.35)] ring-1 ring-line"
+      style={{ left: Math.max(8, left), top, width: MENU_WIDTH, maxHeight }}
     >
       {items.map((command) => (
         <button
@@ -80,7 +88,7 @@ export function ContextMenu({
             command.run(ctx);
             onClose();
           }}
-          className="flex items-center justify-between gap-4 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium text-ink-800 transition hover:bg-hover-strong"
+          className="flex shrink-0 items-center justify-between gap-4 rounded-lg px-2.5 py-1.5 text-left text-[13px] font-medium text-ink-800 transition hover:bg-hover-strong"
         >
           <span>{command.title}</span>
           <span className="text-[11px] font-semibold text-ink-600/60">
