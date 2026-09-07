@@ -19,6 +19,7 @@ import type {
   EdgeAnchor,
   ShapeData,
   ShapeKind,
+  TableData,
   Tool,
 } from '../types';
 import { DEFAULT_SWATCH } from '../lib/palette';
@@ -39,7 +40,8 @@ function isSideId(id: string | null | undefined): id is Direction {
   return typeof id === 'string' && SIDE_IDS.includes(id);
 }
 import { computeMarkers } from '../lib/edgeMarkers';
-import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode, isTableNode } from '../lib/nodeKinds';
+import { emptyTable, normalizeTable, tableSize } from '../lib/table';
 import {
   absolutePosition,
   boundsOf,
@@ -195,15 +197,53 @@ function computeAlignmentSnap(
 }
 
 /**
- * A node on the board — a drawn shape, or one of the two containers.
+ * A node on the board — a drawn shape, one of the two containers, or a table.
  *
- * All three carry a `ShapeData` and live in the same array, so the store's
+ * All of them carry a `ShapeData` and live in the same array, so the store's
  * actions stay total over it; `type` is the discriminator (see
  * `DiagramNodeType`). The name is historical: for most of this app's life a
  * node *was* a shape.
  */
 export type ShapeNode = Node<ShapeData, DiagramNodeType>;
 export type ConnectorEdge = Edge<ConnectorData, 'connector'>;
+
+/** One cell of one table — the cursor `TableNode` reports and the toolbar acts on. */
+export interface TableCell {
+  nodeId: string;
+  row: number;
+  col: number;
+}
+
+/**
+ * `node`, with its box brought back into step with its grid.
+ *
+ * A table has no size of its own: its width is the sum of its column widths
+ * and its height is a row per row (`tableSize`), and the resizer is not offered
+ * for one. Every write that can change `data.table` goes through here, so the
+ * box a connector attaches to, an alignment measures and an export frames is
+ * never a stale one. Any other node comes back untouched.
+ */
+function withTableSize(node: ShapeNode): ShapeNode {
+  if (!isTableNode(node) || !node.data.table) return node;
+  const { width, height } = tableSize(node.data.table);
+  if (node.width === width && node.height === height) return node;
+  return { ...node, width, height };
+}
+
+/**
+ * A table node as it comes in from outside — squared up and re-boxed.
+ *
+ * `loadDiagram` is the one door, and what arrives there is free-form JSON: a
+ * grid with a ragged row, no columns at all, or a box saved by a build whose
+ * row height differed. A node of type `table` carrying no grid at all is given
+ * a 1×1 rather than dropped: something the user made is better met as an empty
+ * table than as an invisible node.
+ */
+function normalizeTableNode(node: ShapeNode): ShapeNode {
+  if (!isTableNode(node)) return node;
+  const table = normalizeTable(node.data.table ?? emptyTable(1, 1, false));
+  return withTableSize({ ...node, data: { ...node.data, table } });
+}
 
 /** How far a group's box stands off the shapes inside it. */
 const GROUP_PADDING = 16;
@@ -497,6 +537,13 @@ export interface DiagramState {
    * than reaching into it; the count only ever goes up and is never saved.
    */
   linkEditorRequest: number;
+  /**
+   * The cell a table node last had focus in, so the floating toolbar's "Add
+   * row" knows *where*. Not part of the diagram and never saved — it is a
+   * cursor, the same kind of thing `editingNodeId` is, and lives here for the
+   * same reason: `TableNode` writes it and `FloatingToolbar` reads it.
+   */
+  activeTableCell: TableCell | null;
   nodes: ShapeNode[];
   edges: ConnectorEdge[];
   guides: GuideLine[];
@@ -593,6 +640,15 @@ export interface DiagramState {
    * contents sit on and must be drawn behind them.
    */
   addFrame: (position: { x: number; y: number }) => string;
+  /**
+   * Places a table — a grid of editable cells — with its top-left at
+   * `position`. `table` defaults to the 3×3 with a header the rail's tool
+   * draws; the paste paths hand in the grid they parsed. The node's box is
+   * always `tableSize(table)`, never a size of its own.
+   */
+  addTable: (position: { x: number; y: number }, table?: TableData) => string;
+  /** Remembers which cell of which table has the cursor. Not an edit; no history. */
+  setActiveTableCell: (cell: TableCell | null) => void;
 
   /**
    * Wraps the selection in a group: one invisible box, sized to what is inside
@@ -649,6 +705,12 @@ export interface DiagramState {
   applyImageBackfill: (patches: readonly ImageBackfillPatch[]) => void;
   addConnectedShape: (sourceId: string, direction: Direction) => string | null;
   updateNodeData: (id: string, data: Partial<ShapeData>) => void;
+  /**
+   * `updateNodeData` without the history entry, for a gesture that is already
+   * inside one — a column-resize drag pushes once through `beginInteraction`
+   * and then runs a frame's worth of this per pointermove.
+   */
+  updateNodeDataTransient: (id: string, data: Partial<ShapeData>) => void;
   updateSelectedNodesStyle: (patch: Partial<Pick<ShapeData, 'fill' | 'stroke'>>) => void;
 
   updateEdgeData: (id: string, data: Partial<ConnectorData>) => void;
@@ -831,14 +893,22 @@ function commitArrangedPositions(positions: Record<string, ArrangePosition>) {
   });
 }
 
-/** The size counterpart of `commitArrangedPositions`, with the same rules. */
+/**
+ * The size counterpart of `commitArrangedPositions`, with the same rules — plus
+ * one: **a table sits "match size" out**, the way a locked node does. Its box
+ * *is* its grid (`tableSize`), so a width written here would be undone by the
+ * next cell edit and would meanwhile draw the rules in the wrong place. It
+ * still counts towards the geometry, so a table can be the largest node others
+ * are matched to.
+ */
 function commitArrangedSizes(sizes: Record<string, ArrangeSize>) {
   const state = useDiagramStore.getState();
   const resizedIds = new Set(
     state.nodes
       .filter((n) => {
         const next = sizes[n.id];
-        return !n.data.locked && next && (next.w !== nodeWidth(n) || next.h !== nodeHeight(n));
+        if (n.data.locked || isTableNode(n)) return false;
+        return next && (next.w !== nodeWidth(n) || next.h !== nodeHeight(n));
       })
       .map((n) => n.id),
   );
@@ -1163,6 +1233,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   editingNodeId: null,
   editingEdgeId: null,
   linkEditorRequest: 0,
+  activeTableCell: null,
   nodes: [],
   edges: [],
   guides: [],
@@ -1208,8 +1279,10 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // `Diagram.data` is a free-form JSON column: a stored `parentId` may
       // point at a node that is no longer there, and React Flow throws on that
       // rather than drawing the board at all. Normalizing here is the one door
-      // every diagram comes through, migration included.
-      nodes: normalizeParentage(migrated.nodes as unknown as ShapeNode[]),
+      // every diagram comes through, migration included — and a stored table
+      // may be ragged for the same reason, so `normalizeTableNode` squares it
+      // up and puts the node's box back in step with its grid.
+      nodes: normalizeParentage(migrated.nodes as unknown as ShapeNode[]).map(normalizeTableNode),
       edges: migrated.edges as unknown as ConnectorEdge[],
       // Cleared, not kept: /d/A -> /d/B reuses this store, and B must not open
       // on A's camera.
@@ -1467,6 +1540,30 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set((s) => ({ nodes: [node, ...s.nodes] }));
     return id;
   },
+
+  // A table is placed like a shape and sized like nothing else: its box is
+  // `tableSize`, not a row in `SHAPE_SIZES`. The data is an ordinary
+  // `ShapeData` — a rectangle's fill and stroke, which is what tints the header
+  // and draws the rules — with the grid alongside it, so the palette, the
+  // selection filter and everything else that reads a node's data go on working.
+  addTable: (position, table) => {
+    pushHistory(get());
+    const id = nanoid(8);
+    const grid = normalizeTable(table ?? emptyTable());
+    const { defaults, lastStyle } = get();
+    const node: ShapeNode = {
+      id,
+      type: 'table',
+      position,
+      ...tableSize(grid),
+      data: { ...shapeDataWithDefaults('rectangle', defaults, lastStyle), table: grid },
+    };
+    set((s) => ({ nodes: [...s.nodes, node] }));
+    return id;
+  },
+
+  // A cursor, not an edit: no history, exactly as a click on a shape records none.
+  setActiveTableCell: (cell) => set({ activeTableCell: cell }),
 
   groupSelected: () => {
     const state = get();
@@ -1821,14 +1918,26 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     return id;
   },
 
-  // A discrete edit (label commit, formatting, link, …). Undoable, unless the
-  // patch is a no-op — committing unchanged text must not add a history entry.
+  // A discrete edit (label commit, formatting, link, a table cell, …).
+  // Undoable, unless the patch is a no-op — committing unchanged text must not
+  // add a history entry, which is also what lets a table's cell editor commit
+  // on Tab *and* on the blur that follows it (`setCell` returns the grid it was
+  // given when the text has not moved, so the second patch is `Object.is`).
   updateNodeData: (id, data) => {
     const node = get().nodes.find((n) => n.id === id);
     if (!node || isNoOpPatch(node.data, data)) return;
     pushHistory(get());
     set((s) => ({
-      nodes: s.nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...data } } : n)),
+      nodes: s.nodes.map((n) => (n.id === id ? withTableSize({ ...n, data: { ...n.data, ...data } }) : n)),
+    }));
+  },
+
+  // The same patch, mid-gesture: a column-resize drag is one entry, pushed by
+  // `beginInteraction` before the first frame.
+  updateNodeDataTransient: (id, data) => {
+    set((s) => ({
+      nodes: s.nodes.map((n) => (n.id === id ? withTableSize({ ...n, data: { ...n.data, ...data } }) : n)),
+      transientSeq: s.transientSeq + 1,
     }));
   },
 
@@ -2133,9 +2242,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // re-drawn as one without retyping it. Nodes that have no outline to swap
   // (images, text) or that are locked sit it out, and a swap that would change
   // nothing costs no history entry.
+  //
+  // A table sits it out on its `type`, not on its data: its data *is* a
+  // rectangle's, which is what draws its rules, and turning that into a diamond
+  // would leave a grid of cells inside a silhouette.
   setSelectedShapeKind: (kind) => {
     const willChange = (n: ShapeNode) =>
-      n.selected && canSwapShapeKind(n.data) && n.data.shape !== kind;
+      n.selected && !isTableNode(n) && canSwapShapeKind(n.data) && n.data.shape !== kind;
 
     const state = get();
     if (!state.nodes.some(willChange)) return;

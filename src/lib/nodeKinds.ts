@@ -25,6 +25,22 @@ export function isContainerNode(node: Typed): boolean {
 }
 
 /**
+ * True for a grid of editable cells.
+ *
+ * Read from the `type` for the same reason the containers are: a table's data
+ * is an ordinary `ShapeData` carrying `shape: 'rectangle'` and a fill, so
+ * asking the data would answer "rectangle". The grid itself lives in
+ * `data.table` — but a node with that field and the wrong `type` is not a
+ * table, and this is the predicate that says so.
+ *
+ * A table is **not** a container: nothing hangs off it through `parentId`, so
+ * `isContainerNode` deliberately stays the two it was.
+ */
+export function isTableNode(node: Typed): boolean {
+  return node.type === 'table';
+}
+
+/**
  * Every shape kind, at runtime. Built from an exhaustive record rather than
  * written out as an array, so adding a kind to `ShapeKind` and forgetting it
  * here is a type error rather than a table that silently misses a shape.

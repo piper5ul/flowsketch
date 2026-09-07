@@ -10,6 +10,7 @@ import {
   Frame,
   Shapes,
   Spline,
+  Table,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Tooltip } from './Tooltip';
@@ -88,10 +89,11 @@ const MORE_SHAPE_TOOLS: { tool: ShapeTool; shortcut?: string }[] = [
 /**
  * What the "More shapes" popover offers, in grid order.
  *
- * Every entry but the last names a `ShapeKind`, so its icon and label come from
- * the shared shape tables. A frame is not a shape — it is a section other
- * shapes go into — so it brings its own, and lives here rather than on the rail
- * itself because it is drawn far less often than a rectangle.
+ * Every entry but the last two names a `ShapeKind`, so its icon and label come
+ * from the shared shape tables. A frame is not a shape — it is a section other
+ * shapes go into — and nor is a table, which is a grid of cells whose box is
+ * its own contents; both bring their own icon, and both live here rather than
+ * on the rail itself because they are drawn far less often than a rectangle.
  */
 const MORE_TOOLS: {
   tool: Tool;
@@ -108,6 +110,7 @@ const MORE_TOOLS: {
     shortcut,
   })),
   { tool: 'frame', label: 'Frame', Icon: Frame, shortcut: 'F' },
+  { tool: 'table', label: 'Table', Icon: Table, shortcut: 'E' },
 ];
 
 const MORE_SHAPE_SET = new Set<Tool>(MORE_TOOLS.map((s) => s.tool));

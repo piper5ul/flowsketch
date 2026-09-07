@@ -18,6 +18,12 @@
  * default style") is the same case: absent means "no board defaults" and the
  * built-in ones apply, which is what every diagram written before it already
  * wants. It is *narrowed* rather than migrated — see `sanitizeDefaults`.
+ *
+ * `ShapeData.table` is a third: only a node of type `table` carries one, and a
+ * diagram written before tables existed holds no such node, so there is nothing
+ * an older spelling could be misread as. Like `defaults` it is squared up
+ * rather than migrated — `normalizeTable`, applied in `loadDiagram` where a
+ * ragged grid from the free-form JSON column would otherwise reach the canvas.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';

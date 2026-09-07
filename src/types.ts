@@ -22,14 +22,17 @@ export type ShapeKind =
 /**
  * What a node *is*, as React Flow's `type` discriminator spells it.
  *
- * `shape` is everything the user draws. The other two are containers other
+ * `shape` is everything the user draws. Two of the others are containers other
  * nodes hang off through `parentId`: a `group` is an invisible box that makes a
  * handful of shapes move as one, and a `frame` is a titled section shapes join
- * by being dropped into it. Both carry a `ShapeData` like any other node — the
- * store's array is homogeneous — so `type`, never the data, is what tells them
- * apart (`isGroupNode` / `isFrameNode` in `src/lib/nodeKinds.ts`).
+ * by being dropped into it. A `table` is neither — it is one object with a grid
+ * of editable cells inside it, whose box follows its own columns and rows.
+ *
+ * All of them carry a `ShapeData` like any other node — the store's array is
+ * homogeneous — so `type`, never the data, is what tells them apart
+ * (`isGroupNode` / `isFrameNode` / `isTableNode` in `src/lib/nodeKinds.ts`).
  */
-export type DiagramNodeType = 'shape' | 'group' | 'frame';
+export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'table';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
@@ -58,7 +61,9 @@ export type Tool =
   | 'arrow'
   // Not a `ShapeKind`: a frame is a container, not a silhouette, so it has no
   // entry in the shape tables and is placed by `addFrame` rather than `addShape`.
-  | 'frame';
+  | 'frame'
+  // Nor is a table: it is a grid of cells, placed by `addTable`.
+  | 'table';
 
 export interface SwatchColor {
   id: string;
@@ -81,6 +86,26 @@ export type VerticalAlign = 'top' | 'middle' | 'bottom';
  * `filled` — see `src/lib/shapeStyle.ts`, which is where the choice is resolved.
  */
 export type FillStyle = 'filled' | 'outline';
+
+/**
+ * The grid inside a `table` node: what is in each cell, how wide each column
+ * is, and whether the first row is a header.
+ *
+ * Cell text is **plain text**. Rendering Markdown inside a cell is a follow-up;
+ * a label does it (`src/lib/markdown.ts`) and a cell deliberately does not yet,
+ * so what is typed is what is drawn and what search and export see.
+ *
+ * Every row holds one entry per column — `src/lib/table.ts` is the only place
+ * this is edited, and every function there keeps that rectangle true.
+ */
+export interface TableData {
+  /** One per column, left to right. `width` is in board pixels. */
+  columns: { width: number }[];
+  /** One per row, top to bottom, each with one string per column. */
+  rows: { cells: string[] }[];
+  /** Whether the first row is drawn as a header. */
+  header: boolean;
+}
 
 export interface ShapeData {
   label: string;
@@ -126,6 +151,12 @@ export interface ShapeData {
   imageSrc?: string;
   /** Set on an `image` node whose bytes are still uploading. */
   uploading?: boolean;
+  /**
+   * The grid, on a node of type `table` and nowhere else. Optional and absent
+   * everywhere else, which is why tables needed no migration: a diagram written
+   * before they existed holds no node that would look for one.
+   */
+  table?: TableData;
   [key: string]: unknown;
 }
 

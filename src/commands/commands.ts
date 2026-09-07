@@ -1,6 +1,7 @@
 import { canAutoLayout } from '../lib/autoLayout';
 import { renderDiagramPng } from '../lib/exportImage';
 import { isGroupNode } from '../lib/nodeKinds';
+import { parseTableText } from '../lib/table';
 import { subtreeIds } from '../lib/nodeTree';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
@@ -90,6 +91,19 @@ async function pasteMermaid(ctx: CommandContext) {
   if (pasted === null) toastError("That isn't a Mermaid flowchart");
 }
 
+/** "Paste as table": a Markdown pipe table, a TSV or a CSV, as one table node. */
+async function pasteAsTable(ctx: CommandContext) {
+  const origin = ctx.dropPoint();
+  const text = await clipboardText();
+  if (text === null) return;
+  const table = parseTableText(text);
+  if (!table) {
+    toastError("That isn't a table");
+    return;
+  }
+  ctx.store.getState().addTable(origin, table);
+}
+
 function stepFontSize(ctx: CommandContext, delta: 1 | -1) {
   const state = ctx.store.getState();
   const selected = state.nodes.find((n) => n.selected);
@@ -130,6 +144,9 @@ const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[] }[] = [
   // Whimsical calls a frame a section and reaches it with `.`; its connector
   // key is C. Both are kept alongside ours so either habit works.
   { tool: 'frame', title: 'Frame', keys: ['f', '.'] },
+  // Nor is a table: it is a grid of cells, placed by `addTable`. Whimsical
+  // reaches its table tool with E, and E was the letter left.
+  { tool: 'table', title: 'Table', keys: ['e'] },
   { tool: 'connector', title: 'Connector', keys: ['c', 'a', 'l'] },
 ];
 
@@ -312,12 +329,12 @@ export const commandDeclarations: Command[] = [
       ctx.clipboard.set(ctx.store.getState().pasteClipboard(clip));
     },
   },
-  // The two "paste as" commands — text on the system clipboard, turned into
-  // objects. Neither carries a keystroke: what they read is only known once the
+  // The three "paste as" commands — text on the system clipboard, turned into
+  // objects. None carries a keystroke: what they read is only known once the
   // user has asked (reading the clipboard is a permissioned, asynchronous call),
-  // so both are gated on nothing but being able to edit and say what went wrong
-  // afterwards rather than being quietly withdrawn beforehand. Plain ⌘V pastes
-  // Mermaid too — see the paste listener in `Canvas.tsx`.
+  // so all three are gated on nothing but being able to edit and say what went
+  // wrong afterwards rather than being quietly withdrawn beforehand. Plain ⌘V
+  // pastes Mermaid and tables too — see the paste listener in `Canvas.tsx`.
   {
     id: 'clipboard.pasteAsStickies',
     title: 'Paste as sticky notes',
@@ -331,6 +348,13 @@ export const commandDeclarations: Command[] = [
     group: 'clipboard',
     contextMenu: 'pane',
     run: (ctx) => { void pasteMermaid(ctx); },
+  },
+  {
+    id: 'clipboard.pasteAsTable',
+    title: 'Paste as table',
+    group: 'clipboard',
+    contextMenu: 'pane',
+    run: (ctx) => { void pasteAsTable(ctx); },
   },
   {
     id: 'clipboard.copyAsImage',
