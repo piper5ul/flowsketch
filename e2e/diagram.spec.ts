@@ -1181,6 +1181,57 @@ test('a dropped connection says so, comes back, and brings the offline edit with
   await guest.close();
 });
 
+test('a session that expires under a live diagram is offered the way back in', async ({ page, browser, context }) => {
+  test.setTimeout(120_000);
+  // Installed before the first navigation, so it reaches every document — and
+  // used here only to make the provider re-open its socket on demand, which is
+  // the moment the server gets to look at a cookie that is no longer there.
+  const network = await collabNetwork(page);
+  const email = await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  await drawShapeIn(page, pane, { x: 400, y: 260 });
+  await expectSynced(page);
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(1);
+  await expect(page.getByText('Live')).toBeVisible();
+
+  // Ada's session goes away under her. The socket authenticates off the cookie
+  // on its *upgrade* request, so the one she already has goes on working until
+  // it is replaced — which is what dropping it here forces.
+  await context.clearCookies();
+  await network.drop();
+  network.restore();
+
+  // Before phase 4's companion fix this was where it ended: the refused socket
+  // left the bar saying "Reconnecting…" for ever and a reload was the only way
+  // out. The dialog is offered off the socket now, not only off a refused
+  // `PUT` — which a diagram that lives in a document never sends.
+  const dialog = page.getByRole('dialog', { name: 'Session expired' });
+  await expect(dialog).toBeVisible({ timeout: 30_000 });
+  // Nothing has been thrown away to show it: the board is still on screen.
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+
+  await dialog.getByLabel('Email').fill(email);
+  await dialog.getByLabel('Password').fill('correct-horse-battery');
+  await dialog.getByRole('button', { name: 'Sign in' }).click();
+
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText('Live')).toBeVisible({ timeout: 30_000 });
+  await expectSynced(page);
+
+  // …and the diagram is live again, not merely connected: an edit made after
+  // signing back in reaches Grace.
+  await drawShapeIn(page, pane, { x: 800, y: 300 });
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2, { timeout: 20_000 });
+  await expectSameBoard(page, guestPage);
+
+  await guest.close();
+});
+
 test('a public link opens the diagram read-only, and revoking it kills the URL', async ({ page, browser }) => {
   await signUp(page);
   const pane = await newDiagram(page);

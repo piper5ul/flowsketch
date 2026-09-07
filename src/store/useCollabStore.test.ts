@@ -17,6 +17,8 @@ import { useDiagramStore } from './useDiagramStore';
 
 /** The last connection `connect` opened, and the callbacks it was given. */
 let opened: { options: ConnectPresenceOptions; document: Y.Doc } | null = null;
+/** Counts the sockets `retryAuth` asked to be replaced. */
+const reconnected = vi.hoisted(() => vi.fn());
 
 vi.mock('../lib/collab/presence', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/collab/presence')>()),
@@ -28,6 +30,7 @@ vi.mock('../lib/collab/presence', async (importOriginal) => ({
       flush: async () => true,
       setCursor: () => {},
       setSelection: () => {},
+      reconnect: reconnected,
       destroy: () => {},
     };
   }),
@@ -72,6 +75,7 @@ beforeEach(() => {
   cache.available = true;
   cache.clear.mockClear();
   cache.destroy.mockClear();
+  reconnected.mockClear();
 });
 
 afterEach(() => {
@@ -129,6 +133,33 @@ describe('binding the document', () => {
 });
 
 describe('a refused connection', () => {
+  it('offers the way back in when it is the session that expired', () => {
+    connect();
+    opened!.options.onAuthFailure?.('no-session');
+
+    // The dialog, not the door: the edits on screen are still this user's and
+    // still unsent, and leaving the page is what would lose them.
+    expect(useCollabStore.getState().authFailed).toBe(true);
+    expect(useCollabStore.getState().accessLost).toBe(false);
+  });
+
+  it('says the diagram is gone when it is access that was lost', () => {
+    connect();
+    opened!.options.onAuthFailure?.('no-access');
+
+    // Nothing to sign in for. Signing in again is exactly what this user has
+    // already done, and it would be refused in exactly the same way.
+    expect(useCollabStore.getState().accessLost).toBe(true);
+    expect(useCollabStore.getState().authFailed).toBe(false);
+  });
+
+  it('does neither for a refusal it cannot read', () => {
+    connect();
+    opened!.options.onAuthFailure?.('unknown');
+    expect(useCollabStore.getState().authFailed).toBe(false);
+    expect(useCollabStore.getState().accessLost).toBe(false);
+  });
+
   it('drops the cached copy when the diagram is no longer this user’s', () => {
     connect();
     opened!.options.onAuthFailure?.('no-access');
@@ -154,6 +185,38 @@ describe('a refused connection', () => {
     useCollabStore.getState().disconnect();
     expect(cache.destroy).toHaveBeenCalled();
     expect(cache.clear).not.toHaveBeenCalled();
+  });
+});
+
+describe('signing back in', () => {
+  it('replaces the socket, because the session rides the upgrade', () => {
+    connect();
+    opened!.options.onAuthFailure?.('no-session');
+
+    useCollabStore.getState().retryAuth();
+    expect(reconnected).toHaveBeenCalled();
+    // The dialog comes down at once; a socket refused a second time says so a
+    // second time, and puts it back.
+    expect(useCollabStore.getState().authFailed).toBe(false);
+  });
+
+  it('takes the dialog down when the socket authenticates on its own', () => {
+    connect();
+    opened!.options.onAuthFailure?.('no-session');
+
+    // A document message can only follow a successful authentication — which
+    // is what happens when another tab signs in while this one waits.
+    opened!.options.onSynced?.();
+    expect(useCollabStore.getState().authFailed).toBe(false);
+  });
+
+  it('forgets both refusals when the page moves to another diagram', () => {
+    connect();
+    opened!.options.onAuthFailure?.('no-access');
+
+    connect('d2');
+    expect(useCollabStore.getState().accessLost).toBe(false);
+    expect(useCollabStore.getState().authFailed).toBe(false);
   });
 });
 

@@ -62,6 +62,26 @@ interface CollabState {
    * the end-to-end tests wait on it where they used to wait on "Saved".
    */
   synced: boolean;
+  /**
+   * True while the socket has been refused for want of a session.
+   *
+   * The re-auth dialog used to be offered off `saveStatus === 'unauthorized'`,
+   * which only the JSON `PUT` can produce — so a session that expired under a
+   * *bound* diagram got a connection that would not open and a top bar that
+   * said "Reconnecting…", with a reload as the only way out. This is the
+   * socket's half of the same answer, and `CanvasPage` shows the dialog off
+   * either.
+   */
+  authFailed: boolean;
+  /**
+   * True when the server says this diagram is not this user's to open at all —
+   * they have been removed from it, or it has been deleted.
+   *
+   * Not something to sign in again for: the page says so and leaves. Kept
+   * separate from `authFailed` because the two refusals look identical on the
+   * wire and want opposite things done about them.
+   */
+  accessLost: boolean;
   /** The diagram this connection is for, or `null` when there is none. */
   diagramId: string | null;
   /**
@@ -80,6 +100,16 @@ interface CollabState {
     options?: { readOnly?: boolean },
   ) => void;
   disconnect: () => void;
+  /**
+   * Open a new socket now that the user has signed back in, and take the
+   * dialog down.
+   *
+   * The session rides the cookie on the *upgrade*, so the refused connection
+   * cannot be talked round: it has to be replaced. Nothing is lost by that —
+   * the document is in this browser (and, from phase 4, in IndexedDB), and
+   * everything written while the socket was refused syncs on the way back.
+   */
+  retryAuth: () => void;
   /** Report the pointer in flow coordinates, or `null` when it leaves. */
   reportCursor: (cursor: PresenceCursor | null) => void;
 }
@@ -138,6 +168,8 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   status: 'disconnected',
   bound: false,
   synced: false,
+  authFailed: false,
+  accessLost: false,
   diagramId: null,
 
   connect: (diagramId, user, origin, options) => {
@@ -150,6 +182,8 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       status: 'connecting',
       bound: false,
       synced: false,
+      authFailed: false,
+      accessLost: false,
     });
 
     // Guarded on the diagram id like every other callback below: one of these
@@ -204,7 +238,13 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       user,
       origin,
       // Fires on the first sync and on every reconnect.
-      onSynced: () => bind(active.document),
+      onSynced: () => {
+        // A document message means this socket was authenticated, so whatever
+        // the dialog is up for has been resolved — here, or in another tab
+        // that signed in while this one waited.
+        if (get().diagramId === diagramId) set({ authFailed: false });
+        bind(active.document);
+      },
       // Guarded on the diagram id: a callback from the connection being torn
       // down can still land after the next one has been opened, and it must not
       // wipe the new connection's peers.
@@ -219,11 +259,19 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       },
       onAuthFailure: (failure) => {
         if (get().diagramId !== diagramId) return;
-        // Removed from the diagram, or it is gone. The copy in this browser is
-        // not theirs to keep and nothing is ever going to sync it again, so it
-        // goes with the access it was made under. Best effort by design: the
-        // server has already stopped serving them the document.
-        if (failure === 'no-access') void offline?.clear();
+        if (failure === 'no-access') {
+          // Removed from the diagram, or it is gone. The copy in this browser
+          // is not theirs to keep and nothing is ever going to sync it again,
+          // so it goes with the access it was made under. Best effort by
+          // design: the server has already stopped serving the document.
+          void offline?.clear();
+          set({ accessLost: true });
+          return;
+        }
+        // The session, not the diagram. The edits on screen are still theirs
+        // and still unsent, so the page offers the way back rather than
+        // leaving the bar to say "Reconnecting…" until somebody reloads.
+        if (failure === 'no-session') set({ authFailed: true });
       },
     });
     connection = active;
@@ -266,7 +314,15 @@ export const useCollabStore = create<CollabState>((set, get) => ({
       status: 'disconnected',
       bound: false,
       synced: false,
+      authFailed: false,
+      accessLost: false,
     });
+  },
+
+  retryAuth: () => {
+    // Optimistic, and safe: a socket that is refused again says so again.
+    set({ authFailed: false });
+    connection?.reconnect();
   },
 
   reportCursor: (cursor) => connection?.setCursor(cursor),

@@ -15,7 +15,7 @@
  * decisions are: what colour someone gets, who counts as a peer, and how often a
  * moving pointer is allowed to speak.
  */
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import { HocuspocusProvider, WebSocketStatus } from '@hocuspocus/provider';
 import type * as Y from 'yjs';
 import { collabAuthFailure, type CollabAuthFailure } from './authFailure';
 
@@ -294,6 +294,17 @@ export interface PresenceConnection {
    * know whether the edit has actually left the browser.
    */
   flush: () => Promise<boolean>;
+  /**
+   * Throw this socket away and open another one.
+   *
+   * For the one thing a live socket cannot do: present a session it was not
+   * opened with. Authentication here is the **cookie on the upgrade request**,
+   * so a user who has just signed back in is still, as far as this connection
+   * is concerned, the user whose session expired — and Hocuspocus refuses a
+   * document with a message rather than by closing, so the socket usually sits
+   * there open and useless until something asks for a new one.
+   */
+  reconnect: () => void;
   /** Close the socket and stop reporting. */
   destroy: () => void;
 }
@@ -406,6 +417,25 @@ export function connectPresence({
       sendCursor(cursor);
     },
     setSelection: (nodeIds) => provider.setAwarenessField('selection', nodeIds),
+    reconnect: () => {
+      const socket = provider.configuration.websocketProvider;
+      // Already down — the provider is between retries, or was disconnected —
+      // so there is nothing to close first and `connect` is the whole of it.
+      if (socket.status !== WebSocketStatus.Connected) {
+        void provider.connect();
+        return;
+      }
+      // `disconnect` closes asynchronously and `connect` returns early while
+      // the websocket provider still believes it is connected, so the reopen
+      // waits for the close it just asked for. A `destroy` in between takes
+      // every listener with it, this one included.
+      const reopen = () => {
+        socket.off('close', reopen);
+        void provider.connect();
+      };
+      socket.on('close', reopen);
+      provider.disconnect();
+    },
     destroy: () => {
       sendCursor.cancel();
       provider.off('synced', reportPending);

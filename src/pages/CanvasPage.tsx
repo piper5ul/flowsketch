@@ -37,13 +37,26 @@ export function CanvasPage() {
    * and no socket produces one.
    */
   const bound = useCollabStore((s) => s.bound);
+  /**
+   * The socket's half of "your session has expired".
+   *
+   * `saveStatus === 'unauthorized'` is the JSON `PUT`'s answer, and until now
+   * it was the only one the dialog below listened for — which left a session
+   * that expired under a *bound* diagram with a connection that would not open
+   * and no way back but a reload. Hocuspocus refuses the socket instead, and
+   * `useCollabStore` reports that here.
+   */
+  const authFailed = useCollabStore((s) => s.authFailed);
+  /** The other refusal: this diagram is not this user's to open any more. */
+  const accessLost = useCollabStore((s) => s.accessLost);
   const { data: session } = useSession();
   /** The diagram whose image backfill has already been started on this page. */
   const backfilled = useRef<string | null>(null);
 
   // A 401 elsewhere in the app means "go and sign in"; here it means "the edits
   // on screen have nowhere to go yet", and navigating would be what loses them.
-  // The dialog below is shown off `saveStatus` instead.
+  // The dialog below is shown off `saveStatus` — or off the socket being
+  // refused, which is how a *bound* diagram learns the same thing.
   useEffect(() => {
     setUnauthorizedHandler(() => {});
     return () => setUnauthorizedHandler(null);
@@ -81,7 +94,27 @@ export function CanvasPage() {
     // The save that hit the expired session is retried straight away; a
     // success clears `unauthorized`, which is what rearms autosave.
     void useDiagramStore.getState().saveDiagram();
+    // And the socket, which was refused with the session that has just been
+    // replaced. Authentication there is the cookie on the upgrade request, so
+    // nothing short of a new socket can present the new one — see
+    // `PresenceConnection.reconnect`.
+    useCollabStore.getState().retryAuth();
   }, []);
+
+  /**
+   * Removed from this diagram, or it has been deleted, while it was open.
+   *
+   * Not a re-auth: signing in again is what this user has already done, and
+   * the server would refuse them in exactly the same way. There is nothing on
+   * this page they are still entitled to, so they are told once and taken back
+   * to their own diagrams — the same place the load itself sends a caller with
+   * no access.
+   */
+  useEffect(() => {
+    if (!accessLost) return;
+    toastError('You no longer have access to this diagram.');
+    navigate('/', { replace: true });
+  }, [accessLost, navigate]);
 
   useEffect(() => {
     if (!id) return;
@@ -296,7 +329,7 @@ export function CanvasPage() {
       <ReactFlowProvider>
         <div className="h-screen w-screen overflow-hidden">
           <Canvas />
-          {saveStatus === 'unauthorized' && (
+          {(saveStatus === 'unauthorized' || authFailed) && (
             // `session` is the one that just expired: better-auth keeps the
             // last response it read, so the address is usually still there to
             // prefill. An empty string is a normal outcome, not a failure.
