@@ -3,6 +3,11 @@ import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramS
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS } from '../lib/nodeKinds';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import {
+  MIND_MAP_LEVEL_GAP,
+  MIND_MAP_NODE_SIZE,
+  MIND_MAP_SIBLING_GAP,
+} from '../lib/mindMap';
 import { useToastStore } from './useToastStore';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 
@@ -3018,5 +3023,291 @@ describe('setSlideOrder', () => {
     // The running order is a field on the frames, not a rearrangement of the
     // board: a diagram's node array is its z-order and must not move with it.
     expect(store().nodes.map((n) => n.id)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mind maps
+// ---------------------------------------------------------------------------
+
+describe('mind maps', () => {
+  const at = { x: 100, y: 200 };
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+  /** The map's branches, in the order the edge array holds them. */
+  const branches = () => store().edges.filter((e) => e.data?.role === 'mindmap');
+  const childrenIds = (id: string) => branches().filter((e) => e.source === id).map((e) => e.target);
+
+  describe('mindMapAddRoot', () => {
+    it('makes a node that points at itself, selected and open for typing', () => {
+      const id = store().mindMapAddRoot(at);
+      expect(nodeOf(id)).toMatchObject({
+        type: 'shape',
+        position: at,
+        width: MIND_MAP_NODE_SIZE.width,
+        height: MIND_MAP_NODE_SIZE.height,
+        selected: true,
+        data: { shape: 'rectangle', label: '', mindMap: { root: id } },
+      });
+      expect(store().editingNodeId).toBe(id);
+      expect(store().nodes).toHaveLength(1);
+    });
+
+    it('costs exactly one history entry', () => {
+      store().mindMapAddRoot(at);
+      expect(store().canUndo).toBe(true);
+      store().undo();
+      expect(store().nodes).toEqual([]);
+    });
+  });
+
+  describe('mindMapAddChild', () => {
+    it('adds a node and a branch, and starts typing into the child', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+
+      expect(nodeOf(child).data.mindMap).toEqual({ root });
+      expect(childrenIds(root)).toEqual([child]);
+      expect(store().editingNodeId).toBe(child);
+      expect(store().nodes.filter((n) => n.selected).map((n) => n.id)).toEqual([child]);
+    });
+
+    it('draws the branch as a thin bare curve, pinned right to left', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const [branch] = branches();
+
+      expect(branch).toMatchObject({ source: root, target: child, type: 'connector' });
+      expect(branch.data).toMatchObject({
+        role: 'mindmap',
+        connectorType: 'curved',
+        strokeWidth: 1,
+        startArrowStyle: 'none',
+        endArrowStyle: 'none',
+        sourceAnchor: { side: 'right', t: 0.5 },
+        targetAnchor: { side: 'left', t: 0.5 },
+      });
+      // Bare at both ends: `computeMarkers` gives an arrowless connector no defs.
+      expect(branch.markerStart).toBeUndefined();
+      expect(branch.markerEnd).toBeUndefined();
+    });
+
+    it('leaves the root where it is and puts the child one level to its right', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+
+      expect(nodeOf(root).position).toEqual(at);
+      expect(nodeOf(child).position).toEqual({
+        x: at.x + MIND_MAP_NODE_SIZE.width + MIND_MAP_LEVEL_GAP,
+        y: at.y,
+      });
+    });
+
+    it('is one history entry, layout and all', () => {
+      const root = store().mindMapAddRoot(at);
+      store().mindMapAddChild(root);
+      store().undo();
+      expect(store().nodes.map((n) => n.id)).toEqual([root]);
+      expect(store().edges).toEqual([]);
+    });
+
+    it('refuses a shape that is not part of a map', () => {
+      const plain = store().addShape('rectangle', at);
+      expect(store().mindMapAddChild(plain)).toBeNull();
+    });
+
+    it('unfolds a folded parent rather than adding out of sight', () => {
+      const root = store().mindMapAddRoot(at);
+      const a = store().mindMapAddChild(root)!;
+      store().mindMapAddChild(a);
+      store().mindMapToggleCollapse(a);
+      expect(nodeOf(a).data.mindMap?.collapsed).toBe(true);
+
+      const added = store().mindMapAddChild(a)!;
+      expect(nodeOf(a).data.mindMap?.collapsed).toBe(false);
+      expect(nodeOf(added).hidden).toBeFalsy();
+    });
+  });
+
+  describe('mindMapAddSibling', () => {
+    it('stacks the new node below, one gap away, and leaves the root anchored', () => {
+      const root = store().mindMapAddRoot(at);
+      const first = store().mindMapAddChild(root)!;
+      const second = store().mindMapAddSibling(first)!;
+
+      expect(childrenIds(root)).toEqual([first, second]);
+      expect(nodeOf(second).position.y - nodeOf(first).position.y).toBe(
+        MIND_MAP_NODE_SIZE.height + MIND_MAP_SIBLING_GAP,
+      );
+      expect(nodeOf(second).position.x).toBe(nodeOf(first).position.x);
+      expect(nodeOf(root).position).toEqual(at);
+    });
+
+    it('puts one above with `before`, which is the order of the edge array', () => {
+      const root = store().mindMapAddRoot(at);
+      const first = store().mindMapAddChild(root)!;
+      const above = store().mindMapAddSibling(first, true)!;
+
+      expect(childrenIds(root)).toEqual([above, first]);
+      expect(nodeOf(above).position.y).toBeLessThan(nodeOf(first).position.y);
+    });
+
+    it('starts the root\'s first branch instead, a root having no siblings', () => {
+      const root = store().mindMapAddRoot(at);
+      const made = store().mindMapAddSibling(root)!;
+      expect(childrenIds(root)).toEqual([made]);
+    });
+  });
+
+  describe('mindMapAddParent', () => {
+    it('slips a node in between a child and its parent', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const between = store().mindMapAddParent(child)!;
+
+      expect(childrenIds(root)).toEqual([between]);
+      expect(childrenIds(between)).toEqual([child]);
+      expect(nodeOf(between).data.mindMap).toEqual({ root });
+      expect(store().editingNodeId).toBe(between);
+    });
+
+    it('above a root, becomes the root and re-badges the whole map', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const newRoot = store().mindMapAddParent(root)!;
+
+      expect(childrenIds(newRoot)).toEqual([root]);
+      for (const id of [newRoot, root, child]) {
+        expect(nodeOf(id).data.mindMap?.root, id).toBe(newRoot);
+      }
+      // The map is anchored on its new root, which took the old one's place.
+      expect(nodeOf(newRoot).position).toEqual(at);
+      expect(nodeOf(root).position.x).toBeGreaterThan(at.x);
+    });
+  });
+
+  describe('mindMapToggleCollapse', () => {
+    /** root -> a -> a1, plus a second child b. */
+    function threeDeep() {
+      const root = store().mindMapAddRoot(at);
+      const a = store().mindMapAddChild(root)!;
+      const a1 = store().mindMapAddChild(a)!;
+      const b = store().mindMapAddSibling(a)!;
+      return { root, a, a1, b };
+    }
+
+    it('hides the descendants and the branches reaching them', () => {
+      const { a, a1 } = threeDeep();
+      store().mindMapToggleCollapse(a);
+
+      expect(nodeOf(a).data.mindMap?.collapsed).toBe(true);
+      expect(nodeOf(a).hidden).toBeFalsy();
+      expect(nodeOf(a1).hidden).toBe(true);
+      expect(store().edges.find((e) => e.target === a1)!.hidden).toBe(true);
+    });
+
+    it('gives a folded branch no room, and its room back when it is unfolded', () => {
+      const { a, b } = threeDeep();
+      const apart = nodeOf(b).position.y - nodeOf(a).position.y;
+
+      store().mindMapToggleCollapse(a);
+      expect(nodeOf(b).position.y - nodeOf(a).position.y).toBe(
+        MIND_MAP_NODE_SIZE.height + MIND_MAP_SIBLING_GAP,
+      );
+
+      store().mindMapToggleCollapse(a);
+      expect(nodeOf(b).position.y - nodeOf(a).position.y).toBe(apart);
+      expect(nodeOf(b).hidden).toBeFalsy();
+    });
+
+    it('stores `collapsed` and never `hidden`, and derives it again on load', () => {
+      const { a, a1 } = threeDeep();
+      store().mindMapToggleCollapse(a);
+
+      const data = serializeDiagram(store().nodes, store().edges);
+      const saved = data.nodes.find((n) => n.id === a1)!;
+      expect('hidden' in saved).toBe(false);
+      expect(data.nodes.find((n) => n.id === a)!.data.mindMap).toMatchObject({ collapsed: true });
+
+      store().loadDiagram('test', 'Test', false, data);
+      expect(nodeOf(a1).hidden).toBe(true);
+      expect(nodeOf(a).hidden).toBeFalsy();
+    });
+
+    it('costs no history entry on a leaf, which has nothing to fold', () => {
+      const { a1 } = threeDeep();
+      const before = store().nodes;
+      store().mindMapToggleCollapse(a1);
+      expect(store().nodes).toBe(before);
+    });
+  });
+
+  describe('mindMapAddChildren', () => {
+    it('adds one child per line, in order, as a single history entry', () => {
+      const root = store().mindMapAddRoot(at);
+      const ids = store().mindMapAddChildren(root, ['one', 'two', 'three']);
+
+      expect(ids).toHaveLength(3);
+      expect(childrenIds(root)).toEqual(ids);
+      expect(ids.map((id) => nodeOf(id).data.label)).toEqual(['one', 'two', 'three']);
+
+      store().undo();
+      expect(store().nodes.map((n) => n.id)).toEqual([root]);
+    });
+
+    it('does nothing, and records nothing, for an empty list', () => {
+      const root = store().mindMapAddRoot(at);
+      const before = store().nodes;
+      expect(store().mindMapAddChildren(root, [])).toEqual([]);
+      expect(store().nodes).toBe(before);
+    });
+  });
+
+  describe('mindMapRelayout', () => {
+    it('costs no history entry when the map is already tidy', () => {
+      const root = store().mindMapAddRoot(at);
+      store().mindMapAddChild(root);
+      const before = store().nodes;
+      store().mindMapRelayout(root);
+      expect(store().nodes).toBe(before);
+    });
+
+    it('puts a node dragged out of place back', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const home = nodeOf(child).position;
+      useDiagramStore.setState((s) => ({
+        nodes: s.nodes.map((n) => (n.id === child ? { ...n, position: { x: 9, y: 9 } } : n)),
+      }));
+
+      store().mindMapRelayout(root);
+      expect(nodeOf(child).position).toEqual(home);
+    });
+  });
+
+  describe('dragging', () => {
+    it('takes the whole subtree with the node that is dragged', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const grandchild = store().mindMapAddChild(child)!;
+      const before = nodeOf(grandchild).position;
+      // ⌘ held: the drag lands exactly where the pointer put it. This is about
+      // the subtree travelling with the node, not about the alignment snap,
+      // which would otherwise pull the pair onto the root by a pixel or two.
+      useDiagramStore.setState({ snapOverride: 'guides' });
+
+      store().onNodesChange([
+        {
+          type: 'position',
+          id: child,
+          position: { x: nodeOf(child).position.x + 50, y: nodeOf(child).position.y - 20 },
+          dragging: true,
+        },
+      ]);
+
+      expect(nodeOf(grandchild).position).toEqual({ x: before.x + 50, y: before.y - 20 });
+      // The root is not under the node being dragged, so it stays put.
+      expect(nodeOf(root).position).toEqual(at);
+      useDiagramStore.setState({ snapOverride: 'none' });
+    });
   });
 });

@@ -55,7 +55,7 @@ import {
   type DocEntry,
 } from '../../../shared/collabDoc';
 import type { ConnectorEdge, DiagramState, DocumentHistory, ShapeNode } from '../../store/useDiagramStore';
-import { hasDocumentHistory, serializeDiagram } from '../../store/useDiagramStore';
+import { deriveMindMapHidden, hasDocumentHistory, serializeDiagram } from '../../store/useDiagramStore';
 import { normalizeParentage } from '../nodeTree';
 import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
 import { sanitizeThumbnailIds } from '../boardThumbnail';
@@ -401,8 +401,15 @@ export function bindDocToStore(
     const patch: Partial<DiagramState> = {};
     if (elementsChanged) {
       rendered = next;
-      patch.nodes = docNodesOntoStore(nodes, state.nodes);
-      patch.edges = docEdgesOntoStore(edges, state.edges);
+      // `hidden` is not in the document — it is derived from the mind maps'
+      // `collapsed` flags, the same way `loadDiagram` derives it — so a
+      // collaborator folding a branch away folds it here too.
+      const derived = deriveMindMapHidden(
+        docNodesOntoStore(nodes, state.nodes),
+        docEdgesOntoStore(edges, state.edges),
+      );
+      patch.nodes = derived.nodes;
+      patch.edges = derived.edges;
     }
     // The one thing in `meta` that *is* read back: a default is a property of
     // the board, not of the window it was set in. The viewport is not — see

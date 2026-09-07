@@ -82,6 +82,13 @@ export type VerticalAlign = 'top' | 'middle' | 'bottom';
  */
 export type FillStyle = 'filled' | 'outline';
 
+// `.js` on purpose: the server compiles this file under `nodenext`, where an
+// extensionless relative import is not a legal specifier — see the note on
+// `src/lib/diagramMigrations.ts` in CLAUDE.md.
+import type { MindMapNodeData } from './lib/mindMap.js';
+
+export type { MindMapNodeData };
+
 export interface ShapeData {
   label: string;
   shape: ShapeKind;
@@ -121,6 +128,14 @@ export interface ShapeData {
   opacity?: number;
   /** Whether the shape casts a drop shadow. */
   shadow?: boolean;
+  /**
+   * Present on a **mind-map node** and absent on every other shape — which is
+   * the whole of what makes a shape part of a map. `root` names the map (the
+   * root's own entry points at itself) and `collapsed` folds its descendants
+   * away; the parent/child structure is the connectors, not this. See
+   * `src/lib/mindMap.ts`.
+   */
+  mindMap?: MindMapNodeData;
   link?: string;
   locked?: boolean;
   /**
@@ -143,8 +158,17 @@ export interface EdgeAnchor {
   t: number;
 }
 
+/**
+ * What a connector *is for*, where that is more than a line between two shapes.
+ * Absent on every connector anyone has ever drawn, which is what "no role" is.
+ * `'mindmap'` makes it a branch of a mind map, running parent → child.
+ */
+export type ConnectorRole = 'mindmap';
+
 export interface ConnectorData {
   connectorType: ConnectorKind;
+  /** See `ConnectorRole`. Absent on an ordinary connector. */
+  role?: ConnectorRole;
   stroke: string;
   strokeStyle: StrokeStyle;
   /** Absent on connectors saved before widths existed; they read as regular. */

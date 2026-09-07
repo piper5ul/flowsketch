@@ -1,4 +1,6 @@
 import { canAutoLayout } from '../lib/autoLayout';
+import { MIND_MAP_NODE_SIZE, childrenOf, mapOf } from '../lib/mindMap';
+import { linesOf } from '../lib/pasteAs';
 import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
 import { isFrameNode, isGroupNode } from '../lib/nodeKinds';
@@ -91,6 +93,48 @@ async function pasteMermaid(ctx: CommandContext) {
   if (text === null) return;
   const pasted = await ctx.store.getState().pasteMermaid(text, origin);
   if (pasted === null) toastError("That isn't a Mermaid flowchart");
+}
+
+/**
+ * The mind-map node a mind-map command acts on: the one being typed into if
+ * there is one, and otherwise the single selected node — in both cases only
+ * when it really is a mind-map node.
+ *
+ * The editing node comes first because that is the state the gesture spends
+ * most of its time in: press Tab, type, press Enter, type. Selection follows
+ * editing anyway (every mind-map action selects what it just made), so the two
+ * answers agree; the order only matters if something else moved the selection
+ * while a label was open.
+ */
+function mindMapTarget(ctx: CommandContext): string | null {
+  const state = ctx.store.getState();
+  const node = state.editingNodeId
+    ? state.nodes.find((n) => n.id === state.editingNodeId)
+    : selectedNodes(state).length === 1
+      ? selectedNodes(state)[0]
+      : undefined;
+  return node?.data.mindMap ? node.id : null;
+}
+
+/** How many children the mind-map target has — 0 when there is no target. */
+function mindMapChildCount(ctx: CommandContext): number {
+  const id = mindMapTarget(ctx);
+  if (!id) return 0;
+  const state = ctx.store.getState();
+  const root = state.nodes.find((n) => n.id === id)?.data.mindMap?.root;
+  const tree = root ? mapOf(state.nodes, state.edges, root) : null;
+  return tree ? childrenOf(tree, id).length : 0;
+}
+
+/** "Paste as child nodes": one child per line of whatever is on the clipboard. */
+async function pasteMindMapChildren(ctx: CommandContext) {
+  const id = mindMapTarget(ctx);
+  if (!id) return;
+  const text = await clipboardText();
+  if (text === null) return;
+  if (ctx.store.getState().mindMapAddChildren(id, linesOf(text)).length === 0) {
+    toastError('There are no lines of text on the clipboard');
+  }
 }
 
 function stepFontSize(ctx: CommandContext, delta: 1 | -1) {
@@ -219,6 +263,109 @@ export const commandDeclarations: Command[] = [
       deselectAll(ctx);
       ctx.store.getState().setTool('select');
     },
+  },
+
+  // ---- mind maps ---------------------------------------------------------
+  // **These come before `edit.editText` on purpose.** Enter and Tab are shared
+  // keystrokes, and a shared keystroke is settled by `when` and by order: each
+  // gate below is strictly narrower than the one it is jumping ahead of (a
+  // single selected node that is *also* a mind-map node), so Enter still opens
+  // an ordinary shape's label everywhere else. The other half of the trick is
+  // in `Canvas`'s keyboard handler, which lets exactly these commands through
+  // from inside an open label — a mind map is typed, not clicked, and the label
+  // is still open when the next node is asked for.
+  {
+    id: 'mindmap.addRoot',
+    title: 'Mind map',
+    group: 'mindmap',
+    // Whimsical's M. The root lands in the middle of the view, or where the
+    // canvas menu was opened.
+    shortcut: { key: 'm' },
+    contextMenu: 'pane',
+    when: (ctx) => {
+      const state = ctx.store.getState();
+      return !state.editingNodeId && !state.editingEdgeId;
+    },
+    run: (ctx) => {
+      const point = ctx.dropPoint();
+      ctx.store.getState().mindMapAddRoot({
+        x: point.x - MIND_MAP_NODE_SIZE.width / 2,
+        y: point.y - MIND_MAP_NODE_SIZE.height / 2,
+      });
+    },
+  },
+  {
+    id: 'mindmap.addChild',
+    title: 'Add child',
+    group: 'mindmap',
+    shortcut: { key: 'Tab' },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddChild(id);
+    },
+  },
+  {
+    id: 'mindmap.addSibling',
+    title: 'Add sibling',
+    group: 'mindmap',
+    shortcut: { key: 'Enter' },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddSibling(id);
+    },
+  },
+  {
+    id: 'mindmap.addSiblingAbove',
+    title: 'Add sibling above',
+    group: 'mindmap',
+    shortcut: { key: 'Enter', meta: true },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddSibling(id, true);
+    },
+  },
+  {
+    id: 'mindmap.addParent',
+    title: 'Add parent',
+    group: 'mindmap',
+    shortcut: { key: 'Enter', alt: true },
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapAddParent(id);
+    },
+  },
+  {
+    id: 'mindmap.toggleCollapse',
+    title: 'Collapse / expand branch',
+    group: 'mindmap',
+    shortcut: { key: '/', meta: true },
+    contextMenu: 'node',
+    // A leaf has nothing to fold, and the action refuses one anyway; gating on
+    // it here is what keeps the entry off the menu of a node with no branch.
+    when: (ctx) => mindMapChildCount(ctx) > 0,
+    run: (ctx) => {
+      const id = mindMapTarget(ctx);
+      if (id) ctx.store.getState().mindMapToggleCollapse(id);
+    },
+  },
+  {
+    id: 'mindmap.pasteChildren',
+    title: 'Paste as child nodes',
+    group: 'mindmap',
+    // No keystroke, for the reason the other two "paste as" commands have
+    // none: what is on the system clipboard cannot be known until the user has
+    // already asked for it.
+    contextMenu: 'node',
+    when: (ctx) => mindMapTarget(ctx) !== null,
+    run: (ctx) => { void pasteMindMapChildren(ctx); },
   },
 
   // ---- editing -----------------------------------------------------------
@@ -822,6 +969,7 @@ export const GROUP_LABELS: { group: Command['group']; label: string }[] = [
   // Nothing in this group carries a keystroke yet, so the sheet drops the
   // section; it is named here so that the first one to get one turns up.
   { group: 'comments', label: 'Comments' },
+  { group: 'mindmap', label: 'Mind map' },
   { group: 'edit', label: 'Editing' },
   { group: 'select', label: 'Selection' },
   { group: 'arrange', label: 'Arrange' },

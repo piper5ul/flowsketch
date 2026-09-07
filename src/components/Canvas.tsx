@@ -72,6 +72,23 @@ function isTypingTarget(el: EventTarget | null) {
 }
 
 /**
+ * Writes what has been typed into the open label to the store, without closing
+ * it — for the mind-map keystrokes, which grow the map while the label the user
+ * is typing into is still open.
+ *
+ * The blur that follows a moment later (the old node stops being editable as
+ * soon as the new one starts) commits the same text again, which is a no-op
+ * patch and so costs no second history entry; what it must *not* do is clear
+ * the editing state of the node the user is already typing into, which is why
+ * `ShapeNode`'s own commit only closes the editor while it is still its own.
+ */
+function commitOpenLabel(target: EventTarget | null) {
+  const state = useDiagramStore.getState();
+  if (!state.editingNodeId || !(target instanceof HTMLElement)) return;
+  state.updateNodeData(state.editingNodeId, { label: target.innerText });
+}
+
+/**
  * The board.
  *
  * `topBar` is what the public share page turns off: it mounts this same canvas
@@ -747,9 +764,21 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // what leaves ⌘V to the paste listener above when our clipboard is empty.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (isTypingTarget(e.target)) return;
       // The sheet is modal: it takes Escape itself and swallows the rest.
       if (shortcutsOpen) return;
+      if (isTypingTarget(e.target)) {
+        // …with one exception. **A mind map is typed, not clicked**: Tab and
+        // Enter make the next node while the label is still open, so a
+        // `mindmap.*` command — and nothing else — reaches the registry from
+        // inside a text editor. What has been typed is written to the store
+        // first, since the map is about to grow past the label that holds it.
+        const command = registry.matchEvent(e, commandContext);
+        if (!command?.id.startsWith('mindmap.')) return;
+        commitOpenLabel(e.target);
+        e.preventDefault();
+        command.run(commandContext);
+        return;
+      }
       // So is a presentation: `PresentMode` has already taken the arrows,
       // Space and Escape on the capture phase, and nothing else on the board
       // is reachable while a slide is up.

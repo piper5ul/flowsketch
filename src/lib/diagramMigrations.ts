@@ -22,6 +22,15 @@
  * field means the dashboard card is the automatic picture of the whole board —
  * again what every older diagram wants — and `sanitizeThumbnailIds` is the
  * narrowing.
+ *
+ * **Mind maps are the same case again**: `ShapeData.mindMap` and
+ * `ConnectorData.role` are optional, and absent means "an ordinary shape" and
+ * "an ordinary connector" — which is exactly what every diagram written before
+ * mind maps existed holds. There is no step here for them either. What a mind
+ * map does *not* store is `hidden`: folding a branch away sets `collapsed` in
+ * the data, and `hidden` is derived from it on load (see `deriveMindMapHidden`
+ * in the store), so the JSON stays a description of the map rather than a cache
+ * of what is on screen.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';
