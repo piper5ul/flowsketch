@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
-import { SHAPE_KINDS } from '../lib/nodeKinds';
+import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
+import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
 import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_ROW_HEIGHT,
@@ -12,6 +13,7 @@ import {
   setColumnWidth,
 } from '../lib/table';
 import { DEFAULT_SWATCH } from '../lib/palette';
+import type { InkPoint } from '../types';
 import {
   MIND_MAP_LEVEL_GAP,
   MIND_MAP_NODE_SIZE,
@@ -1002,6 +1004,142 @@ describe('addConnectedShape', () => {
   it('returns null for an unknown source', () => {
     expect(store().addConnectedShape('nope', 'right')).toBeNull();
     expect(store().nodes).toHaveLength(0);
+  });
+});
+
+describe('addInk', () => {
+  /** A stroke drawn straight down the board, one sample every 10 px. */
+  const stroke = (x = 100): InkPoint[] =>
+    Array.from({ length: 8 }, (_, i) => [x, 100 + i * 10] as InkPoint);
+
+  it('adds an `ink` node boxed around the stroke, with the pen inside its data', () => {
+    const id = store().addInk(stroke(), 'marker', INK_WIDTH.marker)!;
+    const node = store().nodes.find((n) => n.id === id)!;
+    expect(node.type).toBe('ink');
+    // Half the pen width out from the drawn line on every side.
+    expect(node.position).toEqual({ x: 100 - INK_WIDTH.marker / 2, y: 100 - INK_WIDTH.marker / 2 });
+    expect(node.width).toBe(INK_WIDTH.marker);
+    expect(node.height).toBe(70 + INK_WIDTH.marker);
+    expect(node.data.ink).toMatchObject({ kind: 'marker', width: INK_WIDTH.marker });
+  });
+
+  it('stores the points relative to the node, and thins them on the way in', () => {
+    const id = store().addInk(stroke(), 'marker', INK_WIDTH.marker)!;
+    const ink = store().nodes.find((n) => n.id === id)!.data.ink!;
+    // Eight samples in a straight line are two: the ends.
+    expect(ink.points).toEqual([
+      [INK_WIDTH.marker / 2, INK_WIDTH.marker / 2],
+      [INK_WIDTH.marker / 2, 70 + INK_WIDTH.marker / 2],
+    ]);
+  });
+
+  it('is a stroke, not a shape: no label, no fill, and the pen\'s colour as its stroke', () => {
+    const id = store().addInk(stroke(), 'marker', INK_WIDTH.marker)!;
+    const { data } = store().nodes.find((n) => n.id === id)!;
+    expect(data.label).toBe('');
+    expect(data.fill).toBe('transparent');
+    expect(data.stroke).toBe(DEFAULT_INK_STROKE);
+    // Which is exactly why the anchor test cannot mistake one for a floating
+    // arrow's endpoint — it needs *both* colours to be transparent.
+    expect(isAnchorNode(data)).toBe(false);
+  });
+
+  it('takes the colour a swatch was last picked in, as every other new element does', () => {
+    store().setDefaultStyle({ fill: '#FDE68A', stroke: '#B45309' });
+    const id = store().addInk(stroke(), 'marker', INK_WIDTH.marker)!;
+    expect(store().nodes.find((n) => n.id === id)!.data.stroke).toBe('#B45309');
+  });
+
+  it('draws nothing, and costs no history entry, for a press that never travelled', () => {
+    expect(store().canUndo).toBe(false);
+    expect(store().addInk([[10, 10], [10, 10]], 'marker', INK_WIDTH.marker)).toBeNull();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('is one undo step', () => {
+    store().addInk(stroke(), 'marker', INK_WIDTH.marker);
+    store().addInk(stroke(200), 'highlighter', INK_WIDTH.highlighter);
+    expect(store().nodes).toHaveLength(2);
+    store().undo();
+    expect(store().nodes).toHaveLength(1);
+    expect(store().nodes[0].data.ink!.kind).toBe('marker');
+  });
+
+  it('survives a round trip through the saved JSON', () => {
+    const id = store().addInk(stroke(), 'highlighter', INK_WIDTH.highlighter)!;
+    const json = serializeDiagram(store().nodes, store().edges);
+    // No migration step was needed for the pen: an absent `ink` is what every
+    // older node already holds, so a stroke reads back exactly as written.
+    const back = migrateDiagramData(JSON.parse(JSON.stringify(json)));
+    const node = back.nodes.find((n) => n.id === id)!;
+    expect(node.type).toBe('ink');
+    expect(node.data.ink).toEqual(store().nodes[0].data.ink);
+  });
+});
+
+describe('eraseInkAt', () => {
+  /** Two strokes: one down the board at x = 100, one at x = 300. */
+  function twoStrokes() {
+    const first = store().addInk([[100, 100], [100, 140], [100, 200]], 'marker', INK_WIDTH.marker)!;
+    const second = store().addInk([[300, 100], [300, 140], [300, 200]], 'marker', INK_WIDTH.marker)!;
+    return { first, second };
+  }
+
+  it('rubs out the whole stroke the pointer crosses, and only that one', () => {
+    const { second } = twoStrokes();
+    expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(1);
+    expect(store().nodes.map((n) => n.id)).toEqual([second]);
+  });
+
+  it('reaches a little past the drawn line, and no further', () => {
+    twoStrokes();
+    // Just outside the ink, inside the slop.
+    expect(store().eraseInkAt({ x: 100 + INK_WIDTH.marker / 2 + ERASER_SLOP_PX - 1, y: 150 })).toBe(1);
+    // Well clear of both strokes: nothing goes, and no history entry is opened.
+    const before = store().canUndo;
+    expect(store().eraseInkAt({ x: 200, y: 150 })).toBe(0);
+    expect(store().canUndo).toBe(before);
+  });
+
+  it('leaves shapes alone — it is an eraser for ink, not a delete tool', () => {
+    const box = store().addShape('rectangle', { x: 50, y: 50 });
+    expect(store().eraseInkAt({ x: 100, y: 100 })).toBe(0);
+    expect(store().nodes.map((n) => n.id)).toEqual([box]);
+  });
+
+  it('leaves a locked stroke alone, as every other edit does', () => {
+    const { first } = twoStrokes();
+    store().updateNodeData(first, { locked: true });
+    expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(0);
+  });
+
+  it('erases one stroke per press, and a whole wipe in one undo step', () => {
+    twoStrokes();
+    // What the gesture does: `continuing` is false until something has gone.
+    expect(store().eraseInkAt({ x: 100, y: 150 }, false)).toBe(1);
+    expect(store().eraseInkAt({ x: 300, y: 150 }, true)).toBe(1);
+    expect(store().nodes).toHaveLength(0);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(2);
+  });
+
+  it('finds a stroke inside a frame, whose points are an offset from it', () => {
+    const id = store().addInk([[100, 100], [100, 140], [100, 200]], 'marker', INK_WIDTH.marker)!;
+    // Re-parented by hand: a drop into a frame rewrites the position to be
+    // relative to it, and the eraser has to convert back the same way.
+    useDiagramStore.setState((s) => ({
+      nodes: [
+        { id: 'f1', type: 'frame' as const, position: { x: 40, y: 60 }, width: 400, height: 400, data: { label: 'F', shape: 'rectangle' as const, fill: 'transparent', stroke: 'transparent' } },
+        ...s.nodes.map((n) =>
+          n.id === id
+            ? { ...n, parentId: 'f1', position: { x: n.position.x - 40, y: n.position.y - 60 } }
+            : n,
+        ),
+      ],
+    }));
+    expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(1);
   });
 });
 

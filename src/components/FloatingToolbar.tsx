@@ -41,7 +41,14 @@ import {
   DEFAULT_START_ARROW,
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
-import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode, isTableNode } from '../lib/nodeKinds';
+import {
+  canRoundCorners,
+  canSwapShapeKind,
+  isContainerNode,
+  isGroupNode,
+  isInkNode,
+  isTableNode,
+} from '../lib/nodeKinds';
 import { addColumn, addRow, removeColumn, removeRow } from '../lib/table';
 import type { TableData } from '../types';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
@@ -666,14 +673,20 @@ export function FloatingToolbar() {
   // stroke, so it sits the colour and text controls out alongside images. A
   // table sits the *text* controls out for a different reason: a shape's
   // typography is one label's, and a table's would be the whole grid's — a
-  // control of its own, and a follow-up.
+  // control of its own, and a follow-up. An ink stroke sits them out for a
+  // third: it carries no label to typeset and has no box to fill, round or
+  // cast a shadow from.
   const styleableNodes = useMemo(
-    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n) && !isTableNode(n)),
+    () =>
+      selectedNodes.filter(
+        (n) => n.data.shape !== 'image' && !isContainerNode(n) && !isTableNode(n) && !isInkNode(n),
+      ),
     [selectedNodes],
   );
   // A frame takes a colour (a toned-down one — see `FrameNode`) though none of
-  // the other shape controls, and so does a table, whose fill tints its header;
-  // a group draws nothing and takes none.
+  // the other shape controls, and so does a table, whose fill tints its header,
+  // and an ink stroke, whose `stroke` *is* the pen; a group draws nothing and
+  // takes none.
   const colourableNodes = useMemo(
     () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isGroupNode(n)),
     [selectedNodes],
@@ -691,12 +704,10 @@ export function FloatingToolbar() {
   const hasGroup = useMemo(() => selectedNodes.some(isGroupNode), [selectedNodes]);
   // The shapes `setSelectedShapeKind` would actually redraw, so the button is
   // offered exactly when pressing it would do something.
-  // A table is excluded on its `type`: its data is a rectangle's, so asking the
-  // data would offer to redraw a grid of cells as a star.
-  const swappableNodes = useMemo(
-    () => selectedNodes.filter((n) => !isTableNode(n) && canSwapShapeKind(n.data)),
-    [selectedNodes],
-  );
+  // A table and an ink stroke are excluded on their `type`, inside the
+  // predicate: the data of both is a rectangle's, so asking the data would
+  // offer to redraw a grid of cells — or a pen mark — as a star.
+  const swappableNodes = useMemo(() => selectedNodes.filter((n) => canSwapShapeKind(n)), [selectedNodes]);
   const currentShapeKind = useMemo(() => {
     const first = swappableNodes[0]?.data.shape ?? null;
     return swappableNodes.every((n) => n.data.shape === first) ? first : null;

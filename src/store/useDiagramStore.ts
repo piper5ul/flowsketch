@@ -17,11 +17,22 @@ import type {
   DiagramNodeType,
   Direction,
   EdgeAnchor,
+  InkKind,
+  InkPoint,
   ShapeData,
   ShapeKind,
   TableData,
   Tool,
 } from '../types';
+import {
+  DEFAULT_INK_STROKE,
+  ERASER_SLOP_PX,
+  INK_SIMPLIFY_TOLERANCE,
+  MIN_INK_POINTS,
+  inkBounds,
+  simplify,
+  strokeHits,
+} from '../lib/ink';
 import { DEFAULT_SWATCH } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import {
@@ -41,7 +52,15 @@ function isSideId(id: string | null | undefined): id is Direction {
 }
 import { sanitizeThumbnailIds } from '../lib/boardThumbnail';
 import { computeMarkers } from '../lib/edgeMarkers';
-import { canSwapShapeKind, isAnchorNode, isContainerNode, isFrameNode, isGroupNode, isTableNode } from '../lib/nodeKinds';
+import {
+  canSwapShapeKind,
+  isAnchorNode,
+  isContainerNode,
+  isFrameNode,
+  isGroupNode,
+  isInkNode,
+  isTableNode,
+} from '../lib/nodeKinds';
 import { emptyTable, normalizeTable, tableSize } from '../lib/table';
 import {
   absolutePosition,
@@ -661,6 +680,34 @@ export interface DiagramState {
    * contents sit on and must be drawn behind them.
    */
   addFrame: (position: { x: number; y: number }) => string;
+  /**
+   * Commits one freehand stroke — the pen's pointerup.
+   *
+   * `points` are the raw samples in **board** coordinates; the action thins
+   * them (`simplify`), boxes them (`inkBounds`) and stores them relative to the
+   * box, so what the gesture hands over is simply where the pointer went.
+   * Returns `null` — drawing nothing, pushing no history entry — for a press
+   * that never travelled: fewer than `MIN_INK_POINTS` samples is a click.
+   */
+  addInk: (points: InkPoint[], kind: InkKind, width: number) => string | null;
+  /**
+   * The colour the next stroke will be drawn in — the board's (or this
+   * session's) default shape colour, falling back to a real ink. Read by
+   * `addInk` and by the pen's live preview, so the line under the pointer is
+   * the line that gets committed.
+   */
+  newInkStroke: () => string;
+  /**
+   * Rubs out every ink stroke passing within the eraser's reach of `point` —
+   * whole strokes, never part of one.
+   *
+   * `continuing` is what makes one wipe one undo step: the gesture passes
+   * `false` until something has actually been erased and `true` after that, so
+   * the boundary is opened by the first deletion rather than by the press (a
+   * press that erases nothing must not leave an undo entry that undoes
+   * nothing). Returns how many strokes went.
+   */
+  eraseInkAt: (point: { x: number; y: number }, continuing?: boolean) => number;
   /**
    * Places a table — a grid of editable cells — with its top-left at
    * `position`. `table` defaults to the 3×3 with a header the rail's tool
@@ -1803,6 +1850,79 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     return id;
   },
 
+  addInk: (points, kind, width) => {
+    // A tap with the pen down is not a stroke. Asked of the *raw* samples and
+    // before `pushHistory`: a straight line drawn right across the board is
+    // two points once thinned, and is certainly a stroke.
+    if (points.length < MIN_INK_POINTS) return null;
+    const thinned = simplify(points, INK_SIMPLIFY_TOLERANCE);
+
+    pushHistory(get());
+    const box = inkBounds(thinned, width);
+    const id = nanoid(8);
+    const stroke = get().newInkStroke();
+    const node: ShapeNode = {
+      id,
+      type: 'ink',
+      position: { x: box.x, y: box.y },
+      width: box.width,
+      height: box.height,
+      // An ordinary `ShapeData`, as every node in this array carries: `stroke`
+      // is the pen's colour (which is what makes the palette work on a stroke),
+      // `fill` is nothing, and `shape` is a rectangle nothing draws — the
+      // `type` above is what says this is a stroke.
+      data: {
+        label: '',
+        shape: 'rectangle',
+        fill: 'transparent',
+        stroke,
+        ink: { points: box.points, width, kind },
+      },
+    };
+    set((s) => ({ nodes: [...s.nodes, node] }));
+    return id;
+  },
+
+  // The ordinary shape default — a swatch picked for a shape carries to the
+  // pen, and ⌘⇧D reaches it — falling back to a real ink rather than to the
+  // default swatch's hairline outline grey, which would be a pen you could
+  // barely see. Size is not a default (see `SHAPE_SIZES`) and neither is the
+  // pen's width: `INK_WIDTH` is the whole of how thick each pen draws.
+  newInkStroke: () => {
+    const { defaults, lastStyle } = get();
+    return resolveDefaultStyle(defaults, lastStyle, 'shape').stroke ?? DEFAULT_INK_STROKE;
+  },
+
+  eraseInkAt: (point, continuing = false) => {
+    const state = get();
+    const doomed = new Set(
+      state.nodes
+        .filter((n) => {
+          if (!isInkNode(n) || n.data.locked) return false;
+          const ink = n.data.ink;
+          if (!ink) return false;
+          // The stroke's points are relative to its own box, and the pointer is
+          // on the board: one of the two has to move, and moving the pointer is
+          // one subtraction instead of one per sample. `absolutePosition`
+          // because a stroke inside a frame is positioned against the frame.
+          const origin = absolutePosition(n, nodesById(state.nodes));
+          const local = { x: point.x - origin.x, y: point.y - origin.y };
+          return strokeHits(ink.points, local, ink.width / 2 + ERASER_SLOP_PX);
+        })
+        .map((n) => n.id),
+    );
+    if (doomed.size === 0) return 0;
+
+    if (!continuing) pushHistory(state);
+    set((s) => ({
+      nodes: s.nodes.filter((n) => !doomed.has(n.id)),
+      // A stroke has no connectors, but a diagram is free-form JSON and an edge
+      // could name one; the same tidy-up every other deletion does.
+      edges: s.edges.filter((e) => !doomed.has(e.source) && !doomed.has(e.target)),
+    }));
+    return doomed.size;
+  },
+
   addFrame: (position) => {
     pushHistory(get());
     const id = nanoid(8);
@@ -2549,12 +2669,13 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // (images, text) or that are locked sit it out, and a swap that would change
   // nothing costs no history entry.
   //
-  // A table sits it out on its `type`, not on its data: its data *is* a
-  // rectangle's, which is what draws its rules, and turning that into a diamond
-  // would leave a grid of cells inside a silhouette.
+  // A table and an ink stroke sit it out on their `type`, not on their data:
+  // the data of both *is* a rectangle's — which is what draws a table's rules —
+  // and turning that into a diamond would leave a grid of cells, or a pen mark,
+  // inside a silhouette. `canSwapShapeKind` asks that question.
   setSelectedShapeKind: (kind) => {
     const willChange = (n: ShapeNode) =>
-      n.selected && !isTableNode(n) && canSwapShapeKind(n.data) && n.data.shape !== kind;
+      n.selected && canSwapShapeKind(n) && n.data.shape !== kind;
 
     const state = get();
     if (!state.nodes.some(willChange)) return;

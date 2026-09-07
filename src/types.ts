@@ -22,17 +22,20 @@ export type ShapeKind =
 /**
  * What a node *is*, as React Flow's `type` discriminator spells it.
  *
- * `shape` is everything the user draws. Two of the others are containers other
- * nodes hang off through `parentId`: a `group` is an invisible box that makes a
- * handful of shapes move as one, and a `frame` is a titled section shapes join
- * by being dropped into it. A `table` is neither — it is one object with a grid
- * of editable cells inside it, whose box follows its own columns and rows.
+ * `shape` is everything the user draws with a shape tool. Two of the others are
+ * containers other nodes hang off through `parentId`: a `group` is an invisible
+ * box that makes a handful of shapes move as one, and a `frame` is a titled
+ * section shapes join by being dropped into it. A `table` is neither — it is one
+ * object with a grid of editable cells inside it, whose box follows its own
+ * columns and rows — and neither is `ink`, which is one freehand stroke: a pen
+ * mark with a polyline for a body instead of a silhouette.
  *
  * All of them carry a `ShapeData` like any other node — the store's array is
  * homogeneous — so `type`, never the data, is what tells them apart
- * (`isGroupNode` / `isFrameNode` / `isTableNode` in `src/lib/nodeKinds.ts`).
+ * (`isGroupNode` / `isFrameNode` / `isTableNode` / `isInkNode` in
+ * `src/lib/nodeKinds.ts`).
  */
-export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'table';
+export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'table' | 'ink';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
@@ -63,7 +66,46 @@ export type Tool =
   // entry in the shape tables and is placed by `addFrame` rather than `addShape`.
   | 'frame'
   // Nor is a table: it is a grid of cells, placed by `addTable`.
-  | 'table';
+  | 'table'
+  // The three freehand tools. None of them places a `ShapeKind` either: a
+  // stroke is drawn by dragging (`addInk`), not dropped by clicking, and the
+  // eraser places nothing at all. They are three tools rather than one tool
+  // with a mode because `TOOL_COMMANDS` and the rail are both a list of tools,
+  // and a mode would need a second piece of state for a keystroke to set.
+  | 'pen'
+  | 'highlighter'
+  | 'eraser';
+
+/**
+ * One sample along a freehand stroke: x, y, and the pen pressure that drew it
+ * where the pointer reported one.
+ *
+ * A tuple rather than an object, and deliberately so: a long stroke is hundreds
+ * of these, they are written into the Yjs document on every commit, and
+ * `{"x":1,"y":2}` is four times the JSON of `[1,2]`. The pressure is optional
+ * because a mouse has none — nothing draws with it yet (see `InkData.width`),
+ * and it is carried so a build that varies the width has it to read.
+ */
+export type InkPoint = [x: number, y: number, pressure?: number];
+
+/** A marker draws a solid line; a highlighter a wide translucent one. */
+export type InkKind = 'marker' | 'highlighter';
+
+/**
+ * A freehand stroke, as an `ink` node carries it.
+ *
+ * The points are **relative to the node's own top-left**, like every other
+ * coordinate on a child, and the node's `width`/`height` are their bounding box
+ * grown by half the pen width at each edge — so the box holds the drawn line
+ * and not just its centre. The colour is not here: it is `ShapeData.stroke`,
+ * which is what makes the ordinary palette work on a stroke unchanged.
+ */
+export interface InkData {
+  points: InkPoint[];
+  /** The pen's width in board pixels, at the size the stroke was drawn. */
+  width: number;
+  kind: InkKind;
+}
 
 export interface SwatchColor {
   id: string;
@@ -161,6 +203,14 @@ export interface ShapeData {
    * `src/lib/mindMap.ts`.
    */
   mindMap?: MindMapNodeData;
+  /**
+   * Present on an **`ink` node** — one freehand stroke — and absent on every
+   * other node, which is what every diagram written before the pen existed
+   * already holds, so there is no migration step for it (see the note in
+   * `diagramMigrations.ts`). It is the stroke's *body*; what makes the node an
+   * ink node is still its `type`, as `isInkNode` reads it.
+   */
+  ink?: InkData;
   link?: string;
   locked?: boolean;
   /**

@@ -26,8 +26,14 @@
  * **Mind maps are the same case again**: `ShapeData.mindMap` and
  * `ConnectorData.role` are optional, and absent means "an ordinary shape" and
  * "an ordinary connector" — which is exactly what every diagram written before
- * mind maps existed holds. There is no step here for them either. What a mind
- * map does *not* store is `hidden`: folding a branch away sets `collapsed` in
+ * mind maps existed holds. There is no step here for them either.
+ *
+ * **Freehand strokes are the same case once more**: an `ink` node's `data.ink`
+ * is optional and absent on every other node, which is what every diagram
+ * written before the pen existed holds — a node with no `ink` simply is not a
+ * stroke, and its `type` says so first. No step here for it either.
+ *
+ * What a mind map does *not* store is `hidden`: folding a branch away sets `collapsed` in
  * the data, and `hidden` is derived from it on load (see `deriveMindMapHidden`
  * in the store), so the JSON stays a description of the map rather than a cache
  * of what is on screen.

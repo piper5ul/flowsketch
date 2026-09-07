@@ -172,8 +172,15 @@ function nudge(dx: number, dy: number): (ctx: CommandContext) => void {
   return (ctx) => ctx.store.getState().nudgeSelected(dx, dy);
 }
 
-/** The tools that get a single-letter shortcut, in left-rail order. */
-const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[] }[] = [
+/**
+ * The tools that get a single-letter shortcut, in left-rail order.
+ *
+ * `shift` applies to every key on the row — a tool either has a bare letter or
+ * a shifted one, and the three pens are what needed the flag: B is the marker
+ * and ⇧B the highlighter, the way one tool's variant is reached in every
+ * drawing app.
+ */
+const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[]; shift?: boolean }[] = [
   { tool: 'select', title: 'Select tool', keys: ['v'] },
   { tool: 'pan', title: 'Pan tool', keys: ['h'] },
   { tool: 'rectangle', title: 'Rectangle', keys: ['r'] },
@@ -195,13 +202,22 @@ const TOOL_COMMANDS: { tool: Tool; title: string; keys: string[] }[] = [
   // reaches its table tool with E, and E was the letter left.
   { tool: 'table', title: 'Table', keys: ['e'] },
   { tool: 'connector', title: 'Connector', keys: ['c', 'a', 'l'] },
+  // The three freehand tools. Whimsical reaches its pen with H and its eraser
+  // with E; neither is free here — H has been the hand (pan) tool since before
+  // there was a pen, and E is the table tool — and moving a tool key that is
+  // already in somebody's fingers to make room for a new one is the wrong
+  // trade. B is the marker (the brush key of every drawing app), ⇧B the
+  // highlighter, and ⇧E the eraser, which keeps the letter Whimsical uses.
+  { tool: 'pen', title: 'Pen', keys: ['b'] },
+  { tool: 'highlighter', title: 'Highlighter', keys: ['b'], shift: true },
+  { tool: 'eraser', title: 'Eraser', keys: ['e'], shift: true },
 ];
 
-const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys }) => ({
+const toolCommands: Command[] = TOOL_COMMANDS.map(({ tool, title, keys, shift }) => ({
   id: `tool.${tool}`,
   title,
   group: 'tools',
-  shortcut: keys.map((key) => ({ key })),
+  shortcut: keys.map((key) => (shift ? { key, shift: true } : { key })),
   run: (ctx) => ctx.store.getState().setTool(tool),
 }));
 
