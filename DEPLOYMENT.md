@@ -40,7 +40,7 @@ systemctl enable --now whimsy
 curl -s http://localhost:3001/api/health   # {"ok":true}
 ```
 
-`BETTER_AUTH_URL` must be the public origin users hit (it is also the trusted CORS/CSRF origin). The unit file reads `/opt/whimsy/.env`; never commit that file.
+`BETTER_AUTH_URL` must be the public origin users hit (it is also the trusted CORS/CSRF origin, and the only one — no hostname is hard-coded). To move the site to a new hostname: point the new name at the server, set `BETTER_AUTH_URL` to it, and list the old name in `LEGACY_HOSTS` (comma-separated) so a request that still arrives for it is redirected to the new origin with its path and query intact. The unit file reads `/opt/whimsy/.env`; never commit that file.
 
 Uploaded images are written to `UPLOAD_DIR` (default `./uploads`, so `/opt/whimsy/uploads`), resolved from the service's working directory. It is gitignored, so a deploy leaves it in place — but it is *not* in the database, so back it up alongside Postgres.
 
@@ -184,14 +184,14 @@ Backups: the state is the PostgreSQL database (diagrams are JSON in the `Diagram
 
 ## Reference deployment (maintainer notes)
 
-The public instance at `whimsical.vedalogy.com`, as verified on 2026-09-05:
+The public instance at `flowsketch.vedalogy.com` (renamed from `whimsical.vedalogy.com` on 2026-09-07; the old name redirects through `LEGACY_HOSTS`), as verified on 2026-09-05:
 
 | Piece | Where |
 |---|---|
 | Container | Proxmox LXC **235** (`whimsy`) at `192.168.68.251`, on host `192.168.68.240` (`ssh localpve`, then `pct exec 235 -- …`) |
 | App | `/opt/whimsy`, `whimsy.service`, Node 22 |
 | Database | shared PostgreSQL at `192.168.68.242:5432` |
-| Tunnel | **runs on the maintainer's Mac** (`~/.cloudflared/config.yml`, shared with ~25 other hostnames) with `whimsical.vedalogy.com → http://192.168.68.251:3001` |
+| Tunnel | **runs on the maintainer's Mac** (`~/.cloudflared/config.yml`, shared with ~25 other hostnames) with `flowsketch.vedalogy.com → http://192.168.68.251:3001`, and the same rule for the old `whimsical.vedalogy.com` so the app can redirect it |
 | Nginx | installed on the container with the stock config; unused |
 
 **Required one-time step — baseline both databases.** Both the production database and the shared development database on `192.168.68.242` were created with `prisma db push`, so neither has a `_prisma_migrations` table. The next deploy runs `prisma migrate deploy` and will fail on `CREATE TABLE "User"` until each is baselined. With `DATABASE_URL` pointing at the database in question:
@@ -205,5 +205,5 @@ Do this **once per database, before the first deploy of this change** — for th
 Known gaps, tracked on the roadmap:
 
 - `/opt/whimsy` is an rsync copy with no `.git`, and the unit runs `npx tsx server/index.ts` rather than the compiled build. Migrate it to the git-checkout layout above: `mv /opt/whimsy /opt/whimsy.bak && git clone … /opt/whimsy && cp /opt/whimsy.bak/.env /opt/whimsy/`, then follow *One-time server setup* from `npm ci`.
-- The tunnel should run on the container (a dedicated `flowsketch` tunnel as above), after which the `whimsical.vedalogy.com` rule is removed from the Mac's config. Until then, the site goes down whenever the Mac's `cloudflared` is not running.
+- The tunnel should run on the container (a dedicated `flowsketch` tunnel as above), after which both `vedalogy.com` rules are removed from the Mac's config. Until then, the site goes down whenever the Mac's `cloudflared` is not running.
 - Nothing merged to `main` reaches production until `deploy/deploy.sh` is run.

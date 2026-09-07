@@ -11,6 +11,7 @@ import { sharedRouter } from './sharing.js';
 import { healthRouter } from './health.js';
 import { createApiLimiter } from './rateLimit.js';
 import { COLLAB_PATH, attachCollab } from './collab.js';
+import { legacyHostRedirect, legacyHosts, publicOrigin, publicOrigins } from './origins.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -20,11 +21,13 @@ const PORT = process.env.PORT || 3001;
 // left-most X-Forwarded-For entry — the address the rate limiters count by.
 app.set('trust proxy', 1);
 
+// A hostname the site has moved away from (`LEGACY_HOSTS`) answers with a
+// redirect to the current one — before the rate limiter, so a redirect is
+// not a request counted against anyone.
+app.use(legacyHostRedirect(legacyHosts(process.env), publicOrigin(process.env)));
+
 app.use(cors({
-  origin: [
-    process.env.BETTER_AUTH_URL || 'http://localhost:5199',
-    'https://whimsical.vedalogy.com',
-  ],
+  origin: publicOrigins(process.env),
   credentials: true,
 }));
 

@@ -16,7 +16,7 @@ export default defineConfig({
   },
   server: {
     port: 5199,
-    allowedHosts: ['whimsical.vedalogy.com'],
+    allowedHosts: ['flowsketch.vedalogy.com'],
     proxy: {
       '/api': {
         target: 'http://localhost:3001',
