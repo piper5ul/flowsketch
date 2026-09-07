@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import * as Y from 'yjs';
 import type { DiagramData } from '../../shared/types.js';
 import {
+  DEFAULTS_KEY,
   docMeta,
   edgeEntries,
   isSeeded,
@@ -108,6 +109,38 @@ describe('docToDiagramData', () => {
     const doc = new Y.Doc();
     docMeta(doc).set(VIEWPORT_KEY, { x: 1, y: 2 });
     expect('viewport' in docToDiagramData(doc)).toBe(false);
+  });
+
+  it('round-trips the board defaults, and omits the key when there are none', () => {
+    const withDefaults = new Y.Doc();
+    const defaults = { shape: { fill: '#FF0000', fillStyle: 'outline' }, connector: { strokeWidth: 3 } };
+    seedDocFromDiagramData(withDefaults, diagram({ defaults }));
+    expect(docToDiagramData(withDefaults).defaults).toEqual(defaults);
+
+    const without = new Y.Doc();
+    seedDocFromDiagramData(without, diagram());
+    expect('defaults' in docToDiagramData(without)).toBe(false);
+  });
+
+  it('narrows a default the document holds to style keys before writing it out', () => {
+    // The document is written by browsers. The snapshot is what every other
+    // reader of this diagram sees, so it is narrowed here as it is on a load.
+    const doc = new Y.Doc();
+    docMeta(doc).set(DEFAULTS_KEY, {
+      shape: { fill: '#FF0000', label: 'no', locked: true, imageSrc: '/api/images/abc' },
+      nonsense: { fill: '#00FF00' },
+    });
+    expect(docToDiagramData(doc).defaults).toEqual({ shape: { fill: '#FF0000' } });
+  });
+
+  it('omits defaults the document holds in a shape nothing could act on', () => {
+    const doc = new Y.Doc();
+    docMeta(doc).set(DEFAULTS_KEY, 'red');
+    expect('defaults' in docToDiagramData(doc)).toBe(false);
+
+    const empty = new Y.Doc();
+    docMeta(empty).set(DEFAULTS_KEY, { shape: { label: 'no' } });
+    expect('defaults' in docToDiagramData(empty)).toBe(false);
   });
 });
 

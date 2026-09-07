@@ -12,6 +12,32 @@ export interface DiagramData {
    * version bump: the canvas frames the content itself when it is missing.
    */
   viewport?: DiagramViewport;
+  /**
+   * The style new elements are drawn in **on this board** — what ⌘⇧D saves.
+   *
+   * Absent on every diagram saved before board defaults existed, and on one
+   * nobody has set a default on, which is why it needed no version bump: an
+   * absent field means "no board defaults" and the built-in ones apply, exactly
+   * as they always did. The values are style keys and only style keys —
+   * `src/lib/defaultStyle.ts` holds the whitelist, and is the one place a
+   * stored `defaults` is narrowed before anything acts on it.
+   */
+  defaults?: DiagramDefaults;
+}
+
+/**
+ * Board defaults as the JSON column holds them: one loose bag per kind.
+ *
+ * Deliberately not typed as `Partial<ShapeData>` here — `shared/` describes the
+ * wire format and knows nothing about the client's shape types, the same reason
+ * `SerializedNode.data` is a `Record`. `sanitizeDefaults` is what turns one of
+ * these into something typed.
+ */
+export interface DiagramDefaults {
+  shape?: Record<string, unknown>;
+  sticky?: Record<string, unknown>;
+  text?: Record<string, unknown>;
+  connector?: Record<string, unknown>;
 }
 
 /** A React Flow viewport, as `onMoveEnd` reports it. */

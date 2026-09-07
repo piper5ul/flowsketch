@@ -19,8 +19,9 @@
  */
 import type * as Y from 'yjs';
 import type { DiagramData } from '../../shared/types.js';
-import { edgesOf, nodesOf, viewportOf, writeDiagramIntoDoc } from '../../shared/collabDoc.js';
+import { defaultsOf, edgesOf, nodesOf, viewportOf, writeDiagramIntoDoc } from '../../shared/collabDoc.js';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagramMigrations.js';
+import { sanitizeDefaults } from '../../src/lib/defaultStyle.js';
 
 /**
  * The diagram a document is currently holding, as the JSON snapshot.
@@ -36,6 +37,10 @@ import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagr
  */
 export function docToDiagramData(doc: Y.Doc): DiagramData {
   const viewport = viewportOf(doc);
+  // Narrowed rather than copied out: the document is written by browsers, and
+  // the snapshot is what every other reader of this diagram will see. A default
+  // carrying anything but style is dropped here as it would be on a load.
+  const defaults = sanitizeDefaults(defaultsOf(doc));
   return {
     version: CURRENT_DIAGRAM_VERSION,
     nodes: nodesOf(doc),
@@ -44,6 +49,9 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
     // `serializeDiagram` does: a diagram nobody has panned should open framed
     // on whatever screen it is opened on.
     ...(viewport ? { viewport } : {}),
+    // Same rule: a board nobody has set a default on has no `defaults` key at
+    // all, so its JSON is byte for byte what it always was.
+    ...(defaults ? { defaults } : {}),
   };
 }
 

@@ -48,7 +48,8 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
 - Lock / unlock shapes (`⌘⇧L`)
 - Z-order controls: bring forward / backward, bring to front / send to back
-- Copy / paste style between shapes and save a shape's fill & stroke as the default style for new shapes (`⌘⌥C`, `⌘⌥V`, `⌘⇧D`)
+- Copy / paste style between shapes (`⌘⌥C`, `⌘⌥V`)
+- **Board defaults** — style a shape, sticky note, text shape or connector the way you like it and press `⌘⇧D` (or pick **Save as default style** from its right-click menu, or from the sliders popover on the floating toolbar). Every new one of that kind on **this board** is drawn that way from then on, for everybody working on it. It remembers style and only style: the fill, the outline, filled-or-outline, the typography — a connector's line, arrowheads and routing kind — never a label, a link, a lock, an image, a size or a position
 - Paste images from the clipboard as image shapes (`⌘V` with an image on the clipboard)
 - Add hyperlinks to shapes from the floating toolbar
 - Nudge selected shapes with the arrow keys (1 px, 10 px with Shift)
@@ -169,7 +170,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `⌥`-drag | Duplicate a shape in place while dragging |
 | `⌘⌥C` | Copy the selected shape's style |
 | `⌘⌥V` | Paste style onto the selection |
-| `⌘⇧D` | Save the selected shape's fill/stroke as the default style for new shapes |
+| `⌘⇧D` | Save the selected shape's or connector's style as this board's default for its kind |
 | `⌘⌥=` | Increase font size of the selection |
 | `⌘⌥-` | Decrease font size of the selection |
 | `⌘⇧C` | Copy the canvas as an image to the clipboard |

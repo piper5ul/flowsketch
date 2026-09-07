@@ -1,7 +1,9 @@
 import { renderDiagramPng } from '../lib/exportImage';
 import { isGroupNode } from '../lib/nodeKinds';
 import { subtreeIds } from '../lib/nodeTree';
+import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
+import { toastInfo } from '../store/useToastStore';
 import { useSearchStore } from '../store/useSearchStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { AlignMode, DistributeAxis } from '../lib/arrange';
@@ -303,10 +305,23 @@ export const commandDeclarations: Command[] = [
     title: 'Save as default style',
     group: 'style',
     shortcut: { key: 'd', meta: true, shift: true },
-    run: (ctx) => {
+    // On both menus, because a connector has a default of its own and the
+    // shape menu is not where anybody would look for it.
+    contextMenu: ['node', 'edge'],
+    // "Make *this* the default" has no answer for five shapes in three
+    // colours, and none for a group, a frame or an image — `kindOf` is what
+    // says so, and the store checks it again rather than trusting the gate.
+    when: (ctx) => {
       const state = ctx.store.getState();
-      const selected = state.nodes.find((n) => n.selected);
-      if (selected) state.setDefaultStyle({ fill: selected.data.fill, stroke: selected.data.stroke });
+      const nodes = selectedNodes(state);
+      const edges = selectedEdges(state);
+      if (nodes.length + edges.length !== 1) return false;
+      return edges.length === 1 || kindOf(nodes[0]) !== null;
+    },
+    run: (ctx) => {
+      const kind = ctx.store.getState().saveSelectionAsDefault();
+      if (!kind) return;
+      toastInfo(`Saved as default for ${DEFAULT_STYLE_KIND_LABELS[kind]} on this board`);
     },
   },
   {

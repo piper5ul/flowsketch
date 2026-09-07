@@ -291,8 +291,10 @@ function ExportMenu() {
 
   const exportJson = useCallback(() => {
     setOpen(false);
-    const { nodes, edges } = useDiagramStore.getState();
-    const file = buildDiagramExport(title, serializeDiagram(nodes, edges));
+    // The board's defaults travel with the file: importing a diagram and then
+    // drawing on it should carry on in the style it was saved in.
+    const { nodes, edges, defaults } = useDiagramStore.getState();
+    const file = buildDiagramExport(title, serializeDiagram(nodes, edges, null, defaults));
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(file, null, 2)], { type: 'application/json' }),
     );

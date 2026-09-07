@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Tooltip } from './Tooltip';
-import { useDiagramStore } from '../store/useDiagramStore';
+import { defaultConnectorKind, useDiagramStore } from '../store/useDiagramStore';
 import { useImageInsert } from '../lib/useImageInsert';
 import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
 import type { ConnectorKind, ShapeKind, Tool } from '../types';
@@ -173,7 +173,11 @@ function MoreShapesMenu() {
 export function LeftRail() {
   const tool = useDiagramStore((s) => s.tool);
   const setTool = useDiagramStore((s) => s.setTool);
-  const defaultConnector = useDiagramStore((s) => s.defaultConnector);
+  // Derived rather than stored: what the rail shows as picked is exactly what
+  // `newConnectorData` will build, board default and session layer included.
+  const defaults = useDiagramStore((s) => s.defaults);
+  const lastStyle = useDiagramStore((s) => s.lastStyle);
+  const defaultConnector = defaultConnectorKind({ defaults, lastStyle });
   const setDefaultStyle = useDiagramStore((s) => s.setDefaultStyle);
   const [connectorMenuOpen, setConnectorMenuOpen] = useState(false);
   const insertImages = useImageInsert();

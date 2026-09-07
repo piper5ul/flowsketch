@@ -67,3 +67,8 @@ export const useToastStore = create<ToastState>((set) => ({
 export function toastError(message: string) {
   useToastStore.getState().push('error', message);
 }
+
+/** The other half: something worked, and it happened somewhere off screen. */
+export function toastInfo(message: string) {
+  useToastStore.getState().push('info', message);
+}

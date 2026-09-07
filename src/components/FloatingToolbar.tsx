@@ -17,6 +17,9 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { canGroupSelection, useDiagramStore } from '../store/useDiagramStore';
+import { toastInfo } from '../store/useToastStore';
+import { formatShortcut, registry } from '../commands/commands';
+import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
 import { ColorPalette } from './ColorPalette';
 import { ArrangeMenu } from './ArrangeMenu';
 import { TextFormatControls } from './TextFormatControls';
@@ -331,6 +334,13 @@ function ArrowStylePicker({
   );
 }
 
+/**
+ * The keystroke the "Save as default style" entry reads out, taken from the
+ * registry rather than typed here: the shortcut lives in `src/commands`, and a
+ * second spelling of it is a second thing to keep in step.
+ */
+const saveDefaultShortcut = formatShortcut(registry.find('style.saveDefault')?.shortcut);
+
 /** The Style popover's slider: a labelled range that reads its own value out. */
 function StyleSlider({
   label,
@@ -406,6 +416,7 @@ function StylePopover({
   onPreview,
   onCommit,
   onDragStart,
+  onSaveDefault,
 }: {
   cornerRadius: number;
   opacity: number;
@@ -414,6 +425,8 @@ function StylePopover({
   onPreview: (patch: Partial<ShapeData>) => void;
   onCommit: (patch: Partial<ShapeData>) => void;
   onDragStart: () => void;
+  /** Offered only for a single shape — "make *this* the default" needs a this. */
+  onSaveDefault: (() => void) | null;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -467,6 +480,26 @@ function StylePopover({
             Drop shadow
             <span className="text-[11px] text-white/60">{shadow ? 'On' : 'Off'}</span>
           </button>
+          {/* The keyboard has ⌘⇧D and the right-click menu has an entry; this
+              is where somebody who has just finished styling a shape with the
+              mouse is already looking. */}
+          {onSaveDefault && (
+            <>
+              <div className="my-0.5 h-px bg-white/10" />
+              <button
+                onClick={() => {
+                  onSaveDefault();
+                  // Closed on the way out: the toast is the confirmation, and a
+                  // popover left standing over the shape hides what was saved.
+                  setOpen(false);
+                }}
+                className="flex items-center justify-between rounded-lg px-2 py-1.5 text-left text-[12px] font-medium text-white/85 transition hover:bg-white/10"
+              >
+                Save as default style
+                <span className="text-[11px] text-white/40">{saveDefaultShortcut}</span>
+              </button>
+            </>
+          )}
           <Popover.Arrow className="fill-ink-950" />
         </Popover.Content>
       </Popover.Portal>
@@ -540,6 +573,7 @@ export function FloatingToolbar() {
   const setSelectedShapeKind = useDiagramStore((s) => s.setSelectedShapeKind);
   const setEditingEdgeId = useDiagramStore((s) => s.setEditingEdgeId);
   const deleteSelection = useDiagramStore((s) => s.deleteSelection);
+  const saveSelectionAsDefault = useDiagramStore((s) => s.saveSelectionAsDefault);
   // Z order, grouping and the lock are read by `ArrangeMenu` itself — this bar
   // only tells it what the selection is, so the popover owns the whole of what
   // "arrange" means.
@@ -645,6 +679,15 @@ export function FloatingToolbar() {
       ? resolveFillStyle(firstStyleable.data)
       : null;
   const locked = selectedNodes.some((n) => n.data.locked);
+  // One shape, and one this build can copy a style off — the same question the
+  // `style.saveDefault` command's `when` asks, so the bar never offers a button
+  // the keystroke would refuse.
+  const canSaveDefault =
+    selectedEdges.length === 0 && selectedNodes.length === 1 && kindOf(selectedNodes[0]) !== null;
+  const saveDefault = () => {
+    const kind = saveSelectionAsDefault();
+    if (kind) toastInfo(`Saved as default for ${DEFAULT_STYLE_KIND_LABELS[kind]} on this board`);
+  };
 
   return (
     <div
@@ -792,6 +835,7 @@ export function FloatingToolbar() {
             onDragStart={beginInteraction}
             onPreview={updateSelectedNodesDataTransient}
             onCommit={updateSelectedNodesData}
+            onSaveDefault={canSaveDefault ? saveDefault : null}
           />
         )}
 
