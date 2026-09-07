@@ -11,10 +11,11 @@
  * snapshot and restoring one are writes, so they are an editor's.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { History, Loader2, RotateCcw, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ChevronLeft, ChevronRight, GitFork, History, Loader2, Pause, Play, RotateCcw, X } from 'lucide-react';
 import { api } from '../lib/api';
 import { migrateDiagramData } from '../lib/diagramMigrations';
-import { MAX_VERSION_LABEL_CHARS, describeVersion } from '../lib/versionHistory';
+import { MAX_VERSION_LABEL_CHARS, describeVersion, scrubIndex } from '../lib/versionHistory';
 import { buildVersionPreview } from '../lib/versionPreview';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { toastError } from '../store/useToastStore';
@@ -32,6 +33,9 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
   const [preview, setPreview] = useState<DiagramVersion | null>(null);
   /** The version whose "are you sure?" is showing. */
   const [confirming, setConfirming] = useState<string | null>(null);
+  /** Whether the scrubber is stepping through the versions on its own. */
+  const [playing, setPlaying] = useState(false);
+  const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     if (!diagramId) return;
@@ -103,6 +107,68 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
       }
     },
     [diagramId, previewId],
+  );
+
+  /** Opens `versionId`'s preview (the row's own click toggles; the scrubber only ever shows). */
+  const showPreview = useCallback(
+    async (versionId: string) => {
+      if (!diagramId || previewId === versionId) return;
+      setPreviewId(versionId);
+      setPreview(null);
+      try {
+        const version = await api.getVersion(diagramId, versionId);
+        setPreviewId((current) => {
+          if (current === versionId) setPreview(version);
+          return current;
+        });
+      } catch {
+        toastError('Could not load that version.');
+        setPreviewId(null);
+      }
+    },
+    [diagramId, previewId],
+  );
+
+  // The list is newest first; the scrubber runs oldest → newest, so its index
+  // counts from the end of the list.
+  const count = versions?.length ?? 0;
+  const scrubAt = useMemo(() => {
+    if (!versions || previewId === null) return count - 1;
+    const i = versions.findIndex((v) => v.id === previewId);
+    return i === -1 ? count - 1 : count - 1 - i;
+  }, [versions, previewId, count]);
+  const scrubTo = useCallback(
+    (index: number) => {
+      if (!versions || versions.length === 0) return;
+      const clamped = scrubIndex(index, 0, versions.length);
+      void showPreview(versions[versions.length - 1 - clamped].id);
+    },
+    [versions, showPreview],
+  );
+  useEffect(() => {
+    if (!playing) return;
+    if (scrubAt >= count - 1) {
+      setPlaying(false);
+      return;
+    }
+    const timer = window.setTimeout(() => scrubTo(scrubAt + 1), 1200);
+    return () => window.clearTimeout(timer);
+  }, [playing, scrubAt, count, scrubTo]);
+
+  const fork = useCallback(
+    async (versionId: string) => {
+      if (!diagramId) return;
+      setBusy(true);
+      try {
+        const copy = await api.forkVersion(diagramId, versionId);
+        navigate(`/d/${copy.id}`);
+      } catch {
+        toastError('Could not fork that version.');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [diagramId, navigate],
   );
 
   const restore = useCallback(
@@ -177,6 +243,61 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {versions !== null && versions.length > 1 && (
+        <div
+          role="group"
+          aria-label="Scrub through versions"
+          className="flex shrink-0 items-center gap-1.5 border-b border-line px-3 py-2"
+        >
+          <button
+            type="button"
+            aria-label="Older version"
+            disabled={scrubAt <= 0}
+            onClick={() => scrubTo(scrubAt - 1)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700 transition hover:bg-hover disabled:opacity-30"
+          >
+            <ChevronLeft size={15} />
+          </button>
+          <input
+            type="range"
+            aria-label="Version"
+            min={0}
+            max={count - 1}
+            value={Math.max(0, scrubAt)}
+            onChange={(event) => {
+              setPlaying(false);
+              scrubTo(Number(event.target.value));
+            }}
+            className="min-w-0 flex-1 accent-accent-500"
+          />
+          <button
+            type="button"
+            aria-label="Newer version"
+            disabled={scrubAt >= count - 1}
+            onClick={() => scrubTo(scrubAt + 1)}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700 transition hover:bg-hover disabled:opacity-30"
+          >
+            <ChevronRight size={15} />
+          </button>
+          <button
+            type="button"
+            aria-label={playing ? 'Pause' : 'Play through history'}
+            aria-pressed={playing}
+            onClick={() => {
+              // Play from the beginning once the end has been reached.
+              if (!playing && scrubAt >= count - 1) scrubTo(0);
+              setPlaying((p) => !p);
+            }}
+            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700 transition hover:bg-hover"
+          >
+            {playing ? <Pause size={14} /> : <Play size={14} />}
+          </button>
+          <span className="ml-1 shrink-0 tabular-nums text-[12px] text-ink-600">
+            {Math.max(0, scrubAt) + 1} / {count}
+          </span>
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
         {versions === null ? (
           <p className="flex items-center gap-2 px-2 py-3 text-[13px] text-ink-600">
@@ -202,6 +323,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
                 onRequestRestore={() => setConfirming(version.id)}
                 onCancelRestore={() => setConfirming(null)}
                 onRestore={() => restore(version.id)}
+                onFork={() => fork(version.id)}
               />
             ))}
           </ul>
@@ -222,6 +344,7 @@ function VersionRow({
   onRequestRestore,
   onCancelRestore,
   onRestore,
+  onFork,
 }: {
   version: DiagramVersionMeta;
   canRestore: boolean;
@@ -233,6 +356,7 @@ function VersionRow({
   onRequestRestore: () => void;
   onCancelRestore: () => void;
   onRestore: () => void;
+  onFork: () => void;
 }) {
   return (
     <li className="rounded-lg px-2 py-2 transition hover:bg-hover-soft">
@@ -254,6 +378,17 @@ function VersionRow({
             className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-ink-700 ring-1 ring-line-strong transition hover:bg-hover"
           >
             <RotateCcw size={11} /> Restore
+          </button>
+        )}
+        {!confirming && (
+          <button
+            type="button"
+            onClick={onFork}
+            disabled={busy}
+            title="A new diagram of your own holding this version"
+            className="flex items-center gap-1 rounded-md px-2 py-0.5 text-[12px] font-medium text-ink-700 ring-1 ring-line-strong transition hover:bg-hover disabled:opacity-50"
+          >
+            <GitFork size={11} /> Fork
           </button>
         )}
       </div>

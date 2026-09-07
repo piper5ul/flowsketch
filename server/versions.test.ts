@@ -651,3 +651,46 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/diagrams/:id/versions/:versionId/fork', () => {
+  beforeEach(() => {
+    prismaMock.diagram.findFirst.mockResolvedValue(ownedRow({ data: AFTER, title: 'Now' }));
+    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: BEFORE, title: 'Then' });
+    prismaMock.diagram.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: 'fork1',
+      ...data,
+      shareToken: null,
+      thumbnail: null,
+      folderId: null,
+      createdAt: new Date('2026-09-06T14:00:00.000Z'),
+      updatedAt: new Date('2026-09-06T14:00:00.000Z'),
+    }));
+  });
+
+  it('makes a new diagram of the caller’s own out of the version, and touches nothing else', async () => {
+    const res = await request(server).post('/api/diagrams/d1/versions/v1/fork').expect(201);
+    expect(res.body).toMatchObject({ id: 'fork1', title: 'Then (fork)' });
+    expect(prismaMock.diagram.create).toHaveBeenCalledWith({
+      data: { userId: 'u1', title: 'Then (fork)', data: BEFORE, starred: false },
+    });
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('is a 404 for a version that belongs to another diagram', async () => {
+    prismaMock.diagramVersion.findFirst.mockResolvedValue(null);
+    await request(server).post('/api/diagrams/d1/versions/v9/fork').expect(404);
+    expect(prismaMock.diagram.create).not.toHaveBeenCalled();
+  });
+
+  it('indexes the images the forked board draws', async () => {
+    const drawn = boardWithImage('img-1');
+    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: drawn, title: 'Then' });
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'img-1' }]);
+    await request(server).post('/api/diagrams/d1/versions/v1/fork').expect(201);
+    expect(prismaMock.diagramImage.createMany).toHaveBeenCalledWith({
+      data: [{ diagramId: 'fork1', imageId: 'img-1' }],
+      skipDuplicates: true,
+    });
+  });
+});

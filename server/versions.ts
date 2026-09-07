@@ -353,3 +353,42 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
   // route answering with a diagram row does so through the one serializer.
   res.json(publicDiagram(updated, access.role));
 });
+
+/** What a fork is called: the version's own title, marked as a branch off it. */
+export function forkTitle(title: string): string {
+  return `${title} (fork)`;
+}
+
+/**
+ * A new diagram of the caller's own, holding exactly what this version held —
+ * Whimsical's "fork the file". Viewer+: reading the version is a viewer's
+ * right, and the copy is theirs, so nothing about the original changes; a fork
+ * carries no history and no comments. It draws the images the version drew,
+ * so the index follows it — though an image the original's owner uploaded is
+ * theirs, and a forker who is not a member of a diagram still drawing it will
+ * see that image as missing (`GET /api/images/:id`'s rule, unchanged here).
+ */
+versionsRouter.post('/diagrams/:id/versions/:versionId/fork', async (req, res) => {
+  const access = await requireDiagramRole(req, res, 'viewer', { id: true });
+  if (!access) return;
+
+  const version = await prisma.diagramVersion.findFirst({
+    where: { id: req.params.versionId, diagramId: req.params.id },
+    select: { data: true, title: true },
+  });
+  if (!version) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  const fork = await prisma.diagram.create({
+    data: {
+      userId: authedUser(req).id,
+      title: forkTitle(version.title),
+      data: version.data ?? {},
+      starred: false,
+    },
+  });
+  await syncDiagramImages(fork.id, fork.data);
+  res.status(201).json(publicDiagram(fork, 'owner'));
+});
