@@ -1898,3 +1898,84 @@ test('a connector between shapes inside a frame is drawn where the shapes are', 
   // The straight elbow between two shapes on one row stays on their row.
   expect(Math.abs(edge.y + edge.height / 2 - (a.y + a.height / 2))).toBeLessThan(a.height / 2);
 });
+
+test('the connector tool draws from where you press to where you release', async ({ page }) => {
+  await signUp(page);
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number, y: number) => ({
+      id, type: 'shape', position: { x, y }, width: 200, height: 100,
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const body = { title: 'Drawn connector', data: { version: 3, nodes: [shape('a', 100, 100), shape('b', 600, 100)], edges: [] } };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await page.keyboard.press('1');
+  // Fit-to-view animates; the boxes below have to be read once it has settled.
+  await expect
+    .poll(async () => {
+      const viewport = page.locator('.react-flow__viewport');
+      const before = await viewport.getAttribute('style');
+      await page.waitForTimeout(150);
+      return (await viewport.getAttribute('style')) === before;
+    })
+    .toBe(true);
+
+  const a = (await page.locator('[data-id="a"]').boundingBox())!;
+  const b = (await page.locator('[data-id="b"]').boundingBox())!;
+  // Press near a's bottom-right corner, release near b's bottom-left: the
+  // nearest outline point to each is on that shape's bottom edge.
+  const press = { x: a.x + a.width * 0.8, y: a.y + a.height * 0.85 };
+  const release = { x: b.x + b.width * 0.2, y: b.y + b.height * 0.85 };
+
+  await page.keyboard.press('a');
+  await page.mouse.move(press.x, press.y);
+  await page.mouse.down();
+  await page.mouse.move(press.x + 40, press.y + 60, { steps: 5 });
+  await expect(page.getByTestId('connector-draft')).toBeVisible();
+  await page.mouse.move(release.x, release.y, { steps: 10 });
+  await page.mouse.up();
+
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  // The path's first and last points, in screen coordinates: both ends are on
+  // a bottom edge, right under where the pointer went down and came up.
+  const ends = await page.evaluate(() => {
+    // This file compiles without the DOM lib — see the paste test.
+    const { document } = globalThis as unknown as {
+      document: {
+        querySelector: (selector: string) => {
+          getAttribute: (name: string) => string | null;
+          style: { transform: string };
+          getBoundingClientRect: () => { left: number; top: number };
+        };
+      };
+    };
+    const d = document.querySelector('.react-flow__edge-path').getAttribute('d')!;
+    const nums = d.match(/-?\d+(\.\d+)?/g)!.map(Number);
+    const m = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(
+      document.querySelector('.react-flow__viewport').style.transform,
+    )!;
+    const [tx, ty, k] = [Number(m[1]), Number(m[2]), Number(m[3])];
+    const host = document.querySelector('.react-flow').getBoundingClientRect();
+    const toScreen = (x: number, y: number) => ({ x: host.left + tx + x * k, y: host.top + ty + y * k });
+    return { start: toScreen(nums[0], nums[1]), end: toScreen(nums[nums.length - 2], nums[nums.length - 1]) };
+  });
+  expect(Math.abs(ends.start.x - press.x)).toBeLessThan(4);
+  expect(ends.start.y).toBeGreaterThan(a.y + a.height - 1);
+  expect(Math.abs(ends.end.x - release.x)).toBeLessThan(4);
+  expect(ends.end.y).toBeGreaterThan(b.y + b.height - 1);
+
+  // Released on empty board instead: a new shape appears there, connected.
+  // (Pressed away from the side-centre handles, which are React Flow's own
+  // connection gesture and are pinned by a different path.)
+  await page.keyboard.press('a');
+  await page.mouse.move(a.x + a.width * 0.3, a.y + 10);
+  await page.mouse.down();
+  await page.mouse.move(a.x + a.width * 0.3, a.y - 200, { steps: 10 });
+  await page.mouse.up();
+  await expect(page.locator('.react-flow__node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+});

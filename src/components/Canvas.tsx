@@ -5,6 +5,7 @@ import {
   BackgroundVariant,
   ConnectionMode,
   useReactFlow,
+  ViewportPortal,
   type FinalConnectionState,
   type Viewport,
 } from '@xyflow/react';
@@ -13,6 +14,15 @@ import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode 
 import { useViewPreferences } from '../store/useViewPreferences';
 import { makeEdgeData } from '../lib/defaults';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { anchorToPoint, type Point } from '../lib/edgeGeometry';
+import {
+  anchorFor,
+  boardRect,
+  DRAG_THRESHOLD_PX,
+  facingSide,
+  nodeAtPoint,
+  sideAnchor,
+} from '../lib/connectorGesture';
 import { useImageInsert } from '../lib/useImageInsert';
 import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
 import type { CommandContext } from '../commands/types';
@@ -33,7 +43,13 @@ import { TextFormatBar } from './TextFormatBar';
 import { SearchBar } from './SearchBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { ContextMenu, type ContextMenuState } from './ContextMenu';
-import type { ShapeData, ShapeKind, Tool } from '../types';
+import type { Direction, EdgeAnchor, ShapeData, ShapeKind, Tool } from '../types';
+
+const SIDES: readonly string[] = ['top', 'right', 'bottom', 'left'];
+/** A React Flow handle id that names one of a shape's four sides. */
+function isSide(id: string | null | undefined): id is Direction {
+  return typeof id === 'string' && SIDES.includes(id);
+}
 
 /**
  * The grid a dragged shape lands on while snapping is on. 10 px is a divisor of
@@ -89,6 +105,13 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevToolRef = useRef<Tool>('select');
   const connectorSourceRef = useRef<string | null>(null);
+  // A connector being drawn by hand — see `beginConnectorGesture`. The ref is
+  // the gesture; the state is only what the preview line needs to draw.
+  const gestureRef = useRef<{ sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean } | null>(null);
+  const [connectDraft, setConnectDraft] = useState<{ from: Point; to: Point } | null>(null);
+  // Set when a drag just made a connector, so the click the browser fires on
+  // release does not also start (or finish) the old click-click connector.
+  const swallowClickRef = useRef(false);
   // Both clipboards live outside the store: neither belongs in a saved diagram.
   const clipboardRef = useRef<ClipboardPayload | null>(null);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
@@ -276,6 +299,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
   const onNodeClick = useCallback(
     (event: React.MouseEvent, node: ShapeNode) => {
+      if (swallowClickRef.current) {
+        swallowClickRef.current = false;
+        return;
+      }
       // A frame is a node, so a click inside one never reaches `onPaneClick`.
       // Drawing tools are served here too, or a frame would be a hole in the
       // board that nothing could be drawn into.
@@ -311,6 +338,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
   const onPaneClick = useCallback(
     (event: React.MouseEvent) => {
+      if (swallowClickRef.current) {
+        swallowClickRef.current = false;
+        return;
+      }
       setEditingNodeId(null);
 
       if (tool === 'connector') {
@@ -437,6 +468,124 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // was last seen claims someone is looking at a shape they have walked away from.
   const onPointerLeave = useCallback(() => useCollabStore.getState().reportCursor(null), []);
 
+  /**
+   * A new shape centred on `at`, in the board's default style, with a connector
+   * from `sourceId` into the side of it that faces `from`. Both ends are pinned
+   * (`sourceAnchor` may be `undefined` when the caller has no side to pin to).
+   */
+  const createShapeWithConnector = useCallback(
+    (sourceId: string, sourceAnchor: EdgeAnchor | undefined, at: Point, from: Point) => {
+      const { defaultFill, defaultStroke } = useDiagramStore.getState();
+      const id = nanoid(8);
+      const width = 180;
+      const height = 100;
+      addNodes({
+        id,
+        type: 'shape',
+        position: { x: at.x - width / 2, y: at.y - height / 2 },
+        width,
+        height,
+        data: { label: '', shape: 'rectangle', fill: defaultFill, stroke: defaultStroke },
+      });
+      const edgeData = { ...makeEdgeData(defaultConnector), sourceAnchor, targetAnchor: sideAnchor(facingSide(from, at)) };
+      addEdges({
+        id: nanoid(8),
+        source: sourceId,
+        target: id,
+        sourceHandle: sourceAnchor?.side,
+        type: 'connector',
+        zIndex: 1000,
+        ...computeMarkers(edgeData),
+        data: edgeData,
+      });
+    },
+    [addNodes, addEdges, defaultConnector],
+  );
+
+  /**
+   * The connector tool as a drag: press on a shape, release on another.
+   *
+   * The line starts at the point on the first shape's outline nearest to the
+   * press and ends at the point on the second's nearest to the release, both
+   * pinned as a side and a fraction along it — so a connector leaves a shape
+   * where the user pointed, and keeps leaving there when the shapes move. A
+   * release on empty board makes a new shape there, as dragging a handle out
+   * does. A press that never travels is still a click, and falls through to
+   * the click-click flow in `onNodeClick` / `onPaneClick`.
+   *
+   * The handlers live on `window` for the gesture's duration rather than
+   * capturing the pointer: capture would redirect the release, and with it the
+   * click the old flow relies on, to the wrapper.
+   */
+  const beginConnectorGesture = useCallback(
+    (event: React.PointerEvent) => {
+      if (tool !== 'connector' || event.button !== 0 || readOnly) return;
+      // A press on a side handle is React Flow's connection, which `onConnect`
+      // and `onConnectEnd` pin the same way; running both would draw twice.
+      if ((event.target as HTMLElement).closest('.react-flow__handle')) return;
+      const nodes = useDiagramStore.getState().nodes;
+      const start = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const source = nodeAtPoint(nodes, start, (n) => isAnchorNode(n.data));
+      if (!source) return;
+      const byId = new Map(nodes.map((n) => [n.id, n] as const));
+      const anchor = anchorFor(source, byId, start);
+      const rect = boardRect(source, byId);
+      if (!anchor || !rect) return;
+      const from = anchorToPoint(anchor, rect);
+      gestureRef.current = { sourceId: source.id, anchor, from, start, moved: false };
+
+      const finish = () => {
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('keydown', onKey);
+        gestureRef.current = null;
+        setConnectDraft(null);
+      };
+      const onMove = (e: PointerEvent) => {
+        const g = gestureRef.current;
+        if (!g) return;
+        const to = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        if (!g.moved && Math.hypot(to.x - g.start.x, to.y - g.start.y) < DRAG_THRESHOLD_PX) return;
+        g.moved = true;
+        setConnectDraft({ from: g.from, to });
+      };
+      const onUp = (e: PointerEvent) => {
+        const g = gestureRef.current;
+        finish();
+        if (!g || !g.moved) return;
+        swallowClickRef.current = true;
+        const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        const current = useDiagramStore.getState().nodes;
+        const target = nodeAtPoint(current, at, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
+        if (target) {
+          const targetAnchor = anchorFor(target, new Map(current.map((n) => [n.id, n] as const)), at);
+          const edgeData = { ...makeEdgeData(defaultConnector), sourceAnchor: g.anchor, targetAnchor: targetAnchor ?? undefined };
+          addEdges({
+            id: nanoid(8),
+            source: g.sourceId,
+            target: target.id,
+            sourceHandle: g.anchor.side,
+            targetHandle: targetAnchor?.side,
+            type: 'connector',
+            zIndex: 1000,
+            ...computeMarkers(edgeData),
+            data: edgeData,
+          });
+        } else {
+          createShapeWithConnector(g.sourceId, g.anchor, at, g.from);
+        }
+        setTool('select');
+      };
+      const onKey = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') finish();
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('keydown', onKey);
+    },
+    [tool, readOnly, screenToFlowPosition, addEdges, defaultConnector, createShapeWithConnector, setTool],
+  );
+
   // Dragging a connector out to empty canvas creates a new connected shape,
   // mirroring Whimsical's "drag to create" flow.
   const onConnectEnd = useCallback(
@@ -447,31 +596,22 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
       const point = 'changedTouches' in event ? event.changedTouches[0] : event;
       const position = screenToFlowPosition({ x: point.clientX, y: point.clientY });
-      const id = nanoid(8);
-      const width = 180;
-      const height = 100;
-
-      addNodes({
-        id,
-        type: 'shape',
-        position: { x: position.x - width / 2, y: position.y - height / 2 },
-        width,
-        height,
-        data: { label: '', shape: 'rectangle', fill: '#DCEAFB', stroke: '#3B82F6' },
-      });
-      const edgeData = makeEdgeData(defaultConnector);
-      addEdges({
-        id: nanoid(8),
-        source: connectionState.fromNode.id,
-        target: id,
-        sourceHandle: connectionState.fromHandle?.id,
-        type: 'connector',
-        zIndex: 1000,
-        ...computeMarkers(edgeData),
-        data: edgeData,
-      });
+      const fromSide = connectionState.fromHandle?.id;
+      const sourceAnchor = isSide(fromSide) ? sideAnchor(fromSide) : undefined;
+      // Where the line leaves the source, so the new shape's facing side is
+      // judged from there rather than from the pointer.
+      const nodes = useDiagramStore.getState().nodes;
+      const byId = new Map(nodes.map((n) => [n.id, n] as const));
+      const sourceNode = byId.get(connectionState.fromNode.id);
+      const rect = sourceNode ? boardRect(sourceNode, byId) : null;
+      const from = rect
+        ? sourceAnchor
+          ? anchorToPoint(sourceAnchor, rect)
+          : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+        : position;
+      createShapeWithConnector(connectionState.fromNode.id, sourceAnchor, position, from);
     },
-    [screenToFlowPosition, addNodes, addEdges, defaultConnector],
+    [screenToFlowPosition, createShapeWithConnector],
   );
 
   // Pasted images are uploaded and referenced by URL. Inlining them as
@@ -535,6 +675,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       onDoubleClick={onCanvasDoubleClick}
       onDragOver={onDragOver}
       onDrop={onDrop}
+      onPointerDown={beginConnectorGesture}
       // Nobody to tell on the public share page — `canComment` stands for "a
       // signed-in member has this open", which is exactly who has presence.
       onPointerMove={canComment ? onPointerMove : undefined}
@@ -612,6 +753,25 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         {canComment && <CommentPins />}
         {canComment && <PresenceCursors />}
         <AlignmentGuides />
+        {connectDraft && (
+          <ViewportPortal>
+            <svg
+              aria-hidden="true"
+              data-testid="connector-draft"
+              style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
+            >
+              <line
+                x1={connectDraft.from.x}
+                y1={connectDraft.from.y}
+                x2={connectDraft.to.x}
+                y2={connectDraft.to.y}
+                stroke="var(--color-accent-500)"
+                strokeWidth={2.5}
+                strokeLinecap="round"
+              />
+            </svg>
+          </ViewportPortal>
+        )}
         {minimap && <CanvasMiniMap />}
       </ReactFlow>
 
