@@ -4,9 +4,14 @@ import type { SwatchColor } from '../types';
 // Tier 1–2: light pastels (dark text). Tier 4: deep fills (white text).
 // Tier 3 is saturated and sits near the luminance threshold; `isDarkFill`
 // decides per swatch (e.g. yellow-3 keeps dark text, blue-3 gets white).
+// The one exception to the naming is `white`, which holds the grey family's
+// lightest slot and is the swatch a new shape is drawn in.
 export const PALETTE: SwatchColor[] = [
   // ── Tier 1: lightest pastels ──────────────────────────────────────
-  { id: 'gray-1',   fill: '#F3F4F6', stroke: '#D1D5DB' },
+  // White is the default a new shape is drawn in: a filled shape wears no
+  // border, so the swatch that reads as "no colour yet" has to be the paper
+  // itself rather than a grey wash of it.
+  { id: 'white',    fill: '#FFFFFF', stroke: '#CBD5E1' },
   { id: 'blue-1',   fill: '#DBEAFE', stroke: '#93C5FD' },
   { id: 'violet-1', fill: '#EDE9FE', stroke: '#C4B5FD' },
   { id: 'pink-1',   fill: '#FCE7F3', stroke: '#F9A8D4' },
@@ -46,7 +51,7 @@ export const PALETTE: SwatchColor[] = [
   { id: 'orange-4', fill: '#C2410C', stroke: '#9A3412' },
 ];
 
-export const DEFAULT_SWATCH = PALETTE[1]; // blue-1 light pastel
+export const DEFAULT_SWATCH = PALETTE[0]; // white — a filled shape with no border
 
 export const COLS = 8;
 

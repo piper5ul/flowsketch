@@ -9,6 +9,12 @@
  *
  * Adding a version: bump `CURRENT_DIAGRAM_VERSION`, add a `vN -> vN+1` step to
  * `MIGRATIONS`, and leave the earlier steps alone.
+ *
+ * Not every new field is a version. `ShapeData.fillStyle` is optional and an
+ * absent one reads as `'filled'` (`resolveFillStyle` in `src/lib/shapeStyle.ts`),
+ * so every diagram written before it existed is already correct and there is no
+ * step here for it — a field is only worth a version when the *old* spelling
+ * would be misread without one.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';

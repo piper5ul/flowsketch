@@ -1253,6 +1253,38 @@ describe('updateSelectedNodesData', () => {
     });
   });
 
+  it('switches the whole selection between filled and outline, and back', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('star', { x: 200, y: 0 });
+    select(a, b);
+
+    // A new shape says nothing, which is the filled look.
+    expect(store().nodes.every((n) => n.data.fillStyle === undefined)).toBe(true);
+
+    store().updateSelectedNodesData({ fillStyle: 'outline' });
+    expect(store().nodes.map((n) => n.data.fillStyle)).toEqual(['outline', 'outline']);
+
+    // The swatch the shape was drawn in survives the round trip: only which of
+    // its two colours is painted changed.
+    const swatch = store().nodes.map((n) => [n.data.fill, n.data.stroke]);
+    store().updateSelectedNodesData({ fillStyle: 'filled' });
+    expect(store().nodes.map((n) => n.data.fillStyle)).toEqual(['filled', 'filled']);
+    expect(store().nodes.map((n) => [n.data.fill, n.data.stroke])).toEqual(swatch);
+
+    store().undo();
+    expect(store().nodes.map((n) => n.data.fillStyle)).toEqual(['outline', 'outline']);
+  });
+
+  it('leaves an image out of a fill-style change, as it has no fill to style', () => {
+    const shape = store().addShape('rectangle', { x: 0, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 64, height: 64, position: { x: 200, y: 0 } });
+    select(shape, image);
+    store().updateSelectedNodesData({ fillStyle: 'outline' });
+
+    expect(store().nodes.find((n) => n.id === shape)!.data.fillStyle).toBe('outline');
+    expect(store().nodes.find((n) => n.id === image)!.data.fillStyle).toBeUndefined();
+  });
+
   it('hands the label back to auto-contrast when the colour is cleared', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     select(a);
