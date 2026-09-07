@@ -3,9 +3,14 @@ import { useReactFlow, useViewport } from '@xyflow/react';
 import * as Popover from '@radix-ui/react-popover';
 import {
   Trash2,
+  Columns,
+  Columns3,
   CornerDownRight,
   ArrowRight,
   Link2,
+  PanelTop,
+  Rows,
+  Rows3,
   Shapes,
   RotateCcw,
   SlidersHorizontal,
@@ -36,7 +41,9 @@ import {
   DEFAULT_START_ARROW,
   DEFAULT_STROKE_WIDTH,
 } from '../lib/defaults';
-import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode } from '../lib/nodeKinds';
+import { canRoundCorners, canSwapShapeKind, isContainerNode, isGroupNode, isTableNode } from '../lib/nodeKinds';
+import { addColumn, addRow, removeColumn, removeRow } from '../lib/table';
+import type { TableData } from '../types';
 import { DEFAULT_FONT_SIZE } from '../lib/text';
 import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIcons';
 import type {
@@ -48,6 +55,51 @@ import type {
   StrokeStyle,
   StrokeWidth,
 } from '../types';
+
+/**
+ * A table's own controls: rows, columns and the header.
+ *
+ * Everything acts on **the cell last focused**, so "Add row" adds one under the
+ * row the cursor is in and "Remove column" takes the one it is in — and with no
+ * cursor in this table, at the end, which is what somebody who has just drawn
+ * one means. The store keeps the node's box in step with the grid, so nothing
+ * here has to think about size.
+ */
+function TableControls({ nodeId, table }: { nodeId: string; table: TableData }) {
+  const updateNodeData = useDiagramStore((s) => s.updateNodeData);
+  const activeTableCell = useDiagramStore((s) => s.activeTableCell);
+  const cell = activeTableCell?.nodeId === nodeId ? activeTableCell : null;
+  const apply = (next: TableData) => updateNodeData(nodeId, { table: next });
+
+  const actions: [string, LucideIcon, () => void][] = [
+    ['Add row', Rows3, () => apply(addRow(table, cell ? cell.row + 1 : undefined))],
+    ['Remove row', Rows, () => apply(removeRow(table, cell?.row))],
+    ['Add column', Columns3, () => apply(addColumn(table, cell ? cell.col + 1 : undefined))],
+    ['Remove column', Columns, () => apply(removeColumn(table, cell?.col))],
+  ];
+
+  return (
+    <>
+      <div className="mx-0.5 h-5 w-px bg-white/10" />
+      {actions.map(([label, Icon, run]) => (
+        <Tooltip key={label} label={label} side="top">
+          <button aria-label={label} onClick={run} className={BUTTON_CLASS}>
+            <Icon size={16} />
+          </button>
+        </Tooltip>
+      ))}
+      <Tooltip label="Header row" side="top">
+        <button
+          aria-label="Header row"
+          onClick={() => apply({ ...table, header: !table.header })}
+          className={clsx(BUTTON_CLASS, table.header && ACTIVE_BUTTON_CLASS)}
+        >
+          <PanelTop size={16} />
+        </button>
+      </Tooltip>
+    </>
+  );
+}
 
 /** How far a corner can be rounded, and how transparent a shape can get. */
 const CORNER_RADIUS_MAX = 40;
@@ -611,23 +663,40 @@ export function FloatingToolbar() {
   // images gets neither the text controls nor the colour palette; one that also
   // holds a real shape gets both, and they apply to that shape.
   // A container paints itself from the theme rather than from a fill and a
-  // stroke, so it sits the colour and text controls out alongside images.
+  // stroke, so it sits the colour and text controls out alongside images. A
+  // table sits the *text* controls out for a different reason: a shape's
+  // typography is one label's, and a table's would be the whole grid's — a
+  // control of its own, and a follow-up.
   const styleableNodes = useMemo(
-    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n)),
+    () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isContainerNode(n) && !isTableNode(n)),
     [selectedNodes],
   );
   // A frame takes a colour (a toned-down one — see `FrameNode`) though none of
-  // the other shape controls; a group draws nothing and takes none.
+  // the other shape controls, and so does a table, whose fill tints its header;
+  // a group draws nothing and takes none.
   const colourableNodes = useMemo(
     () => selectedNodes.filter((n) => n.data.shape !== 'image' && !isGroupNode(n)),
     [selectedNodes],
   );
+  // Rows, columns and the header are offered for exactly one table: "add a row"
+  // has no answer for two grids of different widths, and none at all for a
+  // table selected alongside a shape.
+  const tableNode = useMemo(() => {
+    if (selectedNodes.length !== 1) return null;
+    const [node] = selectedNodes;
+    return isTableNode(node) && node.data.table ? node : null;
+  }, [selectedNodes]);
   const canGroup = useMemo(() => canGroupSelection(nodes), [nodes]);
   const canLayout = useMemo(() => canAutoLayout(nodes, edges), [nodes, edges]);
   const hasGroup = useMemo(() => selectedNodes.some(isGroupNode), [selectedNodes]);
   // The shapes `setSelectedShapeKind` would actually redraw, so the button is
   // offered exactly when pressing it would do something.
-  const swappableNodes = useMemo(() => selectedNodes.filter((n) => canSwapShapeKind(n.data)), [selectedNodes]);
+  // A table is excluded on its `type`: its data is a rectangle's, so asking the
+  // data would offer to redraw a grid of cells as a star.
+  const swappableNodes = useMemo(
+    () => selectedNodes.filter((n) => !isTableNode(n) && canSwapShapeKind(n.data)),
+    [selectedNodes],
+  );
   const currentShapeKind = useMemo(() => {
     const first = swappableNodes[0]?.data.shape ?? null;
     return swappableNodes.every((n) => n.data.shape === first) ? first : null;
@@ -763,6 +832,8 @@ export function FloatingToolbar() {
         )}
 
         {swappableNodes.length > 0 && <ShapePicker current={currentShapeKind} onPick={setSelectedShapeKind} />}
+
+        {tableNode && <TableControls nodeId={tableNode.id} table={tableNode.data.table!} />}
 
         {/* Which of the two colours the swatch above carries is drawn. Two
             buttons rather than one toggle: the pair says what the choice *is*

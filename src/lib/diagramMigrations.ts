@@ -31,6 +31,13 @@
  * the data, and `hidden` is derived from it on load (see `deriveMindMapHidden`
  * in the store), so the JSON stays a description of the map rather than a cache
  * of what is on screen.
+ *
+ * **`ShapeData.table` is the same case once more**: only a node of type `table`
+ * carries one, and a diagram written before tables existed holds no such node,
+ * so there is nothing an older spelling could be misread as. Like `defaults` it
+ * is squared up rather than migrated — `normalizeTable`, applied in
+ * `loadDiagram`, where a ragged grid out of the free-form JSON column would
+ * otherwise reach the canvas.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';

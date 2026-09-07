@@ -70,3 +70,35 @@ describe('searchDiagram', () => {
     expect(ids(nodes)).toEqual(['later', 'first']);
   });
 });
+
+describe('searchDiagram — tables', () => {
+  /** A table node whose cells say `rows`. */
+  function table(id: string, rows: string[][], x = 0, y = 0): SearchableNode {
+    return { id, position: { x, y }, data: { table: { rows: rows.map((cells) => ({ cells })) } } };
+  }
+
+  it('finds a table by what one of its cells says', () => {
+    const hits = searchDiagram([table('t', [['Name', 'Role'], ['Ada', 'Maths']])], [], 'maths');
+    expect(hits).toEqual([{ kind: 'node', id: 't', text: 'Maths', start: 0, end: 5 }]);
+  });
+
+  it('counts a table once however many of its cells match', () => {
+    // The count is of things on the board, exactly as it is for a label that
+    // says the same word three times.
+    expect(searchDiagram([table('t', [['ada'], ['ada'], ['ada']])], [], 'ada')).toHaveLength(1);
+  });
+
+  it('reads the cells row by row, so the first match is the first cell', () => {
+    const [hit] = searchDiagram([table('t', [['one two'], ['two three']])], [], 'two');
+    expect(hit.text).toBe('one two');
+  });
+
+  it('takes a table into the same reading order as every other shape', () => {
+    const nodes = [table('below', [['hit']], 0, 400), node('above', 'hit', 0, 0)];
+    expect(ids(searchDiagram(nodes, [], 'hit'))).toEqual(['above', 'below']);
+  });
+
+  it('finds nothing in a table that says nothing', () => {
+    expect(searchDiagram([table('t', [['', ''], ['', '']])], [], 'a')).toEqual([]);
+  });
+});

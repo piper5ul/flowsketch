@@ -43,6 +43,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 ### Canvas
 - Infinite pan and zoom canvas
 - **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Select some shapes and choose **Wrap in frame** from the right-click menu to put a frame around them, and pick a colour for a frame to tint it. Unlike a group, a frame is part of the drawing and appears in exports
+- **Tables** — press `E` (or pick **Table** from the rail's **More shapes** menu) and click to drop a 3×3 table with a header row. Double-click a cell to type in it; `Tab` moves to the next cell and adds a row past the last one, `⇧Tab` goes back, `Enter` moves down and `Esc` stops. Drag a column's border to resize it, and use the toolbar to add or remove rows and columns, turn the header on or off, or pick a colour to tint it. **Paste a Markdown table, a CSV, or a table copied from Google Docs, Word, Notion or an AI assistant and it arrives as a table** — plain `⌘V`, or **Paste as table** from the right-click menu
 - **Filter selection** — with several shapes selected, the toolbar's filter narrows the selection to one kind or one colour, so a sweep-select becomes "every sticky" or "every yellow thing" in one click
 - Markdown in labels: `# ` headings, `- ` bullets, `1. ` numbers, `[ ] ` checklists, `**bold**`, `_italic_` and `` `code` `` render as soon as you finish editing
 - Undo / redo history
@@ -141,6 +142,7 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `S` / `N` | Sticky note |
 | `T` | Text |
 | `F` / `.` | Frame |
+| `E` | Table |
 | `C` / `A` / `L` | Connector |
 | `K` | Add a link to the selected shape |
 
@@ -195,7 +197,7 @@ Every one of these also works while you are typing into a mind-map node's label.
 |----------|--------|
 | `⌘C` | Copy the selection |
 | `⌘X` | Cut the selection |
-| `⌘V` | Paste the selection |
+| `⌘V` | Paste the selection — or a Mermaid flowchart, or a Markdown / CSV / TSV table, from the system clipboard |
 | `⌘D` | Duplicate the selection (offset +30) |
 | `⌥`-drag | Duplicate a shape in place while dragging |
 | `⌘⌥C` | Copy the selected shape's style |

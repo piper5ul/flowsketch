@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canRoundCorners, canSwapShapeKind, isAnchorNode } from './nodeKinds';
+import { canRoundCorners, canSwapShapeKind, isAnchorNode, isContainerNode, isTableNode } from './nodeKinds';
 import type { ShapeData, ShapeKind } from '../types';
 
 const data = (patch: Partial<ShapeData>): ShapeData => ({
@@ -67,5 +67,23 @@ describe('canRoundCorners', () => {
   it('is false for everything already round, drawn as a path, or drawn as nothing', () => {
     const others: ShapeKind[] = ['ellipse', 'pill', 'cylinder', 'star', 'diamond', 'text', 'image'];
     for (const kind of others) expect(canRoundCorners(kind), kind).toBe(false);
+  });
+});
+
+describe('isTableNode', () => {
+  it('recognises a table by its type', () => {
+    expect(isTableNode({ type: 'table' })).toBe(true);
+  });
+
+  it('is false for every other kind of node', () => {
+    for (const type of ['shape', 'frame', 'group', undefined]) {
+      expect(isTableNode({ type }), String(type)).toBe(false);
+    }
+  });
+
+  it('is not a container: nothing hangs off a table', () => {
+    expect(isContainerNode({ type: 'table' })).toBe(false);
+    expect(isContainerNode({ type: 'frame' })).toBe(true);
+    expect(isContainerNode({ type: 'group' })).toBe(true);
   });
 });
