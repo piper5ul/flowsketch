@@ -246,6 +246,10 @@ export const api = {
       body: JSON.stringify({ label }),
     }),
 
+  /** A new diagram of your own holding exactly this version. Any role. */
+  forkVersion: (id: string, versionId: string) =>
+    request<{ id: string; title: string }>(`/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/fork`, { method: 'POST' }),
+
   /**
    * Puts a version back, after snapshotting what it replaces. Editor+.
    *
