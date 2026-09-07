@@ -20,7 +20,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - **Curved connectors** that leave each shape square to the side they attach to
 - Three line styles: solid, dashed, dotted
 - Three line thicknesses: thin, regular, bold — arrowheads scale to match
-- Five arrowhead styles per end: none, arrow, open, circle, diamond
+- Eight arrowhead styles per end: none, arrow, open, circle, diamond, bar, half circle, dot — the line stops at the head, so the point is always crisp
 - Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter)
 - Draggable bend points — drag a segment to add one, double-click a bend to remove it — and a Reset route button to clear them all
 - Free-standing arrows that can be placed and dragged anywhere

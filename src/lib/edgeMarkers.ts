@@ -12,6 +12,36 @@ const MARKER_SIZE_PX: Record<StrokeWidth, number> = { 1: 10, 2: 13, 3: 17 };
 /** An arrowhead that draws something — every style but `none`. */
 export type VisibleArrowStyle = Exclude<ArrowStyle, 'none'>;
 
+/**
+ * Where each marker sits on its line. Every shape is drawn in a 10×10 box
+ * with its tip at x = 10; `refX` is the point in that box that lands on the
+ * path's end, so the shape extends `depth` (as a fraction of the marker's
+ * size) *beyond* the line, toward the shape it points at. The line stops
+ * where the head begins — Whimsical's way — instead of running through the
+ * head to the tip, where a round-capped 4px line pokes out past the point.
+ */
+export const MARKER_GEOMETRY: Record<VisibleArrowStyle, { refX: number; depth: number }> = {
+  arrow: { refX: 2, depth: 0.8 },
+  open: { refX: 2, depth: 0.8 },
+  diamond: { refX: 0, depth: 1 },
+  circle: { refX: 1, depth: 0.8 },
+  halfcircle: { refX: 5, depth: 0.5 },
+  dot: { refX: 5, depth: 0.5 },
+  // A bar stands across the line's end and reaches no further.
+  bar: { refX: 5, depth: 0 },
+};
+
+/**
+ * How far past the path's end a marker of `style` reaches, in px, for a line
+ * of `width` — what an endpoint is pushed out by so the head's tip, not the
+ * line's end, lands where the connector was aimed. Nothing for `none`.
+ */
+export function markerDepthPx(style: ArrowStyle | undefined, width: StrokeWidth | undefined): number {
+  const s = style ?? 'none';
+  if (s === 'none') return 0;
+  return MARKER_GEOMETRY[s].depth * MARKER_SIZE_PX[width ?? DEFAULT_STROKE_WIDTH];
+}
+
 /** One `<marker>` for `ConnectorMarkerDefs` to render. */
 export interface MarkerDef {
   /** What `markerStart`/`markerEnd` point at. */
