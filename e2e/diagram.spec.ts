@@ -2171,3 +2171,28 @@ test('Filter selection narrows a multi-selection to one kind', async ({ page }) 
   await expect(page.locator('.react-flow__node.selected')).toHaveCount(1);
   await expect(page.locator('.react-flow__node.selected [data-shape="ellipse"]')).toHaveCount(1);
 });
+
+test('⌥-hover measures the gap between the selected shape and another', async ({ page }) => {
+  await signUp(page);
+  const id = await page.evaluate(async () => {
+    const shape = (id: string, x: number) => ({
+      id, type: 'shape', position: { x, y: 100 }, width: 100, height: 100,
+      data: { label: id, shape: 'rectangle', fill: '#DBEAFE', stroke: '#93C5FD' },
+    });
+    const body = { title: 'Measure', data: { version: 3, nodes: [shape('a', 100), shape('b', 260)], edges: [] } };
+    const r = await fetch('/api/diagrams', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return ((await r.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${id}`);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+
+  await page.locator('[data-id="a"]').click();
+  await page.keyboard.down('Alt');
+  await page.locator('[data-id="b"]').hover();
+  const measure = page.getByTestId('measure');
+  await expect(measure).toBeVisible();
+  // The boxes are 100 wide at x = 100 and x = 260: a 60px gap.
+  await expect(measure).toContainText('60');
+  await page.keyboard.up('Alt');
+  await expect(measure).toBeHidden();
+});

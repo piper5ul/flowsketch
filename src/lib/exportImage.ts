@@ -60,6 +60,7 @@ const EXCLUDED_SELECTORS = [
   // Likewise a peer's cursor: it is in the viewport so it pans with the board,
   // and who happened to be looking is not part of the drawing.
   '.presence-cursor',
+  '.measure-overlay',
   '.react-flow__handle',
   '.quick-add-btn',
   '.connector-joint-hit',
