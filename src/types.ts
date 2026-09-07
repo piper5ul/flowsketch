@@ -30,12 +30,17 @@ export type ShapeKind =
  * columns and rows — and neither is `ink`, which is one freehand stroke: a pen
  * mark with a polyline for a body instead of a silhouette.
  *
+ * A `wire` is one wireframe component — a button, a browser chrome, a toggle —
+ * and it is one node type holding fourteen sketches rather than fourteen types,
+ * because they differ in what they draw and not in what they are
+ * (`src/lib/wireframe.ts`).
+ *
  * All of them carry a `ShapeData` like any other node — the store's array is
  * homogeneous — so `type`, never the data, is what tells them apart
- * (`isGroupNode` / `isFrameNode` / `isTableNode` / `isInkNode` in
+ * (`isGroupNode` / `isFrameNode` / `isTableNode` / `isInkNode` / `isWireNode` in
  * `src/lib/nodeKinds.ts`).
  */
-export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'table' | 'ink';
+export type DiagramNodeType = 'shape' | 'group' | 'frame' | 'table' | 'ink' | 'wire';
 export type ConnectorKind = 'straight' | 'elbow' | 'curved';
 export type StrokeStyle = 'solid' | 'dashed' | 'dotted';
 /** Thin, regular, bold. The pixel each maps to is `CONNECTOR_STROKE_PX`. */
@@ -74,7 +79,14 @@ export type Tool =
   // and a mode would need a second piece of state for a keystroke to set.
   | 'pen'
   | 'highlighter'
-  | 'eraser';
+  | 'eraser'
+  // Nor is a wireframe component. **One tool value for all fourteen**, with the
+  // one that is armed held beside it in the store as `wireComponent`: fourteen
+  // tool ids would be fourteen rows in `TOOL_COMMANDS` for keystrokes none of
+  // them has (W opens the rail's picker; the components themselves have no
+  // keys), and every reader of `Tool` would have to parse a prefix instead of
+  // comparing a name.
+  | 'wire';
 
 /**
  * One sample along a freehand stroke: x, y, and the pen pressure that drew it
@@ -133,8 +145,9 @@ export type FillStyle = 'filled' | 'outline';
 // extensionless relative import is not a legal specifier — see the note on
 // `src/lib/diagramMigrations.ts` in CLAUDE.md.
 import type { MindMapNodeData } from './lib/mindMap.js';
+import type { WireData } from './lib/wireframe.js';
 
-export type { MindMapNodeData };
+export type { MindMapNodeData, WireData };
 
 /**
  * The grid inside a `table` node: what is in each cell, how wide each column
@@ -230,6 +243,15 @@ export interface ShapeData {
    * before they existed holds no node that would look for one.
    */
   table?: TableData;
+  /**
+   * Which wireframe component this is, on a node of type `wire` and nowhere
+   * else. Optional and absent everywhere else, which is why wireframes needed
+   * no migration: a diagram written before they existed holds no node that
+   * would look for one. `wireComponentOf` in `src/lib/wireframe.ts` is the one
+   * place a stored value is narrowed — the field arrives out of a free-form
+   * JSON column, so a component name this build has never heard of is possible.
+   */
+  wire?: WireData;
   /**
    * The dots cast on this shape in the board's voting round, as voter id → how
    * many of their dots are on it.

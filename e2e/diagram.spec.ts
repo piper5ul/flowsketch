@@ -1748,9 +1748,10 @@ test('a shape dropped in a frame joins it and then travels with it', async ({ pa
   await signUp(page);
   const pane = await newDiagram(page);
 
-  // Rail -> More shapes -> Frame, then click to place it.
+  // Rail -> More shapes -> Frame, then click to place it. `exact`, because the
+  // rail's "Wireframe" button contains this name as a substring.
   await page.getByRole('button', { name: 'More shapes' }).click();
-  await page.getByRole('button', { name: 'Frame' }).click();
+  await page.getByRole('button', { name: 'Frame', exact: true }).click();
   await pane.click({ position: { x: 640, y: 400 } });
 
   const frame = nodesOfType(page, 'frame');

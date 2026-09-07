@@ -6,6 +6,7 @@ import {
   isContainerNode,
   isInkNode,
   isTableNode,
+  isWireNode,
 } from './nodeKinds';
 import type { DiagramNodeType, ShapeData, ShapeKind } from '../types';
 
@@ -90,6 +91,32 @@ describe('canSwapShapeKind', () => {
     expect(canSwapShapeKind(node({}, 'group'))).toBe(false);
     expect(canSwapShapeKind(node({}, 'frame'))).toBe(false);
     expect(canSwapShapeKind(node({ fill: 'transparent' }, 'ink'))).toBe(false);
+  });
+
+  it('refuses a wireframe component: what it draws is its component, not a silhouette', () => {
+    expect(canSwapShapeKind(node({ wire: { component: 'button' } }, 'wire'))).toBe(false);
+    // Its data is a rectangle's, so the type is what has to answer.
+    expect(canSwapShapeKind(node({ wire: { component: 'button' } }))).toBe(true);
+  });
+});
+
+describe('isWireNode', () => {
+  it('recognises a wireframe component by its type', () => {
+    expect(isWireNode({ type: 'wire' })).toBe(true);
+  });
+
+  it('is false for every other kind of node, data notwithstanding', () => {
+    for (const type of ['shape', 'frame', 'group', 'table', 'ink', undefined]) {
+      expect(isWireNode({ type }), String(type)).toBe(false);
+    }
+  });
+
+  it('is not a container: nothing hangs off a browser frame in this build', () => {
+    expect(isContainerNode({ type: 'wire' })).toBe(false);
+  });
+
+  it('is not mistaken for a floating arrow’s endpoint: its two colours are the palette, not transparent', () => {
+    expect(isAnchorNode(data({ fill: '#EAEFF4', stroke: '#9EADBA' }))).toBe(false);
   });
 });
 

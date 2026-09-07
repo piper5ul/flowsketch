@@ -77,6 +77,14 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - **`⇧E` is the eraser** — drag over the strokes you want gone and they go, whole strokes at a time, the wipe undone by a single `⌘Z`. It rubs out ink and nothing else: shapes and connectors are untouched
 - The keys are `B` / `⇧B` / `⇧E` rather than Whimsical's `H` / `⇧H` / `E`, because `H` is the hand tool here and `E` the table tool. All three are also on the rail, behind the pen button
 
+### Wireframes
+- Press `W` (or the rail's **Wireframe** button) for a library of **fourteen UI components** — browser, phone, card, button, input, dropdown, checkbox, toggle, heading, paragraph, link, image, avatar, divider. Pick one and the next click on the board drops it
+- **They are drawn in a deliberately toned-down palette** — grey outlines, muted fills, 1.5 px lines — so a wireframe reads as *layout* rather than as finished design, exactly as Whimsical's do. Picking a colour from the palette tints a component rather than repainting it, so a coloured wireframe is still a wireframe
+- **The caption is an ordinary label.** A button, an input, a heading, a paragraph, a link, a checkbox, a toggle and a dropdown come with sensible text and open for typing the moment they are placed; double-click to change it later. So typography, `⌘F` search, exports and real-time collaboration all work on a wireframe with nothing special about it — and a paragraph renders Markdown, as any label does
+- Components resize, align, distribute, group, lock, take connectors (an arrow pointing at a part of a screen is just a connector) and undo one step at a time, like every other object on the board
+- **Filter selection** lists them by component, so "every button in this sweep-select" is one click
+- `browser`, `phone` and `card` are drawn as frames but do **not** yet own what is laid on them — dragging a browser leaves the buttons where they are. Making them containers is a follow-up
+
 ### Mind maps
 - Press `M` to drop a root node in the middle of the view, already open for typing — a mind map is typed, not drawn
 - `Tab` adds a child, `Enter` a sibling below, `⌘Enter` a sibling above and `⌥Enter` a parent, each one selected and ready to type into. All four work while you are still typing into the node before them, so a whole map goes in without touching the mouse
@@ -151,6 +159,7 @@ On Windows and Linux use Ctrl for ⌘ and Alt for ⌥.
 | `T` | Text |
 | `F` / `.` | Frame |
 | `E` | Table |
+| `W` | Wireframe components (opens the library; the next click places what you pick) |
 | `C` / `A` / `L` | Connector |
 | `B` | Pen (freehand marker) |
 | `⇧B` | Highlighter |
