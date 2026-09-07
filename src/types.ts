@@ -156,6 +156,35 @@ export interface TableData {
   header: boolean;
 }
 
+/**
+ * What each piece of a pasted sequence diagram *is*.
+ *
+ * A sequence diagram is drawn out of ordinary shapes and connectors — there is
+ * no node type for it (see `src/lib/sequenceLayout.ts`) — so a participant is a
+ * rectangle and a lifeline is a dashed connector hanging off an invisible 1×1
+ * anchor, exactly like a floating arrow's endpoint. This field is the label
+ * that says which: it is read by nothing that *draws* the board, and exists so
+ * that later tooling (re-layout, "add a message") can tell the parts apart.
+ *
+ * `participant` is the board id of the participant node this piece belongs to;
+ * on a participant, that is its own id.
+ */
+export type SequenceRole = 'participant' | 'lifelineEnd' | 'messagePoint';
+
+export interface SequenceNodeData {
+  role: SequenceRole;
+  participant: string;
+  /** Which message a `messagePoint` is an end of; absent on the other two. */
+  index?: number;
+}
+
+/** The same label on a connector: a participant's lifeline, or one message. */
+export interface SequenceEdgeData {
+  kind: 'lifeline' | 'message';
+  /** The participant's column for a lifeline, the message's place for a message. */
+  index: number;
+}
+
 export interface ShapeData {
   label: string;
   shape: ShapeKind;
@@ -211,6 +240,15 @@ export interface ShapeData {
    * ink node is still its `type`, as `isInkNode` reads it.
    */
   ink?: InkData;
+  /**
+   * Present on a piece of a **sequence diagram** and absent on every other
+   * node, which is what every diagram written before they existed already
+   * holds — so there is no migration step for it (see the note in
+   * `diagramMigrations.ts`). It is a label, not a renderer: a participant is
+   * still an ordinary rectangle and an anchor still an ordinary 1×1 invisible
+   * node, and both draw exactly as they would without it.
+   */
+  sequence?: SequenceNodeData;
   link?: string;
   locked?: boolean;
   /**
@@ -260,6 +298,12 @@ export interface ConnectorData {
   connectorType: ConnectorKind;
   /** See `ConnectorRole`. Absent on an ordinary connector. */
   role?: ConnectorRole;
+  /**
+   * Present on a **sequence diagram's** lifeline or message and absent on every
+   * other connector — the counterpart of `ShapeData.sequence`, and a label in
+   * exactly the same way: nothing reads it to draw the line.
+   */
+  sequence?: SequenceEdgeData;
   stroke: string;
   strokeStyle: StrokeStyle;
   /** Absent on connectors saved before widths existed; they read as regular. */

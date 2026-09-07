@@ -3117,6 +3117,143 @@ describe('pasteMermaid', () => {
   });
 });
 
+describe('pasteSequence', () => {
+  const origin = { x: 400, y: 300 };
+  const participants = () =>
+    store().nodes.filter((n) => n.data.sequence?.role === 'participant');
+  const anchors = () =>
+    store().nodes.filter((n) => n.data.sequence !== undefined && n.data.sequence.role !== 'participant');
+  const messages = () => store().edges.filter((e) => e.data?.sequence?.kind === 'message');
+
+  const CONVERSATION = [
+    'sequenceDiagram',
+    '  participant U as User',
+    '  participant S as Server',
+    '  U->>S: save',
+    '  S-->>U: ok',
+  ].join('\n');
+
+  it('is null for text that is not a sequence diagram, and changes nothing', () => {
+    expect(store().pasteSequence('just some notes', origin)).toBeNull();
+    expect(store().pasteSequence('flowchart TD\n  A --> B', origin)).toBeNull();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('draws a participant per actor, in a row from the origin', () => {
+    const ids = store().pasteSequence(CONVERSATION, origin);
+
+    expect(ids).toHaveLength(2);
+    expect(participants().map((n) => n.data.label)).toEqual(['User', 'Server']);
+    expect(participants()[0].position).toEqual(origin);
+    expect(participants()[1].position.y).toBe(origin.y);
+    expect(participants()[1].position.x).toBeGreaterThan(origin.x);
+    // An ordinary rectangle in the board's own default style — no new node type.
+    expect(participants().every((n) => n.type === 'shape' && n.data.shape === 'rectangle')).toBe(true);
+  });
+
+  it('hangs every anchor off its participant as an invisible 1×1 child', () => {
+    store().pasteSequence(CONVERSATION, origin);
+    const participantIds = new Set(participants().map((n) => n.id));
+
+    // Two lifeline ends and four message points.
+    expect(anchors()).toHaveLength(6);
+    for (const anchor of anchors()) {
+      expect(anchor.width).toBe(1);
+      expect(anchor.height).toBe(1);
+      expect(anchor.data.fill).toBe('transparent');
+      expect(anchor.data.stroke).toBe('transparent');
+      expect(anchor.data.label).toBe('');
+      expect(participantIds.has(anchor.parentId!)).toBe(true);
+      // Which is what makes a column one thing to drag and one thing to delete.
+      expect(anchor.data.sequence!.participant).toBe(anchor.parentId);
+    }
+  });
+
+  it('keeps every parent ahead of its children in the array', () => {
+    store().pasteSequence(CONVERSATION, origin);
+    const nodes = store().nodes;
+    for (const node of nodes) {
+      if (node.parentId === undefined) continue;
+      expect(nodes.findIndex((n) => n.id === node.parentId)).toBeLessThan(nodes.indexOf(node));
+    }
+  });
+
+  it('draws a dashed headless lifeline per participant and a labelled message per line', () => {
+    store().pasteSequence(CONVERSATION, origin);
+
+    const lifelines = store().edges.filter((e) => e.data?.sequence?.kind === 'lifeline');
+    expect(lifelines).toHaveLength(2);
+    expect(lifelines[0].data).toMatchObject({
+      strokeStyle: 'dashed',
+      endArrowStyle: 'none',
+      startArrowStyle: 'none',
+      connectorType: 'straight',
+      label: '',
+    });
+    // The board's default connector kind is `elbow`; the ladder overrides it.
+    expect(store().edges.every((e) => e.data?.connectorType === 'straight')).toBe(true);
+
+    expect(messages().map((e) => e.data!.label)).toEqual(['save', 'ok']);
+    expect(messages()[0].data).toMatchObject({ strokeStyle: 'solid', endArrowStyle: 'arrow' });
+    expect(messages()[1].data).toMatchObject({ strokeStyle: 'dashed', endArrowStyle: 'arrow' });
+    // Arrowhead defs are regenerated like every other new connector's.
+    expect(messages()[0].markerEnd).toBeTruthy();
+  });
+
+  it('is ONE undo step, and redo brings the whole diagram back', () => {
+    store().pasteSequence(CONVERSATION, origin);
+    expect(store().nodes).toHaveLength(8);
+    expect(store().edges).toHaveLength(4);
+
+    store().undo();
+    expect(store().nodes).toHaveLength(0);
+    expect(store().edges).toHaveLength(0);
+
+    store().redo();
+    expect(store().nodes).toHaveLength(8);
+    expect(store().edges).toHaveLength(4);
+  });
+
+  it('leaves the rest of the board alone and selects only the participants', () => {
+    const existing = store().addShape('rectangle', { x: 0, y: 0 });
+    select(existing);
+
+    store().pasteSequence(CONVERSATION, origin);
+    expect(store().nodes.find((n) => n.id === existing)).toMatchObject({
+      position: { x: 0, y: 0 },
+      selected: false,
+    });
+    expect(store().nodes.filter((n) => n.selected).map((n) => n.data.label)).toEqual([
+      'User',
+      'Server',
+    ]);
+    expect(store().edges.some((e) => e.selected)).toBe(false);
+  });
+
+  it('deletes a participant with its whole column', () => {
+    store().pasteSequence(CONVERSATION, origin);
+    select(participants()[0].id);
+    store().deleteSelection();
+
+    // The column's four nodes go (participant, lifeline end, two message
+    // points), and every connector that touched one goes with them.
+    expect(store().nodes).toHaveLength(4);
+    expect(store().edges).toHaveLength(1);
+    expect(store().edges[0].data?.sequence).toEqual({ kind: 'lifeline', index: 1 });
+  });
+
+  it('draws a self-message as a loop on one lifeline', () => {
+    store().pasteSequence('sequenceDiagram\n  A->>A: think', origin);
+    expect(participants()).toHaveLength(1);
+    const [message] = messages();
+    const source = store().nodes.find((n) => n.id === message.source)!;
+    const target = store().nodes.find((n) => n.id === message.target)!;
+    expect(source.parentId).toBe(target.parentId);
+    expect(message.data!.waypoints).toHaveLength(2);
+  });
+});
+
 describe('tables', () => {
   const tableOf = (id: string) => store().nodes.find((n) => n.id === id)!;
   const cells = (id: string) => tableOf(id).data.table!.rows.map((r) => r.cells);

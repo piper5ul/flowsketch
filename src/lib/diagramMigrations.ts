@@ -33,6 +33,15 @@
  * written before the pen existed holds — a node with no `ink` simply is not a
  * stroke, and its `type` says so first. No step here for it either.
  *
+ * **Sequence diagrams are the same case yet again**: `ShapeData.sequence` and
+ * `ConnectorData.sequence` say which piece of a pasted sequence diagram a shape
+ * or a connector is (`src/lib/sequenceLayout.ts`), and absent means "an
+ * ordinary shape" and "an ordinary connector" — what every diagram written
+ * before they existed holds. Nothing *draws* from either field: a participant is
+ * a rectangle and a lifeline's far end is the same invisible 1×1 anchor a
+ * floating arrow already hangs off, so a row without them is not merely
+ * readable but identical. No step here for them.
+ *
  * What a mind map does *not* store is `hidden`: folding a branch away sets `collapsed` in
  * the data, and `hidden` is derived from it on load (see `deriveMindMapHidden`
  * in the store), so the JSON stays a description of the map rather than a cache

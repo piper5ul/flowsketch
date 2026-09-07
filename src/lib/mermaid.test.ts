@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMermaidFlowchart } from './mermaid';
+import { parseMermaidFlowchart, parseMermaidSequence } from './mermaid';
 
 /** The chart, or a thrown error — every test here expects text that parses. */
 function parse(text: string) {
@@ -245,5 +245,187 @@ describe('a whole chart', () => {
       { source: 'C', target: 'E' },
       { source: 'D', target: 'E' },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sequence diagrams
+// ---------------------------------------------------------------------------
+
+/** `sequenceDiagram` with `lines` under it. */
+function seq(...lines: string[]): string {
+  return ['sequenceDiagram', ...lines].join('\n');
+}
+
+/**
+ * `lines` under a header, parsed — or a thrown error, since every test that
+ * calls this expects text that parses.
+ */
+function parseSequence(...lines: string[]) {
+  const diagram = parseMermaidSequence(seq(...lines));
+  if (!diagram) throw new Error('expected a sequence diagram');
+  return diagram;
+}
+
+describe('parseMermaidSequence', () => {
+  it('is null for anything without a sequenceDiagram header', () => {
+    expect(parseMermaidSequence('just some notes')).toBeNull();
+    expect(parseMermaidSequence('')).toBeNull();
+    // A flowchart is the other parser's, and vice versa: neither accepts the
+    // other's source, which is what lets a caller try both in turn.
+    expect(parseMermaidSequence('flowchart TD\n  A --> B')).toBeNull();
+    expect(parseMermaidFlowchart(seq('A->>B: hi'))).toBeNull();
+  });
+
+  it('is null for a header with nobody under it', () => {
+    expect(parseMermaidSequence('sequenceDiagram')).toBeNull();
+    expect(parseMermaidSequence(seq('loop every minute', 'end'))).toBeNull();
+  });
+
+  it('reads a fenced block and ignores %% comments', () => {
+    const diagram = parseMermaidSequence(
+      ['```mermaid', 'sequenceDiagram', '  %% a note to self', '  A->>B: hi', '```'].join('\n'),
+    );
+    expect(diagram?.participants.map((p) => p.id)).toEqual(['A', 'B']);
+    expect(diagram?.messages).toHaveLength(1);
+  });
+
+  it('declares participants with participant and actor, with or without a label', () => {
+    const diagram = parseSequence(
+      'participant A as Alice',
+      'actor B',
+      'participant  C  as  Carol Chen ',
+    );
+    expect(diagram.participants).toEqual([
+      { id: 'A', label: 'Alice' },
+      { id: 'B', label: 'B' },
+      { id: 'C', label: 'Carol Chen' },
+    ]);
+    expect(diagram.messages).toEqual([]);
+  });
+
+  it('takes participants nobody declared, in the order they are first named', () => {
+    const diagram = parseSequence('B->>A: first', 'A->>C: second', 'C->>B: third');
+    expect(diagram.participants).toEqual([
+      { id: 'B', label: 'B' },
+      { id: 'A', label: 'A' },
+      { id: 'C', label: 'C' },
+    ]);
+  });
+
+  it('lets a declaration name a participant a message mentioned first', () => {
+    // Declared after the fact, which Mermaid allows: the place in the row is
+    // where the id was first seen, and the label is the declaration's.
+    const diagram = parseSequence('A->>B: hi', 'participant B as Bob');
+    expect(diagram.participants).toEqual([
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'Bob' },
+    ]);
+  });
+
+  it('reads every arrow form', () => {
+    const diagram = parseSequence(
+      'A->>B: solid head',
+      'A-->>B: dotted, solid head',
+      'A->B: open',
+      'A-->B: dotted, open',
+      'A-xB: cross reads as solid',
+      'A--xB: dotted cross',
+      'A-)B: async reads as open',
+      'A--)B: dotted async',
+    );
+    expect(diagram.messages).toEqual([
+      { from: 'A', to: 'B', text: 'solid head', arrow: 'solid', dashed: false },
+      { from: 'A', to: 'B', text: 'dotted, solid head', arrow: 'solid', dashed: true },
+      { from: 'A', to: 'B', text: 'open', arrow: 'open', dashed: false },
+      { from: 'A', to: 'B', text: 'dotted, open', arrow: 'open', dashed: true },
+      { from: 'A', to: 'B', text: 'cross reads as solid', arrow: 'solid', dashed: false },
+      { from: 'A', to: 'B', text: 'dotted cross', arrow: 'solid', dashed: true },
+      { from: 'A', to: 'B', text: 'async reads as open', arrow: 'open', dashed: false },
+      { from: 'A', to: 'B', text: 'dotted async', arrow: 'open', dashed: true },
+    ]);
+  });
+
+  it('tolerates spaces around the arrow and an empty message', () => {
+    const diagram = parseSequence('Alice  ->>  Bob : hello there', 'Bob->>Alice:');
+    expect(diagram.messages).toEqual([
+      { from: 'Alice', to: 'Bob', text: 'hello there', arrow: 'solid', dashed: false },
+      { from: 'Bob', to: 'Alice', text: '', arrow: 'solid', dashed: false },
+    ]);
+  });
+
+  it('keeps a self-message as one from and to the same participant', () => {
+    const diagram = parseSequence('A->>A: think');
+    expect(diagram.participants).toEqual([{ id: 'A', label: 'A' }]);
+    expect(diagram.messages).toEqual([
+      { from: 'A', to: 'A', text: 'think', arrow: 'solid', dashed: false },
+    ]);
+  });
+
+  it('drops the activation markers on a message rather than the message', () => {
+    const diagram = parseSequence('A->>+B: call', 'B-->>-A: return');
+    expect(diagram.participants.map((p) => p.id)).toEqual(['A', 'B']);
+    expect(diagram.messages).toEqual([
+      { from: 'A', to: 'B', text: 'call', arrow: 'solid', dashed: false },
+      { from: 'B', to: 'A', text: 'return', arrow: 'solid', dashed: true },
+    ]);
+  });
+
+  it('skips the blocks and furniture it does not draw, keeping what is inside them', () => {
+    const diagram = parseSequence(
+      'autonumber',
+      'title A conversation',
+      'participant A as Alice',
+      'Note over A: thinking',
+      'Note right of A: still thinking',
+      'activate A',
+      'loop every minute',
+      '  A->>B: poll',
+      '  alt it worked',
+      '    B-->>A: yes',
+      '  else it did not',
+      '    B-->>A: no',
+      '  end',
+      'end',
+      'deactivate A',
+      'rect rgb(200, 200, 255)',
+      '  A->>B: last',
+      'end',
+    );
+    expect(diagram.participants).toEqual([
+      { id: 'A', label: 'Alice' },
+      { id: 'B', label: 'B' },
+    ]);
+    expect(diagram.messages.map((m) => m.text)).toEqual(['poll', 'yes', 'no', 'last']);
+  });
+
+  it('reads a created participant and ignores its destruction', () => {
+    const diagram = parseSequence('A->>B: hi', 'create participant C as Carol', 'destroy C');
+    expect(diagram.participants).toEqual([
+      { id: 'A', label: 'A' },
+      { id: 'B', label: 'B' },
+      { id: 'C', label: 'Carol' },
+    ]);
+  });
+
+  it('reads a whole small conversation', () => {
+    const diagram = parseSequence(
+      'participant U as User',
+      'participant W as Web app',
+      'participant S as API',
+      'U->>W: click Save',
+      'W->>S: PUT /diagram',
+      'S-->>W: 200 OK',
+      'W->>U: Saved',
+    );
+    expect(diagram.participants.map((p) => p.label)).toEqual(['User', 'Web app', 'API']);
+    expect(diagram.messages).toHaveLength(4);
+    expect(diagram.messages[2]).toEqual({
+      from: 'S',
+      to: 'W',
+      text: '200 OK',
+      arrow: 'solid',
+      dashed: true,
+    });
   });
 });

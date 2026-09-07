@@ -30,7 +30,7 @@ import {
   isInkTool,
 } from '../lib/ink';
 import { useImageInsert } from '../lib/useImageInsert';
-import { parseMermaidFlowchart } from '../lib/mermaid';
+import { parseMermaidFlowchart, parseMermaidSequence } from '../lib/mermaid';
 import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_ROW_HEIGHT,
@@ -888,11 +888,12 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // blow a screenshot-sized paste past the 5 MB limit on the diagram's JSON
   // body, which failed the save rather than the paste.
   //
-  // Text is offered to two parsers in turn — **Mermaid first, then tables** —
-  // and becomes a flowchart or a table when it is one, the same thing the two
-  // menu items do, at the middle of the view rather than at a click. Mermaid
-  // goes first because its source is unmistakable and a `graph TD` line holds
-  // no delimiter a table parser would want. Text that is neither is left alone
+  // Text is offered to three parsers in turn — **Mermaid's two kinds first,
+  // then tables** — and becomes a sequence diagram, a flowchart or a table when
+  // it is one, the same thing the two menu items do, at the middle of the view
+  // rather than at a click. Mermaid goes first because its source is
+  // unmistakable and neither a `sequenceDiagram` nor a `graph TD` line holds a
+  // delimiter a table parser would want. Text that is none of them is left alone
   // and behaves exactly as it always has: pasting a list is still the menu
   // item's job, since a paragraph of prose is far more often meant as words
   // than as a wall of sticky notes.
@@ -917,6 +918,11 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
       const text = data.getData('text/plain');
       if (!text) return;
+      if (parseMermaidSequence(text)) {
+        e.preventDefault();
+        useDiagramStore.getState().pasteSequence(text, dropPoint());
+        return;
+      }
       if (parseMermaidFlowchart(text)) {
         e.preventDefault();
         void useDiagramStore.getState().pasteMermaid(text, dropPoint());
