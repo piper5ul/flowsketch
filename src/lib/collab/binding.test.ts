@@ -54,8 +54,8 @@ function bindWithHistory(doc: Y.Doc, options: { readOnly?: boolean } = {}) {
 
 /** The diagram exactly as an autosave would have written it. */
 function snapshot() {
-  const { nodes, edges, viewport, defaults, thumbnailNodeIds } = store();
-  return serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds);
+  const { nodes, edges, viewport, defaults, thumbnailNodeIds, voting, timer } = store();
+  return serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds, { voting, timer });
 }
 
 /** Select exactly these node ids, the way the canvas does. */
@@ -434,6 +434,126 @@ describe('board thumbnail', () => {
     store().setThumbnailNodeIds([a]);
 
     expect(doc.getMap('meta').get('thumbnailNodeIds')).toBeUndefined();
+  });
+});
+
+/**
+ * The round of dot voting and the shared countdown ride in `meta` beside the
+ * defaults and the thumbnail, on the same rules: everybody on the board votes
+ * in the same round and watches the same clock, so both are read back out.
+ */
+describe('voting and the timer', () => {
+  /** Somebody to attribute a dot to — the store is loaded without one. */
+  beforeEach(() => {
+    useDiagramStore.setState({ viewerId: 'ada' });
+  });
+
+  it('writes a round this client opens into the document', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('sticky', { x: 0, y: 0 });
+
+    store().startVoting(3);
+
+    expect(docToDiagramData(doc).voting).toMatchObject({ active: true, dotsPerPerson: 3 });
+    // And the snapshot the server would render is still exactly the JSON an
+    // autosave would have written.
+    expect(docToDiagramData(doc)).toEqual(snapshot());
+  });
+
+  it('carries a dot to the document as ordinary node data', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().startVoting(3);
+
+    store().toggleVote(id);
+
+    expect(docToDiagramData(doc).nodes[0].data.votes).toEqual({ ada: 1 });
+    expect(docToDiagramData(doc)).toEqual(snapshot());
+  });
+
+  it('renders a collaborator’s round — and their reveal — onto this client', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('sticky', { x: 0, y: 0 });
+
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    const round = { active: true, revealed: false, dotsPerPerson: 2, startedById: 'grace' };
+    pushDiagramToDoc(peer, { ...docToDiagramData(peer), voting: round }, 'peer');
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+    expect(store().voting).toEqual(round);
+
+    // Closing the round has to reach every window at once, or one person is
+    // still voting blind while another reads the answers.
+    pushDiagramToDoc(
+      peer,
+      { ...docToDiagramData(peer), voting: { ...round, active: false, revealed: true } },
+      'peer',
+    );
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+    expect(store().voting).toMatchObject({ active: false, revealed: true });
+  });
+
+  it('narrows a collaborator’s round before acting on it', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+
+    // Written straight into the document, the way a browser running another
+    // build — or none of ours — could.
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    peer.getMap('meta').set('voting', { active: true, dotsPerPerson: 3 });
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().voting).toBeNull();
+  });
+
+  it('round-trips a timer, and takes it off every window when one stops it', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().startTimer(300);
+    const endsAt = store().timer!.endsAt;
+    expect(docToDiagramData(doc).timer).toEqual({ endsAt, startedById: 'ada' });
+
+    store().stopTimer();
+    expect(doc.getMap('meta').get('timer')).toBeUndefined();
+    expect('timer' in docToDiagramData(doc)).toBe(false);
+  });
+
+  it('renders a collaborator’s timer onto this client', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    const timer = { endsAt: '2030-01-01T00:00:00.000Z', startedById: 'grace' };
+    pushDiagramToDoc(peer, { ...docToDiagramData(peer), timer }, 'peer');
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().timer).toEqual(timer);
+  });
+
+  it('writes neither key for a board that has never been voted on or timed', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    store().addShape('sticky', { x: 0, y: 0 });
+    expect(doc.getMap('meta').get('voting')).toBeUndefined();
+    expect(doc.getMap('meta').get('timer')).toBeUndefined();
+  });
+
+  it('carries a round opened before the socket into the document', () => {
+    store().addShape('sticky', { x: 0, y: 0 });
+    const baseline = snapshot();
+    store().startVoting(4);
+
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, baseline, 'server');
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+
+    expect(docToDiagramData(doc).voting).toMatchObject({ dotsPerPerson: 4 });
+    expect(store().voting).toMatchObject({ dotsPerPerson: 4 });
   });
 });
 

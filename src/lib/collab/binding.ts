@@ -50,7 +50,11 @@ import {
   nodesOf,
   THUMBNAIL_KEY,
   thumbnailNodeIdsOf,
+  TIMER_KEY,
+  timerOf,
   VIEWPORT_KEY,
+  VOTING_KEY,
+  votingOf,
   writeDiagramIntoDoc,
   type DocEntry,
 } from '../../../shared/collabDoc';
@@ -59,6 +63,8 @@ import { deriveMindMapHidden, hasDocumentHistory, serializeDiagram } from '../..
 import { normalizeParentage } from '../nodeTree';
 import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
 import { sanitizeThumbnailIds } from '../boardThumbnail';
+import { sanitizeVotingSession } from '../voting';
+import { sanitizeTimer } from '../timer';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -194,6 +200,12 @@ export function pushDiagramToDoc(doc: Y.Doc, data: DiagramData, origin: unknown)
     // in every window, so which shapes stand for the board has to be shared the
     // way the defaults are and not the way the camera is.
     changed = syncThumbnail(meta, data.thumbnailNodeIds) || changed;
+
+    // And so are the round of dot voting and the shared countdown: everybody on
+    // the board votes in the same round and watches the same clock, so both go
+    // the way the defaults do rather than the way the camera does.
+    changed = syncMetaValue(meta, VOTING_KEY, data.voting) || changed;
+    changed = syncMetaValue(meta, TIMER_KEY, data.timer) || changed;
   }, origin);
   return changed;
 }
@@ -227,6 +239,23 @@ function syncThumbnail(meta: Y.Map<unknown>, ids: readonly string[] | undefined)
 }
 
 /**
+ * The same again for a `meta` key holding one plain object — the voting round
+ * and the timer. Written when it differs, deleted when there is none, so a board
+ * that has never been voted on or timed holds no key at all.
+ */
+function syncMetaValue(meta: Y.Map<unknown>, key: string, value: object | null | undefined): boolean {
+  const current = meta.get(key);
+  if (!value) {
+    if (current === undefined) return false;
+    meta.delete(key);
+    return true;
+  }
+  if (same(current, value)) return false;
+  meta.set(key, plain(value));
+  return true;
+}
+
+/**
  * Write the edits made between `baseline` and `current` into the document,
  * leaving everything else to it.
  *
@@ -253,9 +282,16 @@ export function applyLocalEditsSince(
     if (!same(baseline.defaults, current.defaults)) {
       syncDefaults(docMeta(doc), current.defaults as BoardDefaults | undefined);
     }
-    // Same rule again for the board's thumbnail.
+    // Same rule again for the board's thumbnail, and for the round of voting
+    // and the countdown beside it.
     if (!same(baseline.thumbnailNodeIds, current.thumbnailNodeIds)) {
       syncThumbnail(docMeta(doc), current.thumbnailNodeIds);
+    }
+    if (!same(baseline.voting, current.voting)) {
+      syncMetaValue(docMeta(doc), VOTING_KEY, current.voting);
+    }
+    if (!same(baseline.timer, current.timer)) {
+      syncMetaValue(docMeta(doc), TIMER_KEY, current.timer);
     }
   }, origin);
 }
@@ -324,7 +360,14 @@ export function docEdgesOntoStore(
 
 /** The store's diagram, in the form the document holds it. */
 function diagramOf(state: DiagramState): DiagramData {
-  return serializeDiagram(state.nodes, state.edges, state.viewport, state.defaults, state.thumbnailNodeIds);
+  return serializeDiagram(
+    state.nodes,
+    state.edges,
+    state.viewport,
+    state.defaults,
+    state.thumbnailNodeIds,
+    { voting: state.voting, timer: state.timer },
+  );
 }
 
 /**
@@ -391,12 +434,27 @@ export function bindDocToStore(
     // Narrowed for the same reason, and through the same gate a stored row goes
     // through: it is another browser's list of ids.
     const thumbnailNodeIds = sanitizeThumbnailIds(thumbnailNodeIdsOf(doc));
+    // Narrowed for the same reason once more: a peer's round of voting decides
+    // whether a dot can be cast here and whether the totals are shown, and a
+    // peer's timer is drawn as a countdown.
+    const voting = sanitizeVotingSession(votingOf(doc));
+    const timer = sanitizeTimer(timerOf(doc));
 
     const state = store.getState();
     const elementsChanged = next !== rendered;
     const defaultsChanged = !same(defaults, state.defaults);
     const thumbnailChanged = !same(thumbnailNodeIds, state.thumbnailNodeIds);
-    if (!elementsChanged && !defaultsChanged && !thumbnailChanged) return;
+    const votingChanged = !same(voting, state.voting);
+    const timerChanged = !same(timer, state.timer);
+    if (
+      !elementsChanged &&
+      !defaultsChanged &&
+      !thumbnailChanged &&
+      !votingChanged &&
+      !timerChanged
+    ) {
+      return;
+    }
 
     const patch: Partial<DiagramState> = {};
     if (elementsChanged) {
@@ -418,6 +476,10 @@ export function bindDocToStore(
     // Read back for the same reason: the dashboard card is the board's, not
     // this window's.
     if (thumbnailChanged) patch.thumbnailNodeIds = thumbnailNodeIds;
+    // Read back for the same reason again: everybody on the board is in the
+    // same round of voting and watching the same clock.
+    if (votingChanged) patch.voting = voting;
+    if (timerChanged) patch.timer = timer;
 
     applyingRemote = true;
     try {
@@ -629,7 +691,9 @@ export function bindDocToStore(
       state.edges === previous.edges &&
       state.viewport === previous.viewport &&
       state.defaults === previous.defaults &&
-      state.thumbnailNodeIds === previous.thumbnailNodeIds
+      state.thumbnailNodeIds === previous.thumbnailNodeIds &&
+      state.voting === previous.voting &&
+      state.timer === previous.timer
     ) {
       return;
     }

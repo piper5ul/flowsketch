@@ -13,7 +13,9 @@ import {
   isSeeded,
   nodeEntries,
   THUMBNAIL_KEY,
+  TIMER_KEY,
   VIEWPORT_KEY,
+  VOTING_KEY,
 } from '../../shared/collabDoc.js';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagramMigrations.js';
 import { docToDiagramData, seedDocFromDiagramData } from './render.js';
@@ -168,6 +170,52 @@ describe('docToDiagramData', () => {
     const empty = new Y.Doc();
     docMeta(empty).set(THUMBNAIL_KEY, []);
     expect('thumbnailNodeIds' in docToDiagramData(empty)).toBe(false);
+  });
+
+  it("round-trips the board's voting round, and omits the key when there is none", () => {
+    const round = { active: true, revealed: false, dotsPerPerson: 3, startedById: 'ada' };
+    const voting = new Y.Doc();
+    seedDocFromDiagramData(voting, diagram({ voting: round }));
+    expect(docToDiagramData(voting).voting).toEqual(round);
+
+    const without = new Y.Doc();
+    seedDocFromDiagramData(without, diagram());
+    expect('voting' in docToDiagramData(without)).toBe(false);
+  });
+
+  it('narrows a round the document holds, and omits one nothing could act on', () => {
+    // The budget is clamped rather than thrown away — a peer running another
+    // build could reasonably pick a number this one would not.
+    const clamped = new Y.Doc();
+    docMeta(clamped).set(VOTING_KEY, {
+      active: true,
+      revealed: false,
+      dotsPerPerson: 900,
+      startedById: 'ada',
+    });
+    expect(docToDiagramData(clamped).voting?.dotsPerPerson).toBe(20);
+
+    // A round missing a field a reader acts on is no round at all.
+    const broken = new Y.Doc();
+    docMeta(broken).set(VOTING_KEY, { active: true });
+    expect('voting' in docToDiagramData(broken)).toBe(false);
+  });
+
+  it("round-trips the board's timer, and omits the key when there is none", () => {
+    const timer = { endsAt: '2030-01-01T00:00:00.000Z', startedById: 'ada' };
+    const running = new Y.Doc();
+    seedDocFromDiagramData(running, diagram({ timer }));
+    expect(docToDiagramData(running).timer).toEqual(timer);
+
+    const without = new Y.Doc();
+    seedDocFromDiagramData(without, diagram());
+    expect('timer' in docToDiagramData(without)).toBe(false);
+  });
+
+  it('omits a timer whose end time nothing could count down from', () => {
+    const doc = new Y.Doc();
+    docMeta(doc).set(TIMER_KEY, { endsAt: 'soon', startedById: 'ada' });
+    expect('timer' in docToDiagramData(doc)).toBe(false);
   });
 });
 

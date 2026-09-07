@@ -197,8 +197,16 @@ export const useCollabStore = create<CollabState>((set, get) => ({
     // canvas is interactive the whole time the socket is opening, and the
     // binding needs to know which of the shapes on it are *this* browser's
     // work — see `BindDocOptions.baseline`.
-    const { nodes, edges, viewport, defaults } = useDiagramStore.getState();
-    const baseline = serializeDiagram(nodes, edges, viewport, defaults);
+    // Everything `serializeDiagram` writes, not just the elements: a baseline
+    // missing a field reads as "this browser has just set one" for any board
+    // that already had it, and the binding would write it back over the
+    // document's own.
+    const { nodes, edges, viewport, defaults, thumbnailNodeIds, voting, timer } =
+      useDiagramStore.getState();
+    const baseline = serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds, {
+      voting,
+      timer,
+    });
 
     /**
      * Make the document the diagram, once it really holds one.

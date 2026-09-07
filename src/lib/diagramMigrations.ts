@@ -44,6 +44,18 @@
  * is squared up rather than migrated — `normalizeTable`, applied in
  * `loadDiagram`, where a ragged grid out of the free-form JSON column would
  * otherwise reach the canvas.
+ *
+ * **Dot voting and the board timer are the case yet again.** `ShapeData.votes`
+ * is absent on every shape nobody has voted for, and `DiagramData.voting` /
+ * `DiagramData.timer` are absent on a board that has never run a round or
+ * started a countdown — which is what every diagram written before they existed
+ * holds, so there is no step for any of the three. The two board-level fields
+ * are *narrowed* here the way `defaults` and `thumbnailNodeIds` are
+ * (`sanitizeVotingSession` in `src/lib/voting.ts`, `sanitizeTimer` in
+ * `src/lib/timer.ts`); the per-node `votes` are narrowed where they are counted
+ * instead (`votesOf`), because a shape's `data` is a free-form bag everywhere
+ * else too and there is no reason to make loading a board walk every node for
+ * this one field.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';
@@ -51,6 +63,8 @@ import { computeMarkers } from './edgeMarkers.js';
 import { DEFAULT_EDGE_STROKE } from './defaults.js';
 import { sanitizeDefaults } from './defaultStyle.js';
 import { sanitizeThumbnailIds } from './boardThumbnail.js';
+import { sanitizeVotingSession } from './voting.js';
+import { sanitizeTimer } from './timer.js';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 3;
@@ -247,6 +261,18 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const thumbnailNodeIds = sanitizeThumbnailIds(data.thumbnailNodeIds);
   if (thumbnailNodeIds) migrated.thumbnailNodeIds = thumbnailNodeIds;
   else delete migrated.thumbnailNodeIds;
+
+  // The round of voting and the countdown, narrowed on the way in for the same
+  // reason: a half-written round would leave a board where dots cannot be cast
+  // and cannot be revealed, and a timer whose end time does not parse would
+  // show a countdown that never moves.
+  const voting = sanitizeVotingSession(data.voting);
+  if (voting) migrated.voting = voting;
+  else delete migrated.voting;
+
+  const timer = sanitizeTimer(data.timer);
+  if (timer) migrated.timer = timer;
+  else delete migrated.timer;
 
   return migrated;
 }

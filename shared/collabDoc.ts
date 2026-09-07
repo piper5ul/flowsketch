@@ -32,8 +32,10 @@ export const EDGES_KEY = 'edges';
 export const META_KEY = 'meta';
 
 /**
- * The `meta` map's keys: where the canvas was left, the board's defaults, and
- * which shapes stand for the board on its dashboard card.
+ * The `meta` map's keys: where the canvas was left, the board's defaults, which
+ * shapes stand for the board on its dashboard card, the round of dot voting it
+ * is in, and its shared countdown. All but the first are read back out — see
+ * each one.
  */
 export const VIEWPORT_KEY = 'viewport';
 /**
@@ -53,6 +55,23 @@ export const DEFAULTS_KEY = 'defaults';
  * to reach every window — the card is the same card for all of them.
  */
 export const THUMBNAIL_KEY = 'thumbnailNodeIds';
+/**
+ * The round of dot voting the board is in.
+ *
+ * Read back out like the defaults and the thumbnail: everybody on the board is
+ * in the same round, with the same budget, and the moment the totals are
+ * revealed has to be the same moment in every window — otherwise one person is
+ * still voting blind while another is reading the answers.
+ */
+export const VOTING_KEY = 'voting';
+/**
+ * The board's shared countdown, as the instant it runs out.
+ *
+ * Read back out for the same reason, and stored as an **end time** so that
+ * nothing has to tick through the document: each window subtracts its own clock
+ * from this. See `src/lib/timer.ts`.
+ */
+export const TIMER_KEY = 'timer';
 
 /**
  * One element in the document: the JSON the app has always written, plus where
@@ -163,6 +182,21 @@ export function thumbnailNodeIdsOf(doc: Y.Doc): unknown {
 }
 
 /**
+ * The voting round the document holds, unnarrowed — `sanitizeVotingSession`
+ * (`src/lib/voting.ts`) is what every reader runs it through, for the reason
+ * `thumbnailNodeIdsOf` is left raw: this module describes the format and holds
+ * no opinion about what a round of voting is.
+ */
+export function votingOf(doc: Y.Doc): unknown {
+  return docMeta(doc).get(VOTING_KEY);
+}
+
+/** The board's countdown, unnarrowed. `sanitizeTimer` (`src/lib/timer.ts`) is the gate. */
+export function timerOf(doc: Y.Doc): unknown {
+  return docMeta(doc).get(TIMER_KEY);
+}
+
+/**
  * Whether anything has ever been written to `doc` — the question `fetch` asks
  * to decide whether a diagram still needs seeding from its JSON.
  *
@@ -200,6 +234,10 @@ export function writeDiagramIntoDoc(doc: Y.Doc, data: DiagramData, origin?: unkn
     else meta.delete(DEFAULTS_KEY);
     if (data.thumbnailNodeIds) meta.set(THUMBNAIL_KEY, data.thumbnailNodeIds);
     else meta.delete(THUMBNAIL_KEY);
+    if (data.voting) meta.set(VOTING_KEY, data.voting);
+    else meta.delete(VOTING_KEY);
+    if (data.timer) meta.set(TIMER_KEY, data.timer);
+    else meta.delete(TIMER_KEY);
     meta.set(SEEDED_KEY, true);
   }, origin);
 }

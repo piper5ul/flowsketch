@@ -61,6 +61,9 @@ const EXCLUDED_SELECTORS = [
   // and who happened to be looking is not part of the drawing.
   '.presence-cursor',
   '.measure-overlay',
+  // A revealed vote count stays in the picture — it is part of what the board
+  // says — but the buttons that cast a dot are chrome, not drawing.
+  '.vote-affordance',
   '.react-flow__handle',
   '.quick-add-btn',
   '.connector-joint-hit',
