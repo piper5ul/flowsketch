@@ -45,6 +45,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - **Frames** — draw a titled section with `F` (or the rail's **More shapes** menu) and drop shapes into it: anything dropped inside becomes part of the frame and travels with it, anything dragged out stops belonging to it. Double-click the title to rename it, drag its edges to resize, and nest frames inside frames. Select some shapes and choose **Wrap in frame** from the right-click menu to put a frame around them, and pick a colour for a frame to tint it.
 - **Filter selection** — with several shapes selected, the toolbar's filter narrows the selection to one kind or one colour, so a sweep-select becomes "every sticky" or "every yellow thing" in one click Unlike a group, a frame is part of the drawing and appears in exports
 - Undo / redo history
+- Version history you can scrub through (‹ › and Play) and **fork** any version into a new diagram of your own
 - Export to PNG or SVG at 1× or 2×, with or without the board background, the whole board or just the selection; `⌘⇧C` copies the selection (or the board) to the clipboard as a transparent PNG
 - Copy, cut, paste, and duplicate selected shapes and connectors (`⌘C` / `⌘X` / `⌘V` / `⌘D`, or `⌥`-drag to duplicate)
 - Lock / unlock shapes (`⌘⇧L`)
