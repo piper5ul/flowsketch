@@ -35,6 +35,59 @@ export interface DiagramData {
    * `src/lib/boardThumbnail.ts` is the one place a stored value is narrowed.
    */
   thumbnailNodeIds?: string[];
+  /**
+   * The round of dot voting the board is in, if it is in one.
+   *
+   * Absent means **no round has ever been run here**, which is what every
+   * diagram written before voting existed already wants, so this needed no
+   * version bump either. The dots themselves are node data
+   * (`ShapeData.votes`); this is the round they were cast in.
+   * `src/lib/voting.ts` is the one place a stored value is narrowed.
+   */
+  voting?: VotingSession;
+  /**
+   * The shared countdown, if one is running.
+   *
+   * An **end time**, never a number of seconds left: every window computes the
+   * remaining time from its own clock, so nothing has to tick through the
+   * document. Absent means no timer, which again is every older diagram.
+   * `src/lib/timer.ts` is where a stored value is narrowed.
+   */
+  timer?: BoardTimer;
+}
+
+/**
+ * A round of dot voting on the board — Whimsical's "voting on sticky notes".
+ *
+ * A property of the *board* rather than of the window it was started in, which
+ * is why it rides in the collaborative document's `meta` map beside `defaults`
+ * and `thumbnailNodeIds` and is read back out of it: everybody on the board is
+ * in the same round, with the same budget, seeing the totals at the same
+ * moment.
+ *
+ * `active` and `revealed` are two questions rather than one state, because a
+ * round has three of them: open with the totals hidden (`active`), closed with
+ * them shown (`revealed`), and — after "Clear votes" — neither.
+ */
+export interface VotingSession {
+  /** Whether dots can still be placed. */
+  active: boolean;
+  /** How many dots each person gets, across the whole board. */
+  dotsPerPerson: number;
+  /** Whether the totals are shown. Until then a voter sees only their own dots. */
+  revealed: boolean;
+  /** Who opened the round. Recorded, not enforced: anyone on the board may close it. */
+  startedById: string;
+}
+
+/** The board's shared countdown. See `src/lib/timer.ts` for why it is an end time. */
+export interface BoardTimer {
+  /** When it runs out, ISO 8601. */
+  endsAt: string;
+  /** Who started it. Anyone on the board may stop it. */
+  startedById: string;
+  /** What it is for, if whoever started it said. */
+  label?: string;
 }
 
 /**

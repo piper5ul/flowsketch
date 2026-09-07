@@ -24,12 +24,16 @@ import {
   edgesOf,
   nodesOf,
   thumbnailNodeIdsOf,
+  timerOf,
   viewportOf,
+  votingOf,
   writeDiagramIntoDoc,
 } from '../../shared/collabDoc.js';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../../src/lib/diagramMigrations.js';
 import { sanitizeDefaults } from '../../src/lib/defaultStyle.js';
 import { sanitizeThumbnailIds } from '../../src/lib/boardThumbnail.js';
+import { sanitizeVotingSession } from '../../src/lib/voting.js';
+import { sanitizeTimer } from '../../src/lib/timer.js';
 
 /**
  * The diagram a document is currently holding, as the JSON snapshot.
@@ -52,6 +56,11 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
   // Same rule, same reason: a list of ids is what the client will render the
   // dashboard card from, and it came out of another browser.
   const thumbnailNodeIds = sanitizeThumbnailIds(thumbnailNodeIdsOf(doc));
+  // Same rule again for the two session fields: a round of voting and a
+  // countdown are read by the public share page and by every later open of this
+  // diagram, and both came out of somebody's browser.
+  const voting = sanitizeVotingSession(votingOf(doc));
+  const timer = sanitizeTimer(timerOf(doc));
   return {
     version: CURRENT_DIAGRAM_VERSION,
     nodes: nodesOf(doc),
@@ -66,6 +75,10 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
     // And again: a board whose card is the automatic picture of the whole
     // diagram holds no key at all.
     ...(thumbnailNodeIds ? { thumbnailNodeIds } : {}),
+    // And again: a board nobody has run a round of voting on, or started a
+    // timer on, holds neither key.
+    ...(voting ? { voting } : {}),
+    ...(timer ? { timer } : {}),
   };
 }
 

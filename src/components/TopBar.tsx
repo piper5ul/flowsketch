@@ -8,6 +8,8 @@ import { CommentsPanel } from './CommentsPanel';
 import { ShareDialog } from './ShareDialog';
 import { PresenceStrip } from './PresenceStrip';
 import { PresentButton } from './PresentButton';
+import { TimerButton } from './TimerButton';
+import { VoteButton } from './VoteButton';
 import { openThreadCount } from '../lib/comments';
 import { connectionDisplay } from '../lib/collab/connectionStatus';
 import { useCollabStore } from '../store/useCollabStore';
@@ -101,6 +103,15 @@ export function TopBar() {
             role: presenting is looking. It renders nothing at all on a board
             with no frames, which is the deck. */}
         <PresentButton />
+        {/* The two workshop controls, next to Present because they belong to
+            the same moment — a board being worked through with other people
+            rather than drawn. Both are shared state: a round of voting and a
+            countdown live in the diagram, so everybody sees the same one. The
+            Vote button is withheld from a viewer (a dot is diagram data and a
+            viewer writes none — see `VoteButton`); the timer's readout is not,
+            because watching the clock is looking. */}
+        <VoteButton />
+        <TimerButton />
         <ExportMenu />
       </div>
     </div>
@@ -220,6 +231,10 @@ function ConflictBanner() {
         .loadDiagram(diagram.id, diagram.title, diagram.starred, diagram.data, diagram.updatedAt, {
           role: diagram.role,
           shareToken: diagram.shareToken ?? null,
+          // Carried across: the reader has not changed, only the board they are
+          // reading, and a load with no `viewerId` would leave them unable to
+          // vote until they reloaded the page.
+          viewerId: useDiagramStore.getState().viewerId,
         });
     } catch {
       toastError('Could not reload the diagram. Please try again.');

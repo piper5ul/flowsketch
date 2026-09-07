@@ -268,6 +268,16 @@ export interface ShapeData {
    * before they existed holds no node that would look for one.
    */
   table?: TableData;
+  /**
+   * The dots cast on this shape in the board's voting round, as voter id → how
+   * many of their dots are on it.
+   *
+   * Absent is a shape nobody has voted for — which is every shape on every
+   * diagram written before voting existed, so this needed no migration step.
+   * The *round* the dots were cast in is board meta, not node data: see
+   * `DiagramData.voting` and `src/lib/voting.ts`.
+   */
+  votes?: Record<string, number>;
   [key: string]: unknown;
 }
 

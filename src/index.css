@@ -630,6 +630,24 @@ a:focus-visible {
   animation: panel-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* The board timer running out. Three pulses of the warning wash across the
+   control itself, which is where the countdown was being read — a flash of the
+   whole window would be a bigger interruption than a five-minute timer earns.
+   The button goes on saying "Time's up" afterwards, so the notice does not
+   depend on anybody having been looking at this moment. */
+@keyframes timer-flash {
+  0%,
+  100% {
+    background: transparent;
+  }
+  50% {
+    background: var(--warn-wash);
+  }
+}
+.timer-flash {
+  animation: timer-flash 500ms ease-in-out 3;
+}
+
 /* Motion is decoration here: every popover, menu and tooltip still appears,
    and a shape's shadow still changes — they just stop sliding and fading for
    anyone who has asked the OS for less of that. */
@@ -641,5 +659,10 @@ a:focus-visible {
   /* ShapeNode's hover/selection shadow. */
   .transition-shadow {
     transition: none;
+  }
+
+  /* The timer still says "Time's up"; it just stops pulsing to say so. */
+  .timer-flash {
+    animation: none;
   }
 }

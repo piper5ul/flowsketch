@@ -10,7 +10,7 @@ import {
   type Connection,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import type { DiagramData, DiagramRole, DiagramViewport } from '../../shared/types';
+import type { BoardTimer, DiagramData, DiagramRole, DiagramViewport, VotingSession } from '../../shared/types';
 import type {
   ConnectorData,
   ConnectorKind,
@@ -51,6 +51,17 @@ function isSideId(id: string | null | undefined): id is Direction {
   return typeof id === 'string' && SIDE_IDS.includes(id);
 }
 import { sanitizeThumbnailIds } from '../lib/boardThumbnail';
+import {
+  MAX_DOTS_PER_PERSON,
+  MIN_DOTS_PER_PERSON,
+  canVote,
+  sortedByVotes,
+  voteRowPositions,
+  votesBy,
+  votesOf,
+  type VoteRect,
+} from '../lib/voting';
+import { MAX_TIMER_SECONDS } from '../lib/timer';
 import { computeMarkers } from '../lib/edgeMarkers';
 import {
   canSwapShapeKind,
@@ -362,6 +373,29 @@ function absoluteBounds(node: ShapeNode, byId: Map<string, ShapeNode>) {
 }
 
 /**
+ * `node` with `delta` added to `userId`'s dots on it.
+ *
+ * The map is rewritten rather than mutated, and a voter who is down to nothing
+ * is dropped from it entirely — as is the whole `votes` key once nobody has a
+ * dot on the shape. That is what keeps "no votes" spelled exactly one way:
+ * `{ alice: 0 }` and an absent field would otherwise both mean the same thing
+ * while comparing unequal, and the binding diffs the *serialized* diagram.
+ *
+ * `votesOf` narrows on the way in, so a count another build wrote as a string
+ * cannot come back out as one.
+ */
+function withVote(node: ShapeNode, userId: string, delta: number): ShapeNode {
+  const votes = { ...votesOf(node) };
+  const next = (votes[userId] ?? 0) + delta;
+  if (next > 0) votes[userId] = next;
+  else delete votes[userId];
+
+  if (Object.keys(votes).length > 0) return { ...node, data: { ...node.data, votes } };
+  const { votes: _votes, ...data } = node.data;
+  return { ...node, data: data as ShapeData };
+}
+
+/**
  * True for a node that can be put in a group.
  *
  * A floating arrow's two invisible endpoints are not shapes the user drew and
@@ -525,6 +559,17 @@ export interface LoadDiagramOptions {
    * without re-fetching a diagram body it has no use for.
    */
   shareToken?: string | null;
+  /**
+   * Who is looking at the diagram — the signed-in user's id, and the name a
+   * vote is cast under.
+   *
+   * In the options bag rather than set once for the app because that is exactly
+   * what it means here: *this* reader of *this* board. The public `/s/:token`
+   * page passes none, which is what stops an anonymous reader voting — the same
+   * rule commenting keeps, and for the same reason: a dot with nobody behind it
+   * is not a vote.
+   */
+  viewerId?: string | null;
 }
 
 export interface DiagramState {
@@ -616,6 +661,28 @@ export interface DiagramState {
    * one "Remove from board thumbnail" puts back.
    */
   thumbnailNodeIds: string[] | null;
+  /**
+   * The round of dot voting the board is in, or `null` for a board that is not
+   * in one. Written into `DiagramData.voting` and into the document's `meta`
+   * map beside the defaults and the thumbnail, and read back out of it: a round
+   * belongs to the board, not to the window it was started in.
+   */
+  voting: VotingSession | null;
+  /**
+   * The board's shared countdown, as the instant it runs out — never a number
+   * of seconds left, so nothing ticks through the document. `null` when there
+   * is none. Beside `voting` in `meta`, on the same rules.
+   */
+  timer: BoardTimer | null;
+  /**
+   * Whose board this is *from here*: the signed-in user's id, or `null` for the
+   * public share page, which has nobody to attribute anything to.
+   *
+   * Set by `loadDiagram` alongside `role` and `readOnly`, because it is the same
+   * kind of fact — about this reader rather than about the diagram — and the
+   * load is the one door every diagram comes through. It is never serialized.
+   */
+  viewerId: string | null;
   /** Mirrors the (non-serialized) undo/redo stacks so the UI can disable its buttons. */
   canUndo: boolean;
   canRedo: boolean;
@@ -855,6 +922,83 @@ export interface DiagramState {
    * falls back to the whole board while it is gone.
    */
   setThumbnailNodeIds: (ids: readonly string[] | null) => void;
+
+  // ---- dot voting and the board timer --------------------------------------
+  //
+  // **Two of these push no history and three of them do, and the line between
+  // them is which side of the undo manager's scope the state lives on.** The
+  // round and the countdown are board meta (`voting`, `timer`), which rides in
+  // the document's `meta` map outside the `Y.UndoManager` — so they follow
+  // `saveSelectionAsDefault` and `setThumbnailNodeIds` and push nothing. The
+  // dots are **node data**, which is squarely inside that scope: an action that
+  // changes them without opening a boundary would be silently folded into
+  // whatever edit came before it, and one ⌘Z would take back two things. So
+  // every action below that touches `votes` pushes, and a vote is its own undo
+  // step — which is also what a misclick wants.
+
+  /**
+   * Open a round of dot voting: everybody gets `dotsPerPerson` dots to spend
+   * across the whole board, and the totals stay hidden until it is closed.
+   *
+   * Pushes no history entry — see the note above. Existing dots are **not**
+   * cleared: that is `clearVotes`, which is an edit to the board and is
+   * undoable, and the panel runs it first when a new round is started over an
+   * old one. Does nothing when nobody is signed in to attribute the round to.
+   */
+  startVoting: (dotsPerPerson: number) => void;
+  /**
+   * Close the round and show the totals — Whimsical's "end voting".
+   *
+   * One act rather than two: revealing without closing would let somebody keep
+   * placing dots while everybody else reads the answers. No history entry.
+   */
+  endVoting: () => void;
+  /**
+   * Take every dot off the board and end any round with them.
+   *
+   * **Pushes a history entry**: the dots are node data, and throwing away
+   * everybody's votes is exactly the kind of thing ⌘Z is for. The round itself
+   * goes too — it is in `meta` and rides out with the same `set` — so an undo
+   * brings the dots back but not the round they were cast in. That asymmetry is
+   * the honest consequence of two pieces of state on opposite sides of the undo
+   * manager's scope, and is better than pretending either half is undoable
+   * along with the other.
+   */
+  clearVotes: () => void;
+  /**
+   * Put one of the caller's dots on `nodeId`.
+   *
+   * When their budget is already spent it takes one back off *this* shape
+   * instead, so the gesture never dead-ends on a board where every dot is
+   * placed. Taking one back off a shape while dots are still in hand is
+   * `removeVote` — the "click your own dot" gesture.
+   *
+   * **Pushes a history entry**, so a vote is one ⌘Z of its own rather than
+   * something folded into the edit before it.
+   */
+  toggleVote: (nodeId: string) => void;
+  /** Take one of the caller's dots back off `nodeId`. Pushes a history entry. */
+  removeVote: (nodeId: string) => void;
+  /**
+   * Lay the voted shapes out in one row, most votes first.
+   *
+   * Acts on the selection when more than one thing is selected, and on every
+   * shape with a vote on it otherwise — "sort *the board* by votes" is what the
+   * button means when nothing in particular has been picked out. One history
+   * entry, and none at all when nothing would move (`commitArrangedPositions`).
+   */
+  sortByVotes: () => void;
+  /**
+   * Start the board's shared countdown, `seconds` from now.
+   *
+   * Stored as the instant it ends, so every window computes its own remaining
+   * time and nothing ticks through the document. No history entry — it is
+   * `meta`, like the round. Does nothing without somebody to attribute it to.
+   */
+  startTimer: (seconds: number, label?: string) => void;
+  /** Take the countdown off the board. Anybody may; no history entry. */
+  stopTimer: () => void;
+
   /** The `data` a new shape of `kind` starts with, board defaults applied. */
   newShapeData: (kind: ShapeKind) => ShapeData;
   /** The `data` a new connector starts with, board defaults applied. */
@@ -1418,6 +1562,12 @@ export function serializeDiagram(
   viewport?: DiagramViewport | null,
   defaults?: BoardDefaults | null,
   thumbnailNodeIds?: readonly string[] | null,
+  /**
+   * The rest of what lives in the document's `meta` map: the round of dot
+   * voting and the shared countdown. One bag rather than two more positional
+   * arguments, which at this length would be unreadable at every call site.
+   */
+  session?: { voting?: VotingSession | null; timer?: BoardTimer | null },
 ): DiagramData {
   return {
     version: CURRENT_DIAGRAM_VERSION,
@@ -1436,6 +1586,11 @@ export function serializeDiagram(
     ...(thumbnailNodeIds && thumbnailNodeIds.length > 0
       ? { thumbnailNodeIds: [...thumbnailNodeIds] }
       : {}),
+    // And again for the two session fields: a board that has never been voted
+    // on, or timed, writes neither key — so nothing about an older diagram's
+    // JSON changes because these exist.
+    ...(session?.voting ? { voting: session.voting } : {}),
+    ...(session?.timer ? { timer: session.timer } : {}),
   };
 }
 
@@ -1559,6 +1714,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   defaults: {} as BoardDefaults,
   lastStyle: {} as BoardDefaults,
   thumbnailNodeIds: null,
+  voting: null,
+  timer: null,
+  viewerId: null,
   canUndo: false,
   canRedo: false,
   transientSeq: 0,
@@ -1623,13 +1781,23 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // shapes on *that* board, and /d/A -> /d/B must not draw B's card from
       // A's shapes. `migrateDiagramData` has already narrowed it.
       thumbnailNodeIds: migrated.thumbnailNodeIds ?? null,
+      // Replaced for the reason the thumbnail is: a round of voting and a
+      // countdown belong to the board being closed, not to the one being
+      // opened. `migrateDiagramData` has already narrowed both.
+      voting: migrated.voting ?? null,
+      timer: migrated.timer ?? null,
+      // Who is reading this board. `null` for the public share page, which is
+      // what leaves an anonymous reader with nothing to vote as.
+      viewerId: options?.viewerId ?? null,
       ...historyFlags(),
     });
   },
 
   saveDiagram: async (options) => {
-    const { diagramId, title, nodes, edges, viewport, defaults, thumbnailNodeIds, saveStatus, loadedAt, readOnly } =
-      get();
+    const {
+      diagramId, title, nodes, edges, viewport, defaults, thumbnailNodeIds,
+      voting, timer, saveStatus, loadedAt, readOnly,
+    } = get();
     if (!diagramId || readOnly) return 'skipped';
     const wasFailing = saveStatus === 'error' || saveStatus === 'retrying';
     set({ saveStatus: 'saving' });
@@ -1656,7 +1824,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
           // The API rejects a blank title, so a diagram whose name the user
           // cleared would fail every autosave from then on.
           title: title.trim() || 'Untitled',
-          data: serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds),
+          data: serializeDiagram(nodes, edges, viewport, defaults, thumbnailNodeIds, { voting, timer }),
           // Only sent when this client knows what version it is building on,
           // and never on an overwrite the user asked for.
           ...(loadedAt !== null && !options?.overwrite ? { ifUnmodifiedSince: loadedAt } : {}),
@@ -2588,6 +2756,133 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // free-form JSON column and in a document other browsers read, and one place
   // that decides what a thumbnail list is beats two.
   setThumbnailNodeIds: (ids) => set({ thumbnailNodeIds: sanitizeThumbnailIds(ids) }),
+
+  // ---- dot voting and the board timer --------------------------------------
+  //
+  // See the note on the interface above for why two of these push history and
+  // three do not: the round and the countdown are `meta` and outside the undo
+  // manager's scope, the dots are node data and inside it.
+
+  // No `pushHistory`: the round lives in the document's `meta` map, beside the
+  // defaults and the thumbnail, so ⌘Z could not take it back there however it
+  // were recorded — and a boundary would only split the previous edit in two.
+  startVoting: (dotsPerPerson) => {
+    const { viewerId } = get();
+    // No name to attribute the round to. The public share page loads without
+    // one, and the button that runs this is never rendered there.
+    if (!viewerId) return;
+    set({
+      voting: {
+        active: true,
+        revealed: false,
+        // Clamped rather than trusted: the panel offers a number field, and the
+        // same ceiling is what `sanitizeVotingSession` applies to a peer's.
+        dotsPerPerson: Math.min(
+          MAX_DOTS_PER_PERSON,
+          Math.max(MIN_DOTS_PER_PERSON, Math.floor(dotsPerPerson)),
+        ),
+        startedById: viewerId,
+      },
+    });
+  },
+
+  // Closing and revealing are one act: revealing without closing would let
+  // somebody go on placing dots while everybody else reads the answers.
+  endVoting: () =>
+    set((s) => (s.voting ? { voting: { ...s.voting, active: false, revealed: true } } : {})),
+
+  clearVotes: () => {
+    const state = get();
+    const hasVotes = state.nodes.some((n) => n.data.votes !== undefined);
+    // Nothing to clear and no round to end: not worth a ⌘Z.
+    if (!hasVotes && !state.voting) return;
+    // **Pushes**, unlike the two above: the dots are node data and squarely
+    // inside the undo manager's scope, so without a boundary this would be
+    // folded into whatever edit came before it.
+    if (hasVotes) pushHistory(state);
+    set({
+      nodes: hasVotes
+        ? state.nodes.map((n) => {
+            if (n.data.votes === undefined) return n;
+            const { votes: _votes, ...data } = n.data;
+            return { ...n, data: data as ShapeData };
+          })
+        : state.nodes,
+      // The round goes with the dots. It is in `meta` and so is not undoable —
+      // see the note on the interface.
+      voting: null,
+    });
+  },
+
+  toggleVote: (nodeId) => {
+    const state = get();
+    const { viewerId, voting } = state;
+    if (!viewerId || !voting?.active) return;
+    const node = state.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+
+    // A budget already spent turns the gesture round: clicking again takes one
+    // of your dots back off this shape, so a board where every dot is placed is
+    // not a board you are stuck on. With dots still in hand the click always
+    // adds — taking one back then is the explicit `removeVote`.
+    if (!canVote(voting, state.nodes, viewerId)) {
+      if (votesBy(node, viewerId) > 0) get().removeVote(nodeId);
+      return;
+    }
+
+    pushHistory(state);
+    set({ nodes: state.nodes.map((n) => (n.id === nodeId ? withVote(n, viewerId, 1) : n)) });
+  },
+
+  removeVote: (nodeId) => {
+    const state = get();
+    const { viewerId } = state;
+    if (!viewerId) return;
+    const node = state.nodes.find((n) => n.id === nodeId);
+    // Nothing of theirs on it: not an edit, and not a ⌘Z.
+    if (!node || votesBy(node, viewerId) === 0) return;
+
+    pushHistory(state);
+    set({ nodes: state.nodes.map((n) => (n.id === nodeId ? withVote(n, viewerId, -1) : n)) });
+  },
+
+  sortByVotes: () => {
+    const state = get();
+    const selected = state.nodes.filter((n) => n.selected);
+    // "Sort by votes" with nothing in particular picked out means the board.
+    const candidates = selected.length > 1 ? selected : state.nodes;
+    const ordered = sortedByVotes(candidates);
+    if (ordered.length < 2) return;
+
+    const byId = nodesById(state.nodes);
+    const rects: VoteRect[] = ordered.map((node) => {
+      const bounds = absoluteBounds(node, byId);
+      return { id: node.id, x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h };
+    });
+    // One history entry, and none at all when the row is already the row —
+    // `commitArrangedPositions` pushes only when something really moves, skips
+    // locked nodes, and converts board coordinates back to parent-relative ones.
+    commitArrangedPositions(voteRowPositions(rects));
+  },
+
+  // `meta` again, so no history entry: see the note above. Stored as the
+  // *instant* it runs out, which is what keeps a ticking number out of the
+  // shared document — see `src/lib/timer.ts`.
+  startTimer: (seconds, label) => {
+    const { viewerId } = get();
+    if (!viewerId) return;
+    const whole = Math.floor(seconds);
+    if (!Number.isFinite(whole) || whole < 1) return;
+    set({
+      timer: {
+        endsAt: new Date(Date.now() + Math.min(whole, MAX_TIMER_SECONDS) * 1000).toISOString(),
+        startedById: viewerId,
+        ...(label ? { label } : {}),
+      },
+    });
+  },
+
+  stopTimer: () => set({ timer: null }),
 
   newShapeData: (kind) => shapeDataWithDefaults(kind, get().defaults, get().lastStyle),
 
