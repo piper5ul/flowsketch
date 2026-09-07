@@ -51,6 +51,14 @@ export function CanvasPage() {
   /** The other refusal: this diagram is not this user's to open any more. */
   const accessLost = useCollabStore((s) => s.accessLost);
   const { data: session } = useSession();
+  /**
+   * Who is reading this board — the name a vote is cast under. Read here rather
+   * than in the store because the session is React's, and passed through
+   * `loadDiagram` alongside the role because it is the same kind of fact about
+   * the same reader. `ProtectedRoute` is what guarantees there is one by the
+   * time this page renders.
+   */
+  const viewerId = session?.user.id ?? null;
   /** The diagram whose image backfill has already been started on this page. */
   const backfilled = useRef<string | null>(null);
 
@@ -137,6 +145,7 @@ export function CanvasPage() {
           // Only ever sent to the owner; everyone else loads a `null` and is
           // never told whether a public link exists.
           shareToken: diagram.shareToken ?? null,
+          viewerId,
         });
         setLoading(false);
       })
@@ -151,7 +160,10 @@ export function CanvasPage() {
       });
 
     return () => { cancelled = true; };
-  }, [id, loadDiagram, navigate]);
+    // `viewerId` is stable for the life of a signed-in session, so this does not
+    // re-fetch in practice; it is in the list because the load is where it is
+    // written into the store.
+  }, [id, loadDiagram, navigate, viewerId]);
 
   // The collaboration socket, for as long as this diagram is open: presence,
   // and the shared document the diagram itself now lives in. Not gated on

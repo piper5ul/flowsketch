@@ -273,3 +273,42 @@ describe('marker ids are recomputed on every load', () => {
     expect(out.markerEnd).toBeUndefined();
   });
 });
+
+/**
+ * Voting and the timer were new *fields*, not a new version — an absent one
+ * means "no round" and "no countdown", which is what every older diagram
+ * already wants. They are narrowed on the way in instead, the way `defaults`
+ * and `thumbnailNodeIds` are.
+ */
+describe('the voting round and the board timer are narrowed, not migrated', () => {
+  const base = { version: CURRENT_DIAGRAM_VERSION, nodes: [], edges: [] };
+
+  it('leaves an older diagram without either key', () => {
+    const migrated = migrateDiagramData(v0);
+    expect('voting' in migrated).toBe(false);
+    expect('timer' in migrated).toBe(false);
+    // And no step ran for them: the version is what it always was.
+    expect(migrated.version).toBe(CURRENT_DIAGRAM_VERSION);
+  });
+
+  it('keeps a round it can act on and drops one it cannot', () => {
+    const round = { active: true, revealed: false, dotsPerPerson: 3, startedById: 'ada' };
+    expect(migrateDiagramData({ ...base, voting: round }).voting).toEqual(round);
+    expect('voting' in migrateDiagramData({ ...base, voting: { active: true } })).toBe(false);
+    expect('voting' in migrateDiagramData({ ...base, voting: 'yes' })).toBe(false);
+  });
+
+  it('keeps a timer it can count down from and drops one it cannot', () => {
+    const timer = { endsAt: '2030-01-01T00:00:00.000Z', startedById: 'ada' };
+    expect(migrateDiagramData({ ...base, timer }).timer).toEqual(timer);
+    expect('timer' in migrateDiagramData({ ...base, timer: { endsAt: 'soon' } })).toBe(false);
+  });
+
+  it('leaves a shape’s own dots alone — they are narrowed where they are counted', () => {
+    // `votesOf` is the gate, for the reason `data.mindMap` has none here: a
+    // node's `data` is a free-form bag everywhere else too, and walking every
+    // node on every load for one field would be paid by boards with no votes.
+    const nodes = [{ id: 'n1', type: 'shape', position: { x: 0, y: 0 }, data: { votes: { ada: 2 } } }];
+    expect(migrateDiagramData({ ...base, nodes }).nodes[0].data.votes).toEqual({ ada: 2 });
+  });
+});

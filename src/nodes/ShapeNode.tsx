@@ -18,6 +18,7 @@ import {
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
 import { childCount, foldedCount } from '../lib/mindMap';
 import { useShiftKey } from '../lib/useShiftKey';
+import { VoteBadge } from '../components/VoteBadge';
 
 /** Text shapes never shrink below the height they are created at. */
 const TEXT_MIN_HEIGHT = 40;
@@ -482,6 +483,12 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
           {data.mindMap.collapsed ? folded : '–'}
         </button>
       )}
+
+      {/* Dot voting: your own dots while the round is open, the total once it
+          is closed. Rendered last so it sits over the shape's own chrome, and
+          drawn for every reader — a revealed count is part of what the board
+          says. */}
+      {!editing && <VoteBadge nodeId={id} />}
 
       {/* Withheld from a mind-map node: quick-add would grow an ordinary shape
           on an ordinary connector out of the side the map's own branches leave

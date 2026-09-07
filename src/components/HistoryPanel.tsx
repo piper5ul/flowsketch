@@ -177,12 +177,15 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
       setBusy(true);
       try {
         const restored = await api.restoreVersion(diagramId, versionId);
-        const { starred, role, shareToken } = useDiagramStore.getState();
+        // `viewerId` travels with the role and the token for the reason both of
+        // those do: a restore changes the board, never who is reading it.
+        const { starred, role, shareToken, viewerId } = useDiagramStore.getState();
         useDiagramStore
           .getState()
           .loadDiagram(restored.id, restored.title, starred, restored.data, restored.updatedAt, {
             role,
             shareToken,
+            viewerId,
           });
         // Belt and braces: `loadDiagram` already restarts the conflict guard
         // from this timestamp, and this says so at the call site — the restore

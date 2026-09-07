@@ -13,6 +13,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { Eye } from 'lucide-react';
 import { Canvas } from '../components/Canvas';
 import { PresentButton } from '../components/PresentButton';
+import { TimerButton } from '../components/TimerButton';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { usePresentStore } from '../store/usePresentStore';
@@ -125,6 +126,14 @@ function SharedHeader({ title }: { title: string }) {
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-3">
+        {/* The board's countdown, if one was running when this page loaded.
+            Read-only like everything else here, and it renders nothing when
+            there is no timer. This page opens no socket, so what it shows is
+            the timer as the snapshot held it — an end time, so it still counts
+            down correctly from here; a timer started *after* the page loaded
+            reaches it on the next reload, which is the same deal every other
+            part of a shared board gets. */}
+        <TimerButton />
         <PresentButton />
         <Link
           to="/login"

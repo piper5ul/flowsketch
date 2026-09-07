@@ -3606,3 +3606,338 @@ describe('mind maps', () => {
     });
   });
 });
+
+/**
+ * Dot voting and the board timer.
+ *
+ * The rule these tests are really about is which of them push a history entry:
+ * the round and the countdown live in the document's `meta` map, outside the
+ * `Y.UndoManager`'s scope, so they push none — while the dots are node data and
+ * squarely inside it, so every action that touches them pushes a boundary, or
+ * one ⌘Z would take back two things. See the note in the store's interface.
+ */
+describe('dot voting', () => {
+  const nodeOf = (id: string) => store().nodes.find((n) => n.id === id)!;
+
+  beforeEach(() => {
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, undefined, {
+      viewerId: 'ada',
+    });
+  });
+
+  it('starts a round nobody has voted in yet', () => {
+    store().startVoting(4);
+    expect(store().voting).toEqual({
+      active: true,
+      revealed: false,
+      dotsPerPerson: 4,
+      startedById: 'ada',
+    });
+  });
+
+  it('refuses to start one for a reader with no name to vote under', () => {
+    // The public `/s/:token` page. The button is never rendered there either;
+    // the store is total, so it says no rather than inventing a voter.
+    useDiagramStore.setState({ viewerId: null });
+    store().startVoting(3);
+    expect(store().voting).toBeNull();
+  });
+
+  it('clamps the budget the way a peer’s round is clamped', () => {
+    store().startVoting(9999);
+    expect(store().voting?.dotsPerPerson).toBe(20);
+    store().startVoting(0);
+    expect(store().voting?.dotsPerPerson).toBe(1);
+  });
+
+  it('pushes no history entry for opening or closing a round', () => {
+    // `meta` is outside the undo manager's scope, so a boundary here could only
+    // split the *previous* edit in two — the rule `saveSelectionAsDefault` and
+    // `setThumbnailNodeIds` already keep.
+    store().addShape('sticky', { x: 0, y: 0 });
+    const before = store().canUndo;
+    store().startVoting(3);
+    store().endVoting();
+    expect(store().canUndo).toBe(before);
+  });
+
+  it('puts one of your dots on a shape, and takes one back', () => {
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().startVoting(3);
+
+    store().toggleVote(id);
+    store().toggleVote(id);
+    expect(nodeOf(id).data.votes).toEqual({ ada: 2 });
+
+    store().removeVote(id);
+    expect(nodeOf(id).data.votes).toEqual({ ada: 1 });
+  });
+
+  it('spells "nobody has voted for this" exactly one way', () => {
+    // `{ ada: 0 }` and an absent field would otherwise both mean no votes while
+    // comparing unequal — and the collaboration binding diffs the *serialized*
+    // diagram.
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().startVoting(3);
+    store().toggleVote(id);
+    store().removeVote(id);
+    expect('votes' in nodeOf(id).data).toBe(false);
+  });
+
+  it('caps a voter at their budget across the whole board', () => {
+    const a = store().addShape('sticky', { x: 0, y: 0 });
+    const b = store().addShape('sticky', { x: 300, y: 0 });
+    store().startVoting(2);
+
+    store().toggleVote(a);
+    store().toggleVote(b);
+    // Budget spent: the third click takes one back off *this* shape rather than
+    // dead-ending, which is what makes the gesture reversible on a full board.
+    store().toggleVote(b);
+    expect(nodeOf(a).data.votes).toEqual({ ada: 1 });
+    expect('votes' in nodeOf(b).data).toBe(false);
+  });
+
+  it('leaves a shape alone when the budget is spent and nothing of theirs is on it', () => {
+    const a = store().addShape('sticky', { x: 0, y: 0 });
+    const b = store().addShape('sticky', { x: 300, y: 0 });
+    store().startVoting(1);
+    store().toggleVote(a);
+
+    store().toggleVote(b);
+    expect('votes' in nodeOf(b).data).toBe(false);
+    expect(nodeOf(a).data.votes).toEqual({ ada: 1 });
+  });
+
+  it('refuses a vote when the round is closed', () => {
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().startVoting(3);
+    store().endVoting();
+    store().toggleVote(id);
+    expect('votes' in nodeOf(id).data).toBe(false);
+  });
+
+  it('makes a vote its own undo step rather than folding it into the last edit', () => {
+    // The hazard the convention warns about: without a boundary the vote would
+    // join whatever came before it and one ⌘Z would take back both.
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().updateNodeData(id, { label: 'Idea' });
+    store().startVoting(3);
+
+    store().toggleVote(id);
+    store().undo();
+    expect('votes' in nodeOf(id).data).toBe(false);
+    expect(nodeOf(id).data.label).toBe('Idea');
+  });
+
+  it('reveals the totals when the round is closed, and not before', () => {
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().startVoting(3);
+    store().toggleVote(id);
+    expect(store().voting).toMatchObject({ active: true, revealed: false });
+
+    store().endVoting();
+    // One act, not two: revealing without closing would let somebody go on
+    // voting while everybody else reads the answers.
+    expect(store().voting).toMatchObject({ active: false, revealed: true });
+  });
+
+  it('clears every dot and the round with them, as one undoable edit', () => {
+    const a = store().addShape('sticky', { x: 0, y: 0 });
+    const b = store().addShape('sticky', { x: 300, y: 0 });
+    store().startVoting(3);
+    store().toggleVote(a);
+    store().toggleVote(b);
+
+    store().clearVotes();
+    expect('votes' in nodeOf(a).data).toBe(false);
+    expect('votes' in nodeOf(b).data).toBe(false);
+    expect(store().voting).toBeNull();
+
+    // The dots come back; the round does not, because it was never in the undo
+    // manager's scope. That asymmetry is documented at the action.
+    store().undo();
+    expect(nodeOf(a).data.votes).toEqual({ ada: 1 });
+    expect(store().voting).toBeNull();
+  });
+
+  it('costs nothing to clear a board with no votes and no round', () => {
+    store().addShape('sticky', { x: 0, y: 0 });
+    const before = store().canUndo;
+    store().clearVotes();
+    expect(store().canUndo).toBe(before);
+  });
+
+  it('counts each voter separately', () => {
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    store().startVoting(3);
+    store().toggleVote(id);
+    useDiagramStore.setState({ viewerId: 'grace' });
+    store().toggleVote(id);
+    expect(nodeOf(id).data.votes).toEqual({ ada: 1, grace: 1 });
+  });
+
+  it('lays the voted shapes out in one row, most votes first', () => {
+    const a = store().addShape('sticky', { x: 0, y: 600 });
+    const b = store().addShape('sticky', { x: 500, y: 200 });
+    const c = store().addShape('sticky', { x: 900, y: 900 });
+    store().startVoting(3);
+    store().toggleVote(b);
+    store().toggleVote(b);
+    store().toggleVote(a);
+
+    store().sortByVotes();
+    // b (2 votes) first, a (1) next; c has none and is left where it was.
+    expect(nodeOf(b).position.x).toBeLessThan(nodeOf(a).position.x);
+    expect(nodeOf(b).position.y).toBe(nodeOf(a).position.y);
+    expect(nodeOf(c).position).toEqual({ x: 900, y: 900 });
+  });
+
+  it('sorts only the selection when there is one to sort', () => {
+    const a = store().addShape('sticky', { x: 0, y: 0 });
+    const b = store().addShape('sticky', { x: 400, y: 0 });
+    const c = store().addShape('sticky', { x: 800, y: 500 });
+    store().startVoting(3);
+    store().toggleVote(a);
+    store().toggleVote(b);
+    store().toggleVote(c);
+    select(a, b);
+
+    store().sortByVotes();
+    expect(nodeOf(c).position).toEqual({ x: 800, y: 500 });
+  });
+
+  it('costs no history entry when the row is already the row', () => {
+    const a = store().addShape('sticky', { x: 0, y: 0 });
+    const b = store().addShape('sticky', { x: 400, y: 0 });
+    store().startVoting(3);
+    store().toggleVote(a);
+    store().toggleVote(a);
+    store().toggleVote(b);
+    const before = { a: nodeOf(a).position, b: nodeOf(b).position };
+    store().sortByVotes();
+    const settled = { a: nodeOf(a).position, b: nodeOf(b).position };
+    expect(settled.b).not.toEqual(before.b);
+
+    // A second run moves nothing — `commitArrangedPositions`' own rule — so it
+    // records no entry, and the one ⌘Z goes straight back past both of them.
+    store().sortByVotes();
+    expect(nodeOf(b).position).toEqual(settled.b);
+    store().undo();
+    expect(nodeOf(a).position).toEqual(before.a);
+    expect(nodeOf(b).position).toEqual(before.b);
+  });
+
+  it('serializes a round and the dots, and writes neither key without them', () => {
+    const id = store().addShape('sticky', { x: 0, y: 0 });
+    const bare = store();
+    expect('voting' in serializeDiagram(bare.nodes, bare.edges)).toBe(false);
+
+    store().startVoting(3);
+    store().toggleVote(id);
+    const s = store();
+    const data = serializeDiagram(s.nodes, s.edges, s.viewport, s.defaults, s.thumbnailNodeIds, {
+      voting: s.voting,
+      timer: s.timer,
+    });
+    expect(data.voting).toMatchObject({ active: true, dotsPerPerson: 3 });
+    expect(data.nodes[0].data.votes).toEqual({ ada: 1 });
+  });
+
+  it('reads a stored round back, and drops one nothing could act on', () => {
+    store().loadDiagram(
+      'test',
+      'Test',
+      false,
+      {
+        version: CURRENT_DIAGRAM_VERSION,
+        nodes: [],
+        edges: [],
+        voting: { active: true, revealed: false, dotsPerPerson: 5, startedById: 'ada' },
+      },
+      undefined,
+      { viewerId: 'ada' },
+    );
+    expect(store().voting?.dotsPerPerson).toBe(5);
+
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [],
+      voting: { active: true },
+    });
+    expect(store().voting).toBeNull();
+  });
+});
+
+describe('the board timer', () => {
+  beforeEach(() => {
+    store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] }, undefined, {
+      viewerId: 'ada',
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('stores an end time rather than a countdown', () => {
+    // The whole design decision: nothing ticks through the shared document.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-07T12:00:00.000Z'));
+    store().startTimer(300);
+    expect(store().timer).toEqual({
+      endsAt: '2026-09-07T12:05:00.000Z',
+      startedById: 'ada',
+    });
+  });
+
+  it('keeps a label when it is given one', () => {
+    store().startTimer(60, 'Silent writing');
+    expect(store().timer?.label).toBe('Silent writing');
+  });
+
+  it('pushes no history entry — it is `meta`, like the round', () => {
+    store().addShape('sticky', { x: 0, y: 0 });
+    const before = store().canUndo;
+    store().startTimer(60);
+    store().stopTimer();
+    expect(store().canUndo).toBe(before);
+    expect(store().timer).toBeNull();
+  });
+
+  it('refuses a timer with nobody behind it, or no length', () => {
+    useDiagramStore.setState({ viewerId: null });
+    store().startTimer(60);
+    expect(store().timer).toBeNull();
+
+    useDiagramStore.setState({ viewerId: 'ada' });
+    store().startTimer(0);
+    expect(store().timer).toBeNull();
+  });
+
+  it('caps a countdown at three hours', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-07T12:00:00.000Z'));
+    store().startTimer(99 * 60 * 60);
+    expect(store().timer?.endsAt).toBe('2026-09-07T15:00:00.000Z');
+  });
+
+  it('reads a stored timer back and drops one that could not be drawn', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [],
+      timer: { endsAt: '2030-01-01T00:00:00.000Z', startedById: 'ada' },
+    });
+    expect(store().timer?.endsAt).toBe('2030-01-01T00:00:00.000Z');
+
+    store().loadDiagram('test', 'Test', false, {
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [],
+      timer: { endsAt: 'soon', startedById: 'ada' },
+    });
+    expect(store().timer).toBeNull();
+  });
+});
