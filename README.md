@@ -188,6 +188,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `0` | Reset zoom to 100% |
 | `1` | Fit all shapes in view |
 | `2` | Zoom to the selection |
+| `2` | Zoom to the selection |
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
