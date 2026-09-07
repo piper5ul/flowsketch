@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ShapeData } from '../types';
 import { DEFAULT_SWATCH, isDarkFill } from './palette';
-import { OUTLINE_FILL, hasRestingShadow, resolveFillStyle, shapePaint } from './shapeStyle';
+import { OUTLINE_FILL, resolveFillStyle, shapePaint } from './shapeStyle';
 
 function shape(patch: Partial<ShapeData> = {}): ShapeData {
   return {
@@ -58,35 +58,12 @@ describe('shapePaint', () => {
   });
 });
 
-describe('hasRestingShadow', () => {
-  it('is what separates a filled shape from the board', () => {
-    expect(hasRestingShadow(shape())).toBe(true);
-    expect(hasRestingShadow(shape({ fill: '#FFFFFF' }))).toBe(true);
-    expect(hasRestingShadow(shape({ shape: 'star' }))).toBe(true);
-  });
-
-  it('is withheld from a shape its own border already separates', () => {
-    expect(hasRestingShadow(shape({ fillStyle: 'outline' }))).toBe(false);
-  });
-
-  it('is withheld from the kinds that answer for their own look', () => {
-    expect(hasRestingShadow(shape({ shape: 'sticky' }))).toBe(false);
-    expect(hasRestingShadow(shape({ shape: 'text', fill: 'transparent' }))).toBe(false);
-    expect(hasRestingShadow(shape({ shape: 'image' }))).toBe(false);
-  });
-
-  it('never smudges the canvas under a floating arrow’s anchor', () => {
-    expect(hasRestingShadow(shape({ fill: 'transparent', stroke: 'transparent' }))).toBe(false);
-  });
-});
-
 describe('the default swatch', () => {
   it('is white, and white takes dark text', () => {
     expect(DEFAULT_SWATCH.fill).toBe('#FFFFFF');
     expect(isDarkFill('#FFFFFF')).toBe(false);
     // A new shape is therefore a white card on the board: filled, borderless,
-    // and readable only because of the shadow under it.
+    // standing on the board’s grey rather than on a shadow.
     expect(shapePaint(shape())).toEqual({ fill: '#FFFFFF', stroke: null });
-    expect(hasRestingShadow(shape())).toBe(true);
   });
 });

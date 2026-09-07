@@ -42,7 +42,8 @@ export const EXPORT_PADDING = 24;
  * always captured in the light theme (see `pinLightTheme`), so this is a
  * constant of the file format and not of whatever the app is wearing.
  */
-const DEFAULT_BACKGROUND = '#f6f7fb';
+/** The light theme's `--canvas`, spelled out because an export cannot read a CSS variable. */
+const DEFAULT_BACKGROUND = '#eaeff4';
 
 /** Suppresses transitions while capturing — see the rule in `index.css`. */
 const EXPORTING_CLASS = 'is-exporting-image';

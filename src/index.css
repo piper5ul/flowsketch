@@ -80,8 +80,10 @@
 :root {
   color-scheme: light;
 
-  --canvas: #f6f7fb;
-  --canvas-dot: #d6d9e4;
+  /* Whimsical's board grey: a white shape stands on it with no outline and no
+     shadow, which is what keeps the drawing flat. */
+  --canvas: #eaeff4;
+  --canvas-dot: #c9d2db;
   --panel: #ffffff;
   --field: #f6f7fb;
 
@@ -124,8 +126,8 @@
 
     /* Darker than `--color-ink-950`, so the dark rail and toolbars still read
        as raised chrome sitting above the board rather than dissolving into it. */
-    --canvas: #0d0e13;
-    --canvas-dot: #303446;
+    --canvas: #0f171f;
+    --canvas-dot: #2b3743;
     --panel: #1a1c25;
     --field: #101119;
 

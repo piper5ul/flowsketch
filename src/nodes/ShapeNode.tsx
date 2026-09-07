@@ -11,9 +11,6 @@ import { isDarkFill } from '../lib/palette';
 import { canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
 import {
   CYLINDER_SEAM,
-  SHAPE_RESTING_SHADOW,
-  SHAPE_RESTING_SHADOW_FILTER,
-  hasRestingShadow,
   shapePaint,
 } from '../lib/shapeStyle';
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
@@ -203,11 +200,10 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   const verticalAlign: VerticalAlign = data.verticalAlign ?? 'middle';
   const fontSizePx = resolveFontSize(data.fontSize);
   // Which of the shape's two colours is actually drawn. A filled shape wears no
-  // outline at all and rests on a shadow instead; an outline one is white with
-  // its stroke around it. Neither reads the stored pair differently — see
+  // outline at all — and no shadow: the board's grey is what it stands on — while
+  // an outline one is white with its stroke around it. Neither reads the stored pair differently — see
   // `src/lib/shapeStyle.ts`.
   const paint = shapePaint(data);
-  const resting = hasRestingShadow(data);
   // The contrast that decides the label's colour is against what is *painted*,
   // so an outline shape takes dark text however deep its stored fill is.
   const darkBg = isDarkFill(paint.fill);
@@ -289,9 +285,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
             ? undefined
             : selected
               ? '0 0 0 1.5px var(--color-accent-500), 0 6px 16px -8px rgba(30,20,60,0.22)'
-              : resting
-                ? SHAPE_RESTING_SHADOW
-                : undefined,
+              : undefined,
         }}
       >
         {isClipShape(data.shape) && (
@@ -300,11 +294,6 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
             viewBox="0 0 100 100"
             preserveAspectRatio="none"
             overflow="visible"
-            // A silhouette has no box for a resting shadow to trace, so it
-            // casts one through its own alpha. It goes on the `<svg>` rather
-            // than the wrapper so the label above it is not shadowed too, and
-            // so the heavier shadow the user can switch on still composes over it.
-            style={{ filter: resting ? SHAPE_RESTING_SHADOW_FILTER : undefined }}
           >
             <path
               d={svgPaths[data.shape]}
@@ -323,7 +312,6 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
             viewBox="0 0 120 130"
             preserveAspectRatio="none"
             overflow="visible"
-            style={{ filter: resting ? SHAPE_RESTING_SHADOW_FILTER : undefined }}
           >
             <path
               d="M0,20 Q0,0 60,0 Q120,0 120,20 L120,110 Q120,130 60,130 Q0,130 0,110 Z"

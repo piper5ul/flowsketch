@@ -1,59 +1,71 @@
 import type { SwatchColor } from '../types';
 
-// 8 hue families × 4 lightness tiers, matching Whimsical's palette structure.
-// Tier 1–2: light pastels (dark text). Tier 4: deep fills (white text).
-// Tier 3 is saturated and sits near the luminance threshold; `isDarkFill`
-// decides per swatch (e.g. yellow-3 keeps dark text, blue-3 gets white).
-// The one exception to the naming is `white`, which holds the grey family's
-// lightest slot and is the swatch a new shape is drawn in.
-export const PALETTE: SwatchColor[] = [
-  // ── Tier 1: lightest pastels ──────────────────────────────────────
-  // White is the default a new shape is drawn in: a filled shape wears no
-  // border, so the swatch that reads as "no colour yet" has to be the paper
-  // itself rather than a grey wash of it.
-  { id: 'white',    fill: '#FFFFFF', stroke: '#CBD5E1' },
-  { id: 'blue-1',   fill: '#DBEAFE', stroke: '#93C5FD' },
-  { id: 'violet-1', fill: '#EDE9FE', stroke: '#C4B5FD' },
-  { id: 'pink-1',   fill: '#FCE7F3', stroke: '#F9A8D4' },
-  { id: 'green-1',  fill: '#D1FAE5', stroke: '#6EE7B7' },
-  { id: 'teal-1',   fill: '#CCFBF1', stroke: '#5EEAD4' },
-  { id: 'yellow-1', fill: '#FEF3C7', stroke: '#FCD34D' },
-  { id: 'orange-1', fill: '#FFEDD5', stroke: '#FDBA74' },
-
-  // ── Tier 2: medium pastels ────────────────────────────────────────
-  { id: 'gray-2',   fill: '#E5E7EB', stroke: '#9CA3AF' },
-  { id: 'blue-2',   fill: '#BFDBFE', stroke: '#60A5FA' },
-  { id: 'violet-2', fill: '#DDD6FE', stroke: '#A78BFA' },
-  { id: 'pink-2',   fill: '#FBCFE8', stroke: '#F472B6' },
-  { id: 'green-2',  fill: '#A7F3D0', stroke: '#34D399' },
-  { id: 'teal-2',   fill: '#99F6E4', stroke: '#2DD4BF' },
-  { id: 'yellow-2', fill: '#FDE68A', stroke: '#FBBF24' },
-  { id: 'orange-2', fill: '#FED7AA', stroke: '#FB923C' },
-
-  // ── Tier 3: saturated fills (white text) ──────────────────────────
-  { id: 'gray-3',   fill: '#6B7280', stroke: '#4B5563' },
-  { id: 'blue-3',   fill: '#3B82F6', stroke: '#2563EB' },
-  { id: 'violet-3', fill: '#8B5CF6', stroke: '#7C3AED' },
-  { id: 'pink-3',   fill: '#EC4899', stroke: '#DB2777' },
-  { id: 'green-3',  fill: '#10B981', stroke: '#059669' },
-  { id: 'teal-3',   fill: '#14B8A6', stroke: '#0D9488' },
-  { id: 'yellow-3', fill: '#F59E0B', stroke: '#D97706' },
-  { id: 'orange-3', fill: '#F97316', stroke: '#EA580C' },
-
-  // ── Tier 4: deep fills (white text) ───────────────────────────────
-  { id: 'gray-4',   fill: '#374151', stroke: '#1F2937' },
-  { id: 'blue-4',   fill: '#1D4ED8', stroke: '#1E40AF' },
-  { id: 'violet-4', fill: '#6D28D9', stroke: '#5B21B6' },
-  { id: 'pink-4',   fill: '#BE185D', stroke: '#9D174D' },
-  { id: 'green-4',  fill: '#047857', stroke: '#065F46' },
-  { id: 'teal-4',   fill: '#0F766E', stroke: '#115E59' },
-  { id: 'yellow-4', fill: '#92400E', stroke: '#78350F' },
-  { id: 'orange-4', fill: '#C2410C', stroke: '#9A3412' },
+/**
+ * The colour palette: Whimsical's eleven theme hues plus a neutral column,
+ * each in four tiers — two pastel tints (dark text), the hue itself, and a
+ * shade (white text) — built from the hue by mixing towards white or black.
+ *
+ * The hues are the ones Whimsical's own colour themes are made of (read out of
+ * its client: Blue, Indigo, Purple, Pink, Mint, Green, Brown, Crimson, Red,
+ * Orange, Yellow), so a board here and a board there sit in the same family.
+ * Every swatch carries a `stroke` too: the outline an `'outline'` shape draws,
+ * and the tone a coloured frame is mixed from.
+ */
+const HUES: [name: string, hex: string][] = [
+  ['blue', '#2C88D9'],
+  ['indigo', '#6558F5'],
+  ['purple', '#730FC3'],
+  ['pink', '#BD34D1'],
+  ['mint', '#1AAE9F'],
+  ['green', '#207868'],
+  ['brown', '#897A5F'],
+  ['crimson', '#AC6363'],
+  ['red', '#D3455B'],
+  ['orange', '#E8833A'],
+  ['yellow', '#F7C325'],
 ];
 
-export const DEFAULT_SWATCH = PALETTE[0]; // white — a filled shape with no border
+/** The neutral column, hand-picked from Whimsical's grey scale. */
+const NEUTRALS: SwatchColor[] = [
+  { id: 'white', fill: '#FFFFFF', stroke: '#CBD5E1' },
+  { id: 'gray-2', fill: '#DFE6ED', stroke: '#9EADBA' },
+  { id: 'gray-3', fill: '#788896', stroke: '#4B5C6B' },
+  { id: 'gray-4', fill: '#293845', stroke: '#19232C' },
+];
 
-export const COLS = 8;
+function channels(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+/** `hex` moved `amount` (0–1) of the way to `towards`, as upper-case hex. */
+export function mix(hex: string, towards: string, amount: number): string {
+  const a = channels(hex);
+  const b = channels(towards);
+  const c = a.map((v, i) => Math.round(v + (b[i] - v) * amount));
+  return `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+}
+
+const WHITE = '#FFFFFF';
+const BLACK = '#000000';
+
+/** Each tier: how far the fill and the stroke sit from the hue. */
+const TIERS: { fill: (hue: string) => string; stroke: (hue: string) => string }[] = [
+  { fill: (h) => mix(h, WHITE, 0.82), stroke: (h) => mix(h, WHITE, 0.5) },
+  { fill: (h) => mix(h, WHITE, 0.6), stroke: (h) => mix(h, WHITE, 0.25) },
+  { fill: (h) => h, stroke: (h) => mix(h, BLACK, 0.2) },
+  { fill: (h) => mix(h, BLACK, 0.45), stroke: (h) => mix(h, BLACK, 0.6) },
+];
+
+/** Laid out tier by tier, neutral first in each row, so the grid reads light to dark downwards. */
+export const PALETTE: SwatchColor[] = TIERS.flatMap((tier, index) => [
+  NEUTRALS[index],
+  ...HUES.map(([name, hex]) => ({ id: `${name}-${index + 1}`, fill: tier.fill(hex), stroke: tier.stroke(hex) })),
+]);
+
+export const DEFAULT_SWATCH = NEUTRALS[0]; // white
+
+export const COLS = HUES.length + 1;
 
 /**
  * Returns true if the fill is dark enough to warrant white text.
