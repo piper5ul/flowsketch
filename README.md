@@ -191,6 +191,7 @@ Pressing a tool key switches to that tool; clicking or dragging on the canvas th
 | `⌘0` | Fit all shapes in view |
 | `⌘F` | Find shapes and connectors by label; `Enter` / `⇧Enter` step through the matches, `Esc` closes |
 | `Space` (hold) | Temporarily pan; releases back to the previous tool |
+| `⌘K` | Command menu: every command, searchable, recents first |
 | `?` | Show the keyboard shortcut cheat sheet |
 
 The minimap, grid snapping and the theme are commands too, but deliberately keyless — the letters

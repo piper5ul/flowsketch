@@ -534,6 +534,13 @@ export const commandDeclarations: Command[] = [
     run: () => useSearchStore.getState().openSearch(),
   },
   {
+    id: 'view.commandMenu',
+    title: 'Command menu',
+    group: 'view',
+    shortcut: { key: 'k', meta: true },
+    run: (ctx) => ctx.ui.openCommandMenu(),
+  },
+  {
     id: 'view.shortcuts',
     title: 'Keyboard shortcuts',
     group: 'view',
@@ -590,6 +597,8 @@ export const commandDeclarations: Command[] = [
  */
 const READ_ONLY_COMMAND_IDS = new Set<string>([
   'tool.select',
+  // The menu only offers what its own `when`s allow, so a viewer's is the read-only set.
+  'view.commandMenu',
   // Reading *and* writing a comment are a viewer's right — see
   // `server/comments.ts` — so this survives the read-only gate.
   'comment.add',

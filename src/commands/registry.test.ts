@@ -279,6 +279,10 @@ describe('the align and distribute shortcuts', () => {
     expect(registry.matchEvent(key('f'), withSelection(0))?.id).toBe('tool.frame');
   });
 
+  it('opens the command menu with ⌘K', () => {
+    expect(registry.matchEvent(key('k', { meta: true }), withSelection(0))?.id).toBe('view.commandMenu');
+  });
+
   it('opens the link editor with K for exactly one selected shape', () => {
     expect(registry.matchEvent(key('k'), withSelection(1))?.id).toBe('edit.link');
     expect(registry.matchEvent(key('k'), withSelection(0))).toBeUndefined();

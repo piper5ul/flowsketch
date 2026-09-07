@@ -2043,3 +2043,26 @@ test('export options: selection only at 1× frames just the selected shape', asy
   expect(part.width).toBeLessThan(300);
   expect(part.height).toBeLessThan(300);
 });
+
+test('⌘K opens a command menu that runs what you pick', async ({ page }) => {
+  await signUp(page);
+  await page.getByRole('button', { name: 'New Diagram' }).first().click();
+  await expect(page).toHaveURL(/\/d\/[^/]+$/);
+  await expect(page.locator('.react-flow__pane')).toBeVisible();
+
+  await page.keyboard.press('Meta+k');
+  const menu = page.getByRole('dialog', { name: 'Command menu' });
+  await expect(menu).toBeVisible();
+  await page.getByLabel('Search commands').fill('keyboard short');
+  await expect(menu.getByRole('option')).toHaveCount(1);
+  await page.keyboard.press('Enter');
+
+  await expect(menu).toBeHidden();
+  await expect(page.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  // Used once, it leads the list next time.
+  await page.keyboard.press('Meta+k');
+  await expect(menu.getByRole('option').first()).toContainText('Keyboard shortcuts');
+  await expect(menu.getByRole('option').first()).toContainText('Recent');
+});
