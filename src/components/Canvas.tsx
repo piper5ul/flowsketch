@@ -1020,6 +1020,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         // `mindmap.*` command — and nothing else — reaches the registry from
         // inside a text editor. What has been typed is written to the store
         // first, since the map is about to grow past the label that holds it.
+        // The escape hatch is only for node labels on the canvas, not for
+        // external inputs like the TopBar title — those must type normally.
+        if (!(e.target instanceof HTMLElement) || !e.target.closest('.react-flow__node')) return;
         const command = registry.matchEvent(e, commandContext);
         if (!command?.id.startsWith('mindmap.')) return;
         commitOpenLabel(e.target);

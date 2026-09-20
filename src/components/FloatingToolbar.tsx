@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useReactFlow, useViewport } from '@xyflow/react';
 import * as Popover from '@radix-ui/react-popover';
 import {
@@ -734,24 +734,11 @@ export function FloatingToolbar() {
   // its endpoints, so measure the actual rendered path rather than assuming it
   // stays within the source/target nodes' bounds — otherwise the toolbar can end
   // up sitting on top of the very handles the user is trying to grab.
-  const selectedEdgeId = selectedEdges[0]?.id;
-  const [edgePathTopFlowY, setEdgePathTopFlowY] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    if (!selectedEdgeId) {
-      setEdgePathTopFlowY(null);
-      return;
-    }
-    const el = document.querySelector(`[data-testid="rf__edge-${selectedEdgeId}"]`);
-    if (!el) {
-      setEdgePathTopFlowY(null);
-      return;
-    }
-    const rect = el.getBoundingClientRect();
-    const topLeft = screenToFlowPosition({ x: rect.left, y: rect.top });
-    setEdgePathTopFlowY(topLeft.y);
-  }, [selectedEdgeId, nodes, viewport, screenToFlowPosition]);
-
+  //
+  // The measurement is done inside the memo rather than in a useLayoutEffect +
+  // useState, because the effect's dependency on `viewport` (a new object each
+  // time the view moves) caused an infinite setState → re-render → effect loop
+  // (React error #185) when the viewport object was referentially unstable.
   const anchor = useMemo(() => {
     if (selectedNodes.length > 0) {
       const bounds = getNodesBounds(selectedNodes);
@@ -770,12 +757,25 @@ export function FloatingToolbar() {
         const tx = tAbs.x + (target.measured?.width ?? 100) / 2;
         const ty = tAbs.y + (target.measured?.height ?? 60) / 2;
         const naturalTop = Math.min(sy, ty);
+        // Check the rendered SVG path — an elbow can route well above the
+        // endpoints. Reading the DOM inside useMemo is fine here: the deps
+        // that invalidate the memo (nodes, viewport) are exactly the things
+        // that move the path, so the measurement is always fresh.
+        let edgePathTopFlowY: number | null = null;
+        const el = document.querySelector(`[data-testid="rf__edge-${edge.id}"]`);
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          edgePathTopFlowY = screenToFlowPosition({ x: rect.left, y: rect.top }).y;
+        }
         const top = edgePathTopFlowY !== null ? Math.min(naturalTop, edgePathTopFlowY) : naturalTop;
         return { x: (sx + tx) / 2, y: top };
       }
     }
     return null;
-  }, [selectedNodes, selectedEdges, nodes, edgePathTopFlowY, getNodesBounds]);
+    // viewport.x/y/zoom as primitives so a new object reference does not
+    // invalidate the memo on every unrelated store update.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodes, selectedEdges, nodes, viewport.x, viewport.y, viewport.zoom, getNodesBounds, screenToFlowPosition]);
 
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const editingEdgeId = useDiagramStore((s) => s.editingEdgeId);
