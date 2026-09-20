@@ -335,6 +335,35 @@ export function CanvasPage() {
     };
   }, [loading, loadError, id, readOnly, bound]);
 
+  // The title is a database column, not part of DiagramData, so the collab
+  // persistence (which writes only `data`) never touches it. This effect saves
+  // it independently of the JSON autosave, the same way the thumbnail scheduler
+  // sends a metadata-only PUT.
+  useEffect(() => {
+    if (loading || loadError || !id || readOnly) return;
+    let prevTitle = useDiagramStore.getState().title;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const unsubscribe = useDiagramStore.subscribe((state) => {
+      if (state.title === prevTitle) return;
+      prevTitle = state.title;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (useDiagramStore.getState().diagramId !== id) return;
+        void api.saveDiagram(id, { title: useDiagramStore.getState().title });
+      }, 1000);
+    });
+
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+      // Flush a pending title save on unmount.
+      if (useDiagramStore.getState().title !== prevTitle && useDiagramStore.getState().diagramId === id) {
+        void api.saveDiagram(id, { title: useDiagramStore.getState().title });
+      }
+    };
+  }, [loading, loadError, id, readOnly]);
+
   // Autosave is never armed in this branch, so the unreadable diagram cannot be
   // overwritten by this build.
   if (loadError) {

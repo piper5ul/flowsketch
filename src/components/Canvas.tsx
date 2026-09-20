@@ -173,7 +173,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const insertImages = useImageInsert();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevToolRef = useRef<Tool>('select');
-  const connectorSourceRef = useRef<string | null>(null);
+  const connectorSourceRef = useRef<{ id: string; anchor?: EdgeAnchor } | null>(null);
   // A connector being drawn by hand — see `beginConnectorGesture`. The ref is
   // the gesture; the state is only what the preview line needs to draw.
   const gestureRef = useRef<{ sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean } | null>(null);
@@ -197,6 +197,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // Set when a drag just made a connector, so the click the browser fires on
   // release does not also start (or finish) the old click-click connector.
   const swallowClickRef = useRef(false);
+  const toolPlacedAtRef = useRef(0);
   // Both clipboards live outside the store: neither belongs in a saved diagram.
   const clipboardRef = useRef<ClipboardPayload | null>(null);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
@@ -458,6 +459,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       const shape = tool as ShapeKind;
       const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
       addShape(shape, { x: point.x - sizeOffset.x, y: point.y - sizeOffset.y });
+      toolPlacedAtRef.current = Date.now();
       setTool('select');
     },
     [tool, screenToFlowPosition, addShape, addFrame, addTable, addWire, wireComponent, setTool],
@@ -511,17 +513,31 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       if (isAnchorNode(node.data)) return;
 
       if (!connectorSourceRef.current) {
-        connectorSourceRef.current = node.id;
+        const nodes = useDiagramStore.getState().nodes;
+        const byId = new Map(nodes.map((n) => [n.id, n] as const));
+        const clickPt = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+        const sourceAnchor = anchorFor(node, byId, clickPt) ?? undefined;
+        connectorSourceRef.current = { id: node.id, anchor: sourceAnchor };
         return;
       }
 
-      if (connectorSourceRef.current === node.id) return;
+      if (connectorSourceRef.current.id === node.id) return;
 
-      const edgeData = useDiagramStore.getState().newConnectorData();
+      const nodes = useDiagramStore.getState().nodes;
+      const byId = new Map(nodes.map((n) => [n.id, n] as const));
+      const clickPt = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      const targetAnchor = anchorFor(node, byId, clickPt) ?? undefined;
+      const edgeData = {
+        ...useDiagramStore.getState().newConnectorData(),
+        sourceAnchor: connectorSourceRef.current.anchor,
+        targetAnchor,
+      };
       addEdges({
         id: nanoid(8),
-        source: connectorSourceRef.current,
+        source: connectorSourceRef.current.id,
         target: node.id,
+        sourceHandle: connectorSourceRef.current.anchor?.side,
+        targetHandle: targetAnchor?.side,
         type: 'connector',
         zIndex: 1000,
         ...computeMarkers(edgeData),
@@ -529,7 +545,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       });
       connectorSourceRef.current = null;
     },
-    [tool, addEdges, placeTool, readOnly, selectOnly],
+    [tool, addEdges, placeTool, readOnly, selectOnly, screenToFlowPosition],
   );
 
   const onPaneClick = useCallback(
@@ -600,6 +616,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       // every tool command is gated), so this is the one place a double-click
       // would still drop a text shape onto it.
       if (readOnly) return;
+      if (Date.now() - toolPlacedAtRef.current < 500) return;
       const target = event.target as HTMLElement;
       // Edge labels (and the add-label target) are portalled into the label
       // renderer, outside `.react-flow__edge`, so they need their own guard.
@@ -1080,7 +1097,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         snapToGrid={gridSnap && !held.backtick}
         snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
-        connectionRadius={30}
+        connectionRadius={50}
         connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}
         // The right button opens the context menu, so panning is the middle
         // button plus the hand tool and hold-to-pan.
