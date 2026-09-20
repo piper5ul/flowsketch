@@ -7,6 +7,7 @@ import {
   useReactFlow,
   ViewportPortal,
   useConnection,
+  type Connection,
   type FinalConnectionState,
   type Viewport,
 } from '@xyflow/react';
@@ -133,7 +134,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const edges = useDiagramStore((s) => s.edges);
   const onNodesChange = useDiagramStore((s) => s.onNodesChange);
   const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
-  const onConnect = useDiagramStore((s) => s.onConnect);
+  const storeOnConnect = useDiagramStore((s) => s.onConnect);
   const addShape = useDiagramStore((s) => s.addShape);
   const addFrame = useDiagramStore((s) => s.addFrame);
   const addTable = useDiagramStore((s) => s.addTable);
@@ -293,6 +294,14 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   useEffect(() => {
     if (tool !== 'connector') connectorSourceRef.current = null;
   }, [tool]);
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      connectorSourceRef.current = null;
+      storeOnConnect(connection);
+    },
+    [storeOnConnect],
+  );
 
   // A presentation belongs to the board that is open. `usePresentStore` is a
   // module-level store like every other, so a canvas torn down mid-slide (a
@@ -931,6 +940,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // mirroring Whimsical's "drag to create" flow.
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
+      connectorSourceRef.current = null;
       if (connectionState.isValid || !connectionState.fromNode) return;
       const target = event.target as HTMLElement;
       if (!target.closest('.react-flow__pane')) return;
