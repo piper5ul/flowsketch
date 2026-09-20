@@ -50,6 +50,7 @@ import {
   isTableNode,
   isWireNode,
 } from '../lib/nodeKinds';
+import { absolutePosition } from '../lib/nodeTree';
 import { hasWireLabel } from '../lib/wireframe';
 import { addColumn, addRow, removeColumn, removeRow } from '../lib/table';
 import type { TableData } from '../types';
@@ -761,10 +762,13 @@ export function FloatingToolbar() {
       const source = nodes.find((n) => n.id === edge.source);
       const target = nodes.find((n) => n.id === edge.target);
       if (source && target) {
-        const sx = source.position.x + (source.measured?.width ?? 100) / 2;
-        const sy = source.position.y + (source.measured?.height ?? 60) / 2;
-        const tx = target.position.x + (target.measured?.width ?? 100) / 2;
-        const ty = target.position.y + (target.measured?.height ?? 60) / 2;
+        const byId = new Map(nodes.map((n) => [n.id, n] as const));
+        const sAbs = absolutePosition(source, byId);
+        const tAbs = absolutePosition(target, byId);
+        const sx = sAbs.x + (source.measured?.width ?? 100) / 2;
+        const sy = sAbs.y + (source.measured?.height ?? 60) / 2;
+        const tx = tAbs.x + (target.measured?.width ?? 100) / 2;
+        const ty = tAbs.y + (target.measured?.height ?? 60) / 2;
         const naturalTop = Math.min(sy, ty);
         const top = edgePathTopFlowY !== null ? Math.min(naturalTop, edgePathTopFlowY) : naturalTop;
         return { x: (sx + tx) / 2, y: top };
@@ -777,8 +781,10 @@ export function FloatingToolbar() {
   const editingEdgeId = useDiagramStore((s) => s.editingEdgeId);
   if (!anchor || editingNodeId || editingEdgeId) return null;
 
-  const screenX = anchor.x * viewport.zoom + viewport.x;
-  const screenY = anchor.y * viewport.zoom + viewport.y;
+  const rawScreenX = anchor.x * viewport.zoom + viewport.x;
+  const rawScreenY = anchor.y * viewport.zoom + viewport.y;
+  const screenX = Math.max(200, Math.min(rawScreenX, window.innerWidth - 200));
+  const screenY = Math.max(60, rawScreenY);
 
   const isEdgeMode = selectedNodes.length === 0 && selectedEdges.length > 0;
   const activeStroke = isEdgeMode

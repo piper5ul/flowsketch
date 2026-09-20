@@ -16,6 +16,7 @@ const { prismaMock, authState } = vi.hoisted(() => ({
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
     comment: {
       findFirst: vi.fn(),
@@ -470,7 +471,7 @@ describe('DELETE /api/diagrams/:id/threads/:threadId/comments/:commentId', () =>
     await request(server).delete('/api/diagrams/d1/threads/t1/comments/c1').expect(204);
 
     expect(prismaMock.comment.delete).toHaveBeenCalledWith({ where: { id: 'c1' } });
-    expect(prismaMock.commentThread.delete).not.toHaveBeenCalled();
+    expect(prismaMock.commentThread.deleteMany).not.toHaveBeenCalled();
   });
 
   it('lets the author remove their own comment', async () => {
@@ -497,7 +498,7 @@ describe('DELETE /api/diagrams/:id/threads/:threadId/comments/:commentId', () =>
     await request(server).delete('/api/diagrams/d1/threads/t1/comments/c1').expect(204);
 
     expect(prismaMock.comment.count).toHaveBeenCalledWith({ where: { threadId: 't1' } });
-    expect(prismaMock.commentThread.delete).toHaveBeenCalledWith({ where: { id: 't1' } });
+    expect(prismaMock.commentThread.deleteMany).toHaveBeenCalledWith({ where: { id: 't1' } });
   });
 
   it('refuses a member who neither wrote the comment nor opened the thread', async () => {

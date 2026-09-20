@@ -755,10 +755,13 @@ describe('PUT /api/diagrams/:id — orphaned image cleanup', () => {
 
     await request(server).put('/api/diagrams/d1').send(bodyWith()).expect(200);
 
-    // Scoped to the owner's own history, as the index lookup is to their boards.
+    // Scoped to the owner's own history, paginated so memory stays bounded.
     expect(prismaMock.diagramVersion.findMany).toHaveBeenCalledWith({
       where: { diagram: { userId: 'u1' } },
       select: { data: true },
+      take: 200,
+      skip: 0,
+      orderBy: { createdAt: 'desc' },
     });
     expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
     expect(fs.existsSync(historicFile)).toBe(true);

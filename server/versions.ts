@@ -306,6 +306,7 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     userId: true,
     data: true,
     title: true,
+    updatedAt: true,
   });
   if (!access) return;
 
@@ -315,6 +316,19 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
   });
   if (!version) {
     res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  // A collab session owns the document: writing `data` here would be
+  // overwritten by the store hook's next debounce. The client re-seeds the
+  // Yjs doc through `loadDiagram`, which is the correct path — but only if
+  // we do not also race against it from the row side.
+  const liveDoc = await prisma.diagramDoc.findUnique({
+    where: { diagramId: req.params.id },
+    select: { diagramId: true },
+  });
+  if (liveDoc) {
+    res.status(409).json({ error: 'Conflict', updatedAt: access.diagram.updatedAt });
     return;
   }
 
@@ -389,6 +403,10 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/fork', async (req, res) =
       starred: false,
     },
   });
-  await syncDiagramImages(fork.id, fork.data);
+  try {
+    await syncDiagramImages(fork.id, fork.data);
+  } catch (err) {
+    console.error(`Image index sync after fork failed for diagram ${fork.id}:`, err);
+  }
   res.status(201).json(publicDiagram(fork, 'owner'));
 });

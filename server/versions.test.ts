@@ -650,6 +650,15 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
+
+  it('409s when a collab session owns the document', async () => {
+    prismaMock.diagramDoc.findUnique.mockResolvedValueOnce({ diagramId: 'd1' });
+
+    await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(409);
+
+    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/diagrams/:id/versions/:versionId/fork', () => {

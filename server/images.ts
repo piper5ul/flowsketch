@@ -56,7 +56,9 @@ imagesRouter.post(
       await writeImage(owner, image.id, sniffed.ext, body as Buffer);
     } catch (err) {
       // Never leave a row pointing at bytes that are not there.
-      await prisma.image.delete({ where: { id: image.id } }).catch(() => {});
+      await prisma.image.delete({ where: { id: image.id } }).catch((e) => {
+        console.error(`Failed to clean up image row ${image.id}:`, e);
+      });
       throw err;
     }
 
@@ -190,11 +192,27 @@ export async function deleteOrphanImages(ownerId: string, candidateIds: string[]
 
   // Versions are deliberately not indexed row by row: this is the only place
   // that asks about them, and only about images no live diagram claims.
-  const history = await prisma.diagramVersion.findMany({
-    where: { diagram: { userId: ownerId } },
-    select: { data: true },
-  });
-  const inHistory = new Set(history.flatMap((v) => imageIdsInDiagram(v.data)));
+  // Scoped to the owner's diagrams and paginated so we never load more than
+  // a few hundred version rows' JSON into memory at once.
+  const BATCH = 200;
+  const inHistory = new Set<string>();
+  let skip = 0;
+  for (;;) {
+    const batch = await prisma.diagramVersion.findMany({
+      where: { diagram: { userId: ownerId } },
+      select: { data: true },
+      take: BATCH,
+      skip,
+      orderBy: { createdAt: 'desc' },
+    });
+    for (const v of batch) {
+      for (const id of imageIdsInDiagram(v.data)) inHistory.add(id);
+    }
+    if (batch.length < BATCH) break;
+    // If every unclaimed candidate is now accounted for, stop early.
+    if (unclaimed.every((id) => inHistory.has(id))) break;
+    skip += BATCH;
+  }
   const orphanIds = unclaimed.filter((id) => !inHistory.has(id));
   if (orphanIds.length === 0) return [];
 

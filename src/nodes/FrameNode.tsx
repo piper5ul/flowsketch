@@ -84,7 +84,8 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
           }
         }}
         className={clsx(
-          'absolute left-3 top-2 max-w-[calc(100%-1.5rem)] truncate text-[13px] font-semibold text-ink-700 outline-none',
+          'absolute left-3 top-2 max-w-[calc(100%-1.5rem)] text-[13px] font-semibold text-ink-700 outline-none',
+          !editing && 'truncate',
           editing && 'nodrag cursor-text',
         )}
       >

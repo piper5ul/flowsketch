@@ -5,9 +5,11 @@ import { DashboardPage } from './pages/DashboardPage';
 import { CanvasPage } from './pages/CanvasPage';
 import { SharedPage } from './pages/SharedPage';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function App() {
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
@@ -21,6 +23,7 @@ function App() {
         </Route>
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

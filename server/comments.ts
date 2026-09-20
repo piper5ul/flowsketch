@@ -351,7 +351,7 @@ commentsRouter.delete('/diagrams/:id/threads/:threadId/comments/:commentId', asy
   // was read.
   const remaining = await prisma.comment.count({ where: { threadId: comment.thread.id } });
   if (remaining === 0) {
-    await prisma.commentThread.delete({ where: { id: comment.thread.id } });
+    await prisma.commentThread.deleteMany({ where: { id: comment.thread.id } });
   }
   res.status(204).end();
 });
