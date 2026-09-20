@@ -23,6 +23,7 @@ import {
   DRAG_THRESHOLD_PX,
   facingSide,
   nodeAtPoint,
+  OPPOSITE_SIDE,
   sideAnchor,
 } from '../lib/connectorGesture';
 import {
@@ -41,6 +42,7 @@ import {
   DEFAULT_TABLE_ROWS,
   parseTableText,
 } from '../lib/table';
+import { CONNECTOR_STROKE_PX } from '../lib/defaults';
 import { SHAPE_TOOL_KINDS, registry } from '../commands/commands';
 import { defaultSizeOf as wireSizeOf } from '../lib/wireframe';
 import type { CommandContext } from '../commands/types';
@@ -183,8 +185,13 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const connectorSourceRef = useRef<{ id: string; anchor?: EdgeAnchor } | null>(null);
   // A connector being drawn by hand — see `beginConnectorGesture`. The ref is
   // the gesture; the state is only what the preview line needs to draw.
-  const gestureRef = useRef<{ sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean } | null>(null);
-  const [connectDraft, setConnectDraft] = useState<{ from: Point; to: Point } | null>(null);
+  const gestureRef = useRef<{
+    sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean;
+    stroke: string; strokePx: number; endArrow: boolean;
+  } | null>(null);
+  const [connectDraft, setConnectDraft] = useState<{
+    from: Point; to: Point; stroke: string; strokePx: number; endArrow: boolean;
+  } | null>(null);
   // A handle drag is React Flow's gesture, so its target comes from React Flow:
   // the same outline as the connector tool's, for the same reason.
   const connection = useConnection();
@@ -756,13 +763,28 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       const nodes = useDiagramStore.getState().nodes;
       const start = screenToFlowPosition({ x: event.clientX, y: event.clientY });
       const source = nodeAtPoint(nodes, start, (n) => isAnchorNode(n.data));
-      if (!source) return;
-      const byId = new Map(nodes.map((n) => [n.id, n] as const));
-      const anchor = anchorFor(source, byId, start);
-      const rect = boardRect(source, byId);
-      if (!anchor || !rect) return;
-      const from = anchorToPoint(anchor, rect);
-      gestureRef.current = { sourceId: source.id, anchor, from, start, moved: false };
+
+      // When the press lands on a shape, the gesture connects from its outline;
+      // when it lands on empty canvas, it draws a floating arrow from that point.
+      const onShape = !!source;
+      const cd = useDiagramStore.getState().newConnectorData();
+      const draftStyle = {
+        stroke: cd.stroke ?? '#788896',
+        strokePx: CONNECTOR_STROKE_PX[cd.strokeWidth ?? 2],
+        endArrow: (cd.endArrowStyle ?? 'arrow') !== 'none',
+      };
+      if (onShape) {
+        const byId = new Map(nodes.map((n) => [n.id, n] as const));
+        const anchor = anchorFor(source, byId, start);
+        const rect = boardRect(source, byId);
+        if (!anchor || !rect) return;
+        const from = anchorToPoint(anchor, rect);
+        gestureRef.current = { sourceId: source.id, anchor, from, start, moved: false, ...draftStyle };
+      } else {
+        // No source node — a floating arrow that begins where the pointer is.
+        // `sourceId` is filled in on release once the anchor node is created.
+        gestureRef.current = { sourceId: '', anchor: { side: 'right' as const, t: 0.5 }, from: start, start, moved: false, ...draftStyle };
+      }
 
       const finish = () => {
         window.removeEventListener('pointermove', onMove);
@@ -778,12 +800,12 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         const to = screenToFlowPosition({ x: e.clientX, y: e.clientY });
         if (!g.moved && Math.hypot(to.x - g.start.x, to.y - g.start.y) < DRAG_THRESHOLD_PX) return;
         g.moved = true;
-        setConnectDraft({ from: g.from, to });
-        // Say where the release would land: the shape under the pointer, never
-        // the one the line is leaving or a floating arrow's anchor.
-        const state = useDiagramStore.getState();
-        const over = nodeAtPoint(state.nodes, to, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
-        state.setConnectTarget(over?.id ?? null);
+        setConnectDraft({ from: g.from, to, stroke: g.stroke, strokePx: g.strokePx, endArrow: g.endArrow });
+        if (onShape) {
+          const state = useDiagramStore.getState();
+          const over = nodeAtPoint(state.nodes, to, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
+          state.setConnectTarget(over?.id ?? null);
+        }
       };
       const onUp = (e: PointerEvent) => {
         const g = gestureRef.current;
@@ -791,6 +813,46 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         if (!g || !g.moved) return;
         swallowClickRef.current = true;
         const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+
+        if (!onShape) {
+          // Floating arrow: two invisible anchors with a connector between them.
+          const anchorSize = 1;
+          const startId = nanoid(8);
+          const endId = nanoid(8);
+          const dx = at.x - g.start.x;
+          const dy = at.y - g.start.y;
+          const startSide: Direction = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
+          const endSide = OPPOSITE_SIDE[startSide];
+          addNodes([
+            {
+              id: startId, type: 'shape',
+              position: { x: g.start.x - anchorSize / 2, y: g.start.y - anchorSize / 2 },
+              width: anchorSize, height: anchorSize,
+              data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
+            },
+            {
+              id: endId, type: 'shape',
+              position: { x: at.x - anchorSize / 2, y: at.y - anchorSize / 2 },
+              width: anchorSize, height: anchorSize,
+              data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
+            },
+          ]);
+          const edgeData = useDiagramStore.getState().newConnectorData();
+          addEdges({
+            id: nanoid(8),
+            source: startId,
+            target: endId,
+            sourceHandle: startSide,
+            targetHandle: endSide,
+            type: 'connector',
+            zIndex: 1000,
+            ...computeMarkers(edgeData),
+            data: edgeData,
+          });
+          setTool('select');
+          return;
+        }
+
         const current = useDiagramStore.getState().nodes;
         const target = nodeAtPoint(current, at, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
         if (target) {
@@ -819,7 +881,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       window.addEventListener('pointerup', onUp);
       window.addEventListener('keydown', onKey);
     },
-    [tool, readOnly, screenToFlowPosition, addEdges, createShapeWithConnector, setTool],
+    [tool, readOnly, screenToFlowPosition, addNodes, addEdges, createShapeWithConnector, setTool],
   );
 
   /**
@@ -1175,14 +1237,37 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
               data-testid="connector-draft"
               style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
             >
+              {connectDraft.endArrow && (
+                <defs>
+                  <marker
+                    id="connector-draft-arrow"
+                    viewBox="0 0 10 10"
+                    refX={2}
+                    refY={5}
+                    markerWidth={13}
+                    markerHeight={13}
+                    orient="auto-start-reverse"
+                    markerUnits="userSpaceOnUse"
+                  >
+                    <path
+                      d="M 2.5 0.5 L 9.5 5 L 2.5 9.5 Z"
+                      fill={connectDraft.stroke}
+                      stroke={connectDraft.stroke}
+                      strokeWidth={1}
+                      strokeLinejoin="round"
+                    />
+                  </marker>
+                </defs>
+              )}
               <line
                 x1={connectDraft.from.x}
                 y1={connectDraft.from.y}
                 x2={connectDraft.to.x}
                 y2={connectDraft.to.y}
-                stroke="var(--color-accent-500)"
-                strokeWidth={2.5}
+                stroke={connectDraft.stroke}
+                strokeWidth={connectDraft.strokePx}
                 strokeLinecap="round"
+                markerEnd={connectDraft.endArrow ? 'url(#connector-draft-arrow)' : undefined}
               />
             </svg>
           </ViewportPortal>
