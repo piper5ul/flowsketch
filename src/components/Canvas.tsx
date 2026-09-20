@@ -80,6 +80,12 @@ function isSide(id: string | null | undefined): id is Direction {
 const GRID_SIZE = 10;
 const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 
+const CONNECTION_LINE_STYLE = { stroke: 'var(--color-accent-500)', strokeWidth: 2.5 };
+const MIDDLE_BUTTON_DRAG: number[] = [1];
+const FIT_VIEW_OPTIONS = { padding: 0.2, maxZoom: 1 };
+const DEFAULT_VIEWPORT_FALLBACK = { x: 0, y: 0, zoom: 0.8 };
+const PRO_OPTIONS = { hideAttribution: true };
+
 /** Half a new frame's box, so the click that places one lands in its middle. */
 const FRAME_OFFSET = { x: 240, y: 160 };
 
@@ -220,6 +226,8 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   // alignment guides, `-drag ignores the grid as well, ⌥-hover measures.
   const [held, setHeld] = useState({ meta: false, backtick: false, alt: false });
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const onNodeMouseEnter = useCallback((_: unknown, node: { id: string }) => setHoveredNodeId(node.id), []);
+  const onNodeMouseLeave = useCallback(() => setHoveredNodeId(null), []);
   const setSnapOverride = useDiagramStore((s) => s.setSnapOverride);
   useEffect(() => {
     setSnapOverride(held.backtick ? 'all' : held.meta ? 'guides' : 'none');
@@ -1080,8 +1088,8 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         onNodeClick={onNodeClick}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
-        onNodeMouseEnter={(_, node) => setHoveredNodeId(node.id)}
-        onNodeMouseLeave={() => setHoveredNodeId(null)}
+        onNodeMouseEnter={onNodeMouseEnter}
+        onNodeMouseLeave={onNodeMouseLeave}
         onNodeDragStop={onNodeDragStop}
         // A read-only board used to have no menus at all, every item on them
         // being an edit. "Comment" is the exception — writing one is a
@@ -1101,10 +1109,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={50}
-        connectionLineStyle={{ stroke: 'var(--color-accent-500)', strokeWidth: 2.5 }}
+        connectionLineStyle={CONNECTION_LINE_STYLE}
         // The right button opens the context menu, so panning is the middle
         // button plus the hand tool and hold-to-pan.
-        panOnDrag={presenting ? false : tool === 'pan' ? true : [1]}
+        panOnDrag={presenting ? false : tool === 'pan' ? true : MIDDLE_BUTTON_DRAG}
         selectionOnDrag={!presenting && !readOnly && tool === 'select'}
         // React Flow's own three gates. Dragging and connecting are edits; and
         // with nothing selectable there is no selection for the floating
@@ -1132,10 +1140,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         // by the time this mounts, so fitView frames the actual content — and
         // defaultViewport is what an empty diagram, with nothing to fit, gets.
         fitView={!opening.viewport}
-        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-        defaultViewport={opening.viewport ?? { x: 0, y: 0, zoom: 0.8 }}
+        fitViewOptions={FIT_VIEW_OPTIONS}
+        defaultViewport={opening.viewport ?? DEFAULT_VIEWPORT_FALLBACK}
         className={`${tool === 'pan' ? 'cursor-grab' : isDrawingTool ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
-        proOptions={{ hideAttribution: true }}
+        proOptions={PRO_OPTIONS}
       >
         {/* Both the backdrop and the dots come from the theme tokens, so the
             board follows a theme change with no re-render: `rf-canvas` paints
