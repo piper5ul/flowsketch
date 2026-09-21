@@ -20,7 +20,7 @@ import {
 import { manhattanRoute } from '../lib/manhattanRouter';
 import { absolutePosition } from '../lib/nodeTree';
 import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
-import { markerDepthPx } from '../lib/edgeMarkers';
+import { markerDepthPx, markerId, MARKER_SIZE_PX, SELECTION_MARKER_COLOR } from '../lib/edgeMarkers';
 import { isAnchorNode, isFloatingArrowEdge } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
@@ -371,6 +371,12 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const strokeStyle = data?.strokeStyle ?? 'solid';
   const connectorType = data?.connectorType ?? 'elbow';
   const waypoints = data?.waypoints ?? [];
+
+  const startArrow = data?.startArrowStyle ?? DEFAULT_START_ARROW;
+  const endArrow = data?.endArrowStyle ?? DEFAULT_END_ARROW;
+  const markerSize = MARKER_SIZE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH];
+  const selMarkerStart = selected && startArrow !== 'none' ? markerId(startArrow, SELECTION_MARKER_COLOR, markerSize) : markerStart;
+  const selMarkerEnd = selected && endArrow !== 'none' ? markerId(endArrow, SELECTION_MARKER_COLOR, markerSize) : markerEnd;
   // Selection thickens the line by a hair on top of whatever width it is set to.
   const strokeWidth = CONNECTOR_STROKE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH] + (selected ? 0.5 : 0);
 
@@ -466,8 +472,8 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       <BaseEdge
         id={id}
         path={svgPathString}
-        markerStart={markerStart}
-        markerEnd={markerEnd}
+        markerStart={selMarkerStart}
+        markerEnd={selMarkerEnd}
         interactionWidth={40}
         style={{
           stroke: selected ? 'var(--color-accent-500)' : stroke,

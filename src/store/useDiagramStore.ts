@@ -2047,6 +2047,35 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }
 
     if (dragEnded) {
+      const posChanges = changes.filter(
+        (c): c is NodeChange<ShapeNode> & { type: 'position' } => c.type === 'position' && c.position != null,
+      );
+      if (posChanges.length > 0 && get().snapOverride === 'none') {
+        const state = get();
+        const draggedIds = new Set(posChanges.map((c) => c.id));
+        const byId = nodesById(state.nodes);
+        const others = state.nodes
+          .filter((n) => !draggedIds.has(n.id))
+          .map((n) => absoluteBounds(n, byId));
+        const dragged = posChanges.flatMap((change) => {
+          const node = state.nodes.find((n) => n.id === change.id);
+          if (!node) return [];
+          const relX = change.position!.x;
+          const relY = change.position!.y;
+          const origin = absolutePosition({ ...node, position: { x: 0, y: 0 } }, byId);
+          return [{ change, relX, relY, x: relX + origin.x, y: relY + origin.y, w: nodeWidth(node), h: nodeHeight(node) }];
+        });
+        if (others.length > 0 && dragged.length > 0) {
+          const x = Math.min(...dragged.map((d) => d.x));
+          const y = Math.min(...dragged.map((d) => d.y));
+          const w = Math.max(...dragged.map((d) => d.x + d.w)) - x;
+          const h = Math.max(...dragged.map((d) => d.y + d.h)) - y;
+          const { dx, dy } = computeAlignmentSnap({ x, y, w, h }, others);
+          if (dx !== 0 || dy !== 0) {
+            for (const d of dragged) d.change.position = { x: d.relX + dx, y: d.relY + dy };
+          }
+        }
+      }
       set((s) => ({ nodes: applyNodeChanges(changes, s.nodes), guides: [] }));
       return;
     }

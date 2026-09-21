@@ -7,7 +7,7 @@ import { DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from './
  * two, leaving a bold line wearing an arrow four times the area of a thin
  * line's rather than the deliberate step below.
  */
-const MARKER_SIZE_PX: Record<StrokeWidth, number> = { 1: 10, 2: 13, 3: 17 };
+export const MARKER_SIZE_PX: Record<StrokeWidth, number> = { 1: 10, 2: 13, 3: 17 };
 
 /** An arrowhead that draws something — every style but `none`. */
 export type VisibleArrowStyle = Exclude<ArrowStyle, 'none'>;
@@ -102,7 +102,9 @@ export function computeMarkers(data: MarkerSource): { markerStart?: string; mark
  * `ConnectorMarkerDefs` renders into the canvas. Ordered by id so the list is
  * stable across renders regardless of the order the edges arrive in.
  */
-export function markerDefsForEdges(edges: { data?: ConnectorData }[]): MarkerDef[] {
+export const SELECTION_MARKER_COLOR = '#7c5cff';
+
+export function markerDefsForEdges(edges: { data?: ConnectorData; selected?: boolean }[]): MarkerDef[] {
   const byId = new Map<string, MarkerDef>();
 
   for (const edge of edges) {
@@ -112,6 +114,10 @@ export function markerDefsForEdges(edges: { data?: ConnectorData }[]): MarkerDef
       if (style === 'none') continue;
       const id = markerId(style, color, size);
       if (!byId.has(id)) byId.set(id, { id, style, color, size });
+      if (edge.selected) {
+        const selId = markerId(style, SELECTION_MARKER_COLOR, size);
+        if (!byId.has(selId)) byId.set(selId, { id: selId, style, color: SELECTION_MARKER_COLOR, size });
+      }
     }
   }
 
