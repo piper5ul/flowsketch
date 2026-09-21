@@ -306,8 +306,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     (connection: Connection) => {
       connectorSourceRef.current = null;
       storeOnConnect(connection);
+      if (tool === 'connector') setTool('select');
     },
-    [storeOnConnect],
+    [storeOnConnect, tool, setTool],
   );
 
   // A presentation belongs to the board that is open. `usePresentStore` is a
@@ -1023,8 +1024,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
           : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
         : position;
       createShapeWithConnector(connectionState.fromNode.id, sourceAnchor, position, from);
+      if (tool === 'connector') setTool('select');
     },
-    [screenToFlowPosition, createShapeWithConnector],
+    [screenToFlowPosition, createShapeWithConnector, tool, setTool],
   );
 
   // What the browser's own paste brings, for the two things ⌘V can mean that
