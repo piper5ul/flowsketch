@@ -49,6 +49,7 @@ import type { CommandContext } from '../commands/types';
 import { nodeTypes } from '../nodes/nodeTypes';
 import { edgeTypes } from '../edges/edgeTypes';
 import { ConnectorMarkerDefs } from '../edges/ConnectorMarkerDefs';
+import { ConnectionLine } from '../edges/ConnectionLine';
 import { useCollabStore } from '../store/useCollabStore';
 import { useCommentStore, type CommentAnchor } from '../store/useCommentStore';
 import { usePresentStore } from '../store/usePresentStore';
@@ -83,7 +84,6 @@ function isSide(id: string | null | undefined): id is Direction {
 const GRID_SIZE = 10;
 const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 
-const CONNECTION_LINE_STYLE = { stroke: 'var(--color-accent-500)', strokeWidth: 2.5 };
 const MIDDLE_BUTTON_DRAG: number[] = [1];
 const FIT_VIEW_OPTIONS = { padding: 0.2, maxZoom: 1 };
 const DEFAULT_VIEWPORT_FALLBACK = { x: 0, y: 0, zoom: 0.8 };
@@ -1181,7 +1181,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={50}
-        connectionLineStyle={CONNECTION_LINE_STYLE}
+        connectionLineComponent={ConnectionLine}
         // The right button opens the context menu, so panning is the middle
         // button plus the hand tool and hold-to-pan.
         panOnDrag={presenting ? false : tool === 'pan' ? true : MIDDLE_BUTTON_DRAG}
