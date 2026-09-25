@@ -84,3 +84,47 @@ export function facingSide(from: Point, to: Point): Direction {
 
 /** How far the pointer has to travel before a press is a drag, not a click. */
 export const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * The grid a connector's free end lands on. Whimsical snaps a dangling end to
+ * its board's dots whether or not shapes snap, so a row of arrows drawn by
+ * hand ends on one line; 10 px is the board's own grid (`GRID_SIZE` in
+ * `Canvas`), fine enough that it reads as "tidy" rather than "jumpy".
+ */
+export const FREE_END_GRID_PX = 10;
+
+/** `point` rounded to the nearest free-end grid dot. */
+export function snapToFreeEndGrid(point: Point, grid = FREE_END_GRID_PX): Point {
+  return { x: grid * Math.round(point.x / grid), y: grid * Math.round(point.y / grid) };
+}
+
+/**
+ * The side a connector's free end is entered through, given where its
+ * attached end leaves its shape. Whimsical's rule, observed live: the free end
+ * is approached along the axis the line set off on — a line leaving a bottom
+ * edge arrives vertically, downwards when the end is below and upwards when it
+ * is above — so dragging the end around never flips the attached end's side
+ * and the last run always points the way the line was heading.
+ */
+export function freeEndSide(attached: { point: Point; side: Direction }, free: Point): Direction {
+  if (attached.side === 'top' || attached.side === 'bottom') {
+    return free.y >= attached.point.y ? 'top' : 'bottom';
+  }
+  return free.x >= attached.point.x ? 'left' : 'right';
+}
+
+/**
+ * The invisible 1×1 node a connector's free end hangs off — the floating-arrow
+ * hack (`isAnchorNode`: a rectangle whose fill and stroke are both
+ * transparent), centred on `at`.
+ */
+export function anchorNodeAt(id: string, at: Point) {
+  return {
+    id,
+    type: 'shape' as const,
+    position: { x: at.x - 0.5, y: at.y - 0.5 },
+    width: 1,
+    height: 1,
+    data: { label: '', shape: 'rectangle' as const, fill: 'transparent', stroke: 'transparent' },
+  };
+}

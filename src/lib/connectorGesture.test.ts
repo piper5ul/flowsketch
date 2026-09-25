@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorFor, boardRect, facingSide, nodeAtPoint, sideAnchor, OPPOSITE_SIDE } from './connectorGesture';
+import { anchorFor, anchorNodeAt, boardRect, facingSide, freeEndSide, nodeAtPoint, sideAnchor, snapToFreeEndGrid, OPPOSITE_SIDE } from './connectorGesture';
 
 const frame = { id: 'f', position: { x: 100, y: 100 }, width: 600, height: 400 };
 const child = { id: 'c', parentId: 'f', position: { x: 50, y: 50 }, width: 200, height: 100 };
@@ -52,5 +52,29 @@ describe('facingSide', () => {
   it('is the mirror of OPPOSITE_SIDE and sideAnchor is a side’s middle', () => {
     expect(OPPOSITE_SIDE[facingSide({ x: 0, y: 0 }, { x: 100, y: 0 })]).toBe('right');
     expect(sideAnchor('top')).toEqual({ side: 'top', t: 0.5 });
+  });
+});
+
+describe('freeEndSide', () => {
+  const bottom = { point: { x: 100, y: 100 }, side: 'bottom' as const };
+  const right = { point: { x: 100, y: 100 }, side: 'right' as const };
+
+  it('approaches along the axis the line left on, from the side it is heading', () => {
+    // Leaving a bottom edge: below → enters from the top, above → from the bottom,
+    // however far to the side the end has been dragged.
+    expect(freeEndSide(bottom, { x: 400, y: 300 })).toBe('top');
+    expect(freeEndSide(bottom, { x: -400, y: 300 })).toBe('top');
+    expect(freeEndSide(bottom, { x: 400, y: 20 })).toBe('bottom');
+    expect(freeEndSide(right, { x: 300, y: -200 })).toBe('left');
+    expect(freeEndSide(right, { x: 20, y: 400 })).toBe('right');
+  });
+});
+
+describe('snapToFreeEndGrid / anchorNodeAt', () => {
+  it('rounds to the grid and centres a transparent 1×1 anchor on the point', () => {
+    expect(snapToFreeEndGrid({ x: 104.9, y: 95.1 })).toEqual({ x: 100, y: 100 });
+    const node = anchorNodeAt('a', { x: 100, y: 50 });
+    expect(node.position).toEqual({ x: 99.5, y: 49.5 });
+    expect(node.data).toMatchObject({ fill: 'transparent', stroke: 'transparent' });
   });
 });

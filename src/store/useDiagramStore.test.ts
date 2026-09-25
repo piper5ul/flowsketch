@@ -4212,3 +4212,42 @@ describe('the board timer', () => {
     expect(store().timer).toBeNull();
   });
 });
+
+describe('free connector ends', () => {
+  const box = (id: string, x: number) => ({
+    id, type: 'shape' as const, position: { x, y: 0 }, width: 100, height: 60,
+    data: { label: id, shape: 'rectangle' as const, fill: '#fff', stroke: '#000' },
+  });
+  const edge = { id: 'e', source: 'a', target: 'b', type: 'connector' as const, data: { sourceAnchor: { side: 'right' as const, t: 0.5 }, targetAnchor: { side: 'left' as const, t: 0.5 } } };
+  const load = () =>
+    store().loadDiagram('test', 'Test', false, { nodes: [box('a', 0), box('b', 300)], edges: [edge] });
+
+  it('detaches an end onto a new anchor, moves that same anchor, and removes it when re-attached', () => {
+    load();
+    store().freeEdgeEndpoint('e', 'target', { x: 500, y: 200 });
+    const freeId = store().edges[0].target;
+    expect(freeId).not.toBe('b');
+    const anchor = store().nodes.find((n) => n.id === freeId)!;
+    expect(isAnchorNode(anchor.data)).toBe(true);
+    expect(anchor.position).toEqual({ x: 499.5, y: 199.5 });
+    expect(store().edges[0].data?.targetAnchor).toBeUndefined();
+
+    // Dragging on moves the same anchor rather than making another.
+    store().freeEdgeEndpoint('e', 'target', { x: 520, y: 240 });
+    expect(store().edges[0].target).toBe(freeId);
+    expect(store().nodes).toHaveLength(3);
+
+    // Back onto a shape: the anchor nothing reaches any more goes with it.
+    store().reconnectEdgeEndpoint('e', 'target', 'b', { side: 'top', t: 0.25 });
+    expect(store().edges[0].target).toBe('b');
+    expect(store().nodes.map((n) => n.id)).toEqual(['a', 'b']);
+  });
+
+  it('never moves or removes a shape the end leaves', () => {
+    load();
+    store().freeEdgeEndpoint('e', 'source', { x: -200, y: 0 });
+    expect(store().nodes.find((n) => n.id === 'a')?.position).toEqual({ x: 0, y: 0 });
+    store().reconnectEdgeEndpoint('e', 'source', 'a', { side: 'right', t: 0.5 });
+    expect(store().nodes.map((n) => n.id)).toEqual(['a', 'b']);
+  });
+});

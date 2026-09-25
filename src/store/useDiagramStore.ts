@@ -125,6 +125,7 @@ import { layoutSequence } from '../lib/sequenceLayout';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 import type { ImageBackfillPatch } from '../lib/imageBackfill';
 import { toastError } from './useToastStore';
+import { anchorNodeAt } from '../lib/connectorGesture';
 
 // Re-exported here because this is where the rest of the app reaches for it.
 export { computeMarkers };
@@ -644,6 +645,12 @@ export interface DiagramState {
    * visible answer before it happens.
    */
   connectTargetId: string | null;
+  /**
+   * True while a connector's end is being dragged or one is being drawn — the
+   * floating toolbar fades out of the way for it, as Whimsical's does.
+   * Transient, never saved.
+   */
+  connectorDragging: boolean;
   /** Where the canvas was left, restored on the next open. `null` until it is reported. */
   viewport: DiagramViewport | null;
   tool: Tool;
@@ -851,6 +858,7 @@ export interface DiagramState {
   setSlideOrder: (orderedIds: readonly string[]) => void;
   setSnapOverride: (override: SnapOverride) => void;
   setConnectTarget: (id: string | null) => void;
+  setConnectorDragging: (dragging: boolean) => void;
   /**
    * Leaves exactly `ids` selected. A selection is not part of the diagram, so
    * this pushes no history — the same as clicking would.
@@ -902,7 +910,18 @@ export interface DiagramState {
 
   updateEdgeData: (id: string, data: Partial<ConnectorData>) => void;
   updateSelectedEdgesStyle: (patch: Partial<ConnectorData>) => void;
+  /**
+   * Re-pins one end of a connector onto `nodeId` at `anchor`, transiently (an
+   * endpoint drag pushes its one entry through `beginInteraction`). If that end
+   * was a free end, the invisible anchor it hung off is removed with it.
+   */
   reconnectEdgeEndpoint: (edgeId: string, end: 'source' | 'target', nodeId: string, anchor: EdgeAnchor) => void;
+  /**
+   * Leaves one end of a connector dangling at `point` — Whimsical's free end.
+   * An end already free moves its own anchor; an end on a shape is given a new
+   * one. Transient, like `reconnectEdgeEndpoint`, whose opposite it is.
+   */
+  freeEdgeEndpoint: (edgeId: string, end: 'source' | 'target', point: { x: number; y: number }) => void;
   insertEdgeWaypoint: (id: string, index: number, point: { x: number; y: number }) => void;
   removeEdgeWaypoint: (id: string, index: number) => void;
 
@@ -1757,6 +1776,25 @@ export function defaultConnectorKind(state: Pick<DiagramState, 'defaults' | 'las
   return resolveDefaultStyle(state.defaults, state.lastStyle, 'connector').connectorType ?? BUILT_IN_CONNECTOR;
 }
 
+/**
+ * A connector's free end: an invisible anchor (`isAnchorNode`) that is not a
+ * sequence diagram's (those hang off a participant through `parentId`) and
+ * that exactly one connector uses — so moving or deleting it touches no other
+ * line.
+ */
+function isOwnFreeEnd(node: ShapeNode, edges: readonly ConnectorEdge[]): boolean {
+  if (node.type !== 'shape' || node.parentId || !isAnchorNode(node.data)) return false;
+  return edges.filter((e) => e.source === node.id || e.target === node.id).length === 1;
+}
+
+/** `nodes` without `id` if it is a free end that no connector reaches any more. */
+function withoutOrphanAnchor(nodes: ShapeNode[], edges: readonly ConnectorEdge[], id: string): ShapeNode[] {
+  const node = nodes.find((n) => n.id === id);
+  if (!node || node.type !== 'shape' || node.parentId || !isAnchorNode(node.data)) return nodes;
+  if (edges.some((e) => e.source === id || e.target === id)) return nodes;
+  return nodes.filter((n) => n.id !== id);
+}
+
 export const useDiagramStore = create<DiagramState>((set, get) => ({
   diagramId: null,
   title: 'Untitled',
@@ -1776,6 +1814,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   guides: [],
   snapOverride: 'none',
   connectTargetId: null,
+  connectorDragging: false,
   viewport: null,
   tool: 'select',
   wireComponent: 'button' as WireComponent,
@@ -2349,6 +2388,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   },
 
   setConnectTarget: (id) => set((s) => (s.connectTargetId === id ? s : { connectTargetId: id })),
+  setConnectorDragging: (dragging) => set((s) => (s.connectorDragging === dragging ? s : { connectorDragging: dragging })),
 
   setSnapOverride: (override) => set((s) => (s.snapOverride === override ? s : { snapOverride: override })),
 
@@ -2764,8 +2804,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   // Continuous drag updates (no history push per-frame), mirroring the bend-drag pattern.
   reconnectEdgeEndpoint: (edgeId, end, nodeId, anchor) => {
-    set((s) => ({
-      edges: s.edges.map((e) =>
+    set((s) => {
+      const edge = s.edges.find((e) => e.id === edgeId);
+      if (!edge) return s;
+      const previous = edge[end];
+      const edges = s.edges.map((e) =>
         e.id === edgeId
           ? {
               ...e,
@@ -2777,9 +2820,38 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
               },
             }
           : e,
-      ),
-      transientSeq: s.transientSeq + 1,
-    }));
+      );
+      return { edges, nodes: withoutOrphanAnchor(s.nodes, edges, previous), transientSeq: s.transientSeq + 1 };
+    });
+  },
+
+  freeEdgeEndpoint: (edgeId, end, point) => {
+    set((s) => {
+      const edge = s.edges.find((e) => e.id === edgeId);
+      if (!edge) return s;
+      const current = s.nodes.find((n) => n.id === edge[end]);
+      if (current && isOwnFreeEnd(current, s.edges)) {
+        const position = anchorNodeAt(current.id, point).position;
+        if (current.position.x === position.x && current.position.y === position.y) return s;
+        return {
+          nodes: s.nodes.map((n) => (n.id === current.id ? { ...n, position } : n)),
+          transientSeq: s.transientSeq + 1,
+        };
+      }
+      const anchor = anchorNodeAt(nanoid(8), point);
+      const anchorKey = end === 'source' ? 'sourceAnchor' : 'targetAnchor';
+      const edges = s.edges.map((e) => {
+        if (e.id !== edgeId) return e;
+        const data = { ...e.data! };
+        delete data[anchorKey];
+        return { ...e, [end]: anchor.id, data };
+      });
+      return {
+        nodes: [...s.nodes, anchor as ShapeNode],
+        edges,
+        transientSeq: s.transientSeq + 1,
+      };
+    });
   },
 
   // A bend dragged out of a run of the path takes that run's index, so the

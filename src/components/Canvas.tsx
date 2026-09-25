@@ -19,12 +19,13 @@ import { deepSelectTarget } from '../lib/deepSelect';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
 import {
   anchorFor,
+  anchorNodeAt,
   boardRect,
   DRAG_THRESHOLD_PX,
-  facingSide,
   nodeAtPoint,
   OPPOSITE_SIDE,
   sideAnchor,
+  snapToFreeEndGrid,
 } from '../lib/connectorGesture';
 import {
   HIGHLIGHTER_OPACITY,
@@ -589,21 +590,8 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
         const startId = nanoid(8);
         const endId = nanoid(8);
-        const anchorSize = 1;
-        addNodes([
-          {
-            id: startId, type: 'shape',
-            position: { x: position.x - anchorSize / 2, y: position.y - anchorSize / 2 },
-            width: anchorSize, height: anchorSize,
-            data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
-          },
-          {
-            id: endId, type: 'shape',
-            position: { x: position.x + 180 - anchorSize / 2, y: position.y - anchorSize / 2 },
-            width: anchorSize, height: anchorSize,
-            data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
-          },
-        ]);
+        const start = snapToFreeEndGrid(position);
+        addNodes([anchorNodeAt(startId, start), anchorNodeAt(endId, { x: start.x + 180, y: start.y })]);
         const edgeData = useDiagramStore.getState().newConnectorData();
         addEdges({
           id: nanoid(8),
@@ -707,37 +695,31 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
   const onPointerLeave = useCallback(() => useCollabStore.getState().reportCursor(null), []);
 
   /**
-   * A new shape centred on `at`, in the board's default style, with a connector
-   * from `sourceId` into the side of it that faces `from`. Both ends are pinned
-   * (`sourceAnchor` may be `undefined` when the caller has no side to pin to).
+   * A connector from `sourceId` whose other end is left free at `at` (on the
+   * nearest grid dot) — what releasing on empty board makes, from the tool or
+   * from a side handle, as in Whimsical. `sourceAnchor` may be `undefined`
+   * when the caller has no side to pin to. The new label opens for typing:
+   * draw, then type, is the gesture.
    */
-  const createShapeWithConnector = useCallback(
-    (sourceId: string, sourceAnchor: EdgeAnchor | undefined, at: Point, from: Point) => {
-      const { newShapeData, newConnectorData } = useDiagramStore.getState();
-      const id = nanoid(8);
-      const width = 180;
-      const height = 100;
-      addNodes({
-        id,
-        type: 'shape',
-        position: { x: at.x - width / 2, y: at.y - height / 2 },
-        width,
-        height,
-        data: newShapeData('rectangle'),
-      });
-      const edgeData = { ...newConnectorData(), sourceAnchor, targetAnchor: sideAnchor(facingSide(from, at)) };
+  const createFreeEndConnector = useCallback(
+    (sourceId: string, sourceAnchor: EdgeAnchor | undefined, at: Point) => {
+      const end = anchorNodeAt(nanoid(8), snapToFreeEndGrid(at));
+      addNodes(end);
+      const edgeData = { ...useDiagramStore.getState().newConnectorData(), sourceAnchor };
+      const edgeId = nanoid(8);
       addEdges({
-        id: nanoid(8),
+        id: edgeId,
         source: sourceId,
-        target: id,
+        target: end.id,
         sourceHandle: sourceAnchor?.side,
         type: 'connector',
         zIndex: 1000,
         ...computeMarkers(edgeData),
         data: edgeData,
       });
+      setEditingEdgeId(edgeId);
     },
-    [addNodes, addEdges],
+    [addNodes, addEdges, setEditingEdgeId],
   );
 
   /**
@@ -747,8 +729,8 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
    * press and ends at the point on the second's nearest to the release, both
    * pinned as a side and a fraction along it — so a connector leaves a shape
    * where the user pointed, and keeps leaving there when the shapes move. A
-   * release on empty board makes a new shape there, as dragging a handle out
-   * does. A press that never travels is still a click, and falls through to
+   * release on empty board leaves the end free there, as dragging a handle
+   * out does. A press that never travels is still a click, and falls through to
    * the click-click flow in `onNodeClick` / `onPaneClick`.
    *
    * The handlers live on `window` for the gesture's duration rather than
@@ -794,6 +776,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         gestureRef.current = null;
         setConnectDraft(null);
         useDiagramStore.getState().setConnectTarget(null);
+        useDiagramStore.getState().setConnectorDragging(false);
       };
       const onMove = (e: PointerEvent) => {
         const g = gestureRef.current;
@@ -801,6 +784,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         const to = screenToFlowPosition({ x: e.clientX, y: e.clientY });
         if (!g.moved && Math.hypot(to.x - g.start.x, to.y - g.start.y) < DRAG_THRESHOLD_PX) return;
         g.moved = true;
+        useDiagramStore.getState().setConnectorDragging(true);
         setConnectDraft({ from: g.from, to, stroke: g.stroke, strokePx: g.strokePx, endArrow: g.endArrow });
         if (onShape) {
           const state = useDiagramStore.getState();
@@ -817,30 +801,17 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
 
         if (!onShape) {
           // Floating arrow: two invisible anchors with a connector between them.
-          const anchorSize = 1;
           const startId = nanoid(8);
           const endId = nanoid(8);
           const dx = at.x - g.start.x;
           const dy = at.y - g.start.y;
           const startSide: Direction = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
           const endSide = OPPOSITE_SIDE[startSide];
-          addNodes([
-            {
-              id: startId, type: 'shape',
-              position: { x: g.start.x - anchorSize / 2, y: g.start.y - anchorSize / 2 },
-              width: anchorSize, height: anchorSize,
-              data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
-            },
-            {
-              id: endId, type: 'shape',
-              position: { x: at.x - anchorSize / 2, y: at.y - anchorSize / 2 },
-              width: anchorSize, height: anchorSize,
-              data: { label: '', shape: 'rectangle', fill: 'transparent', stroke: 'transparent' },
-            },
-          ]);
+          addNodes([anchorNodeAt(startId, snapToFreeEndGrid(g.start)), anchorNodeAt(endId, snapToFreeEndGrid(at))]);
           const edgeData = useDiagramStore.getState().newConnectorData();
+          const edgeId = nanoid(8);
           addEdges({
-            id: nanoid(8),
+            id: edgeId,
             source: startId,
             target: endId,
             sourceHandle: startSide,
@@ -851,6 +822,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
             data: edgeData,
           });
           setTool('select');
+          setEditingEdgeId(edgeId);
           return;
         }
 
@@ -859,8 +831,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
         if (target) {
           const targetAnchor = anchorFor(target, new Map(current.map((n) => [n.id, n] as const)), at);
           const edgeData = { ...useDiagramStore.getState().newConnectorData(), sourceAnchor: g.anchor, targetAnchor: targetAnchor ?? undefined };
+          const edgeId = nanoid(8);
           addEdges({
-            id: nanoid(8),
+            id: edgeId,
             source: g.sourceId,
             target: target.id,
             sourceHandle: g.anchor.side,
@@ -870,8 +843,9 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
             ...computeMarkers(edgeData),
             data: edgeData,
           });
+          setEditingEdgeId(edgeId);
         } else {
-          createShapeWithConnector(g.sourceId, g.anchor, at, g.from);
+          createFreeEndConnector(g.sourceId, g.anchor, at);
         }
         setTool('select');
       };
@@ -882,7 +856,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       window.addEventListener('pointerup', onUp);
       window.addEventListener('keydown', onKey);
     },
-    [tool, readOnly, screenToFlowPosition, addNodes, addEdges, createShapeWithConnector, setTool],
+    [tool, readOnly, screenToFlowPosition, addNodes, addEdges, createFreeEndConnector, setTool, setEditingEdgeId],
   );
 
   /**
@@ -999,8 +973,8 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     [beginConnectorGesture, beginInkGesture],
   );
 
-  // Dragging a connector out to empty canvas creates a new connected shape,
-  // mirroring Whimsical's "drag to create" flow.
+  // Dragging a side handle out to empty canvas leaves the connector's end
+  // free there, as Whimsical does (clicking the handle is what quick-adds).
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       connectorSourceRef.current = null;
@@ -1012,21 +986,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       const position = screenToFlowPosition({ x: point.clientX, y: point.clientY });
       const fromSide = connectionState.fromHandle?.id;
       const sourceAnchor = isSide(fromSide) ? sideAnchor(fromSide) : undefined;
-      // Where the line leaves the source, so the new shape's facing side is
-      // judged from there rather than from the pointer.
-      const nodes = useDiagramStore.getState().nodes;
-      const byId = new Map(nodes.map((n) => [n.id, n] as const));
-      const sourceNode = byId.get(connectionState.fromNode.id);
-      const rect = sourceNode ? boardRect(sourceNode, byId) : null;
-      const from = rect
-        ? sourceAnchor
-          ? anchorToPoint(sourceAnchor, rect)
-          : { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
-        : position;
-      createShapeWithConnector(connectionState.fromNode.id, sourceAnchor, position, from);
+      createFreeEndConnector(connectionState.fromNode.id, sourceAnchor, position);
       if (tool === 'connector') setTool('select');
     },
-    [screenToFlowPosition, createShapeWithConnector, tool, setTool],
+    [screenToFlowPosition, createFreeEndConnector, tool, setTool],
   );
 
   // What the browser's own paste brings, for the two things ⌘V can mean that
