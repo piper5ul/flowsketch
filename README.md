@@ -4,6 +4,8 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 
 ![FlowSketch — a customer-onboarding flowchart inside a frame, with a sticky note, a database and an email service joined by labelled connectors; the floating toolbar is open on a selected shape and the collaboration status reads Live](docs/screenshot.png)
 
+What changed recently: see [CHANGELOG.md](CHANGELOG.md) and the [releases](https://github.com/piper5ul/flowsketch/releases).
+
 ## Features
 
 ### Shapes
@@ -15,18 +17,22 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - **Groups** — select two or more shapes and press `⌘G` to make them move as one. A group draws nothing of its own: a dashed outline when you point at it or select it, and nothing at all otherwise, so it never appears in an export. Groups nest, deleting one deletes what is inside it, and copying one copies its contents. `⌘⇧G` lets them go again. `⌘`-click a shape inside a group to select exactly that shape — the floating toolbar then acts on it alone, and the group is left as it is
 
 ### Connectors
-- **Elbow (Manhattan) routing** with automatic obstacle avoidance
+- **Draw from where you point** — with the connector tool (`C`), press anywhere on a shape and release on another: each end is pinned to the point on the outline nearest where you pressed and released, and stays there when the shapes move
+- **Free ends** — release on empty board and the end is left dangling there, snapped to the grid, ready to be attached later; the same goes for dragging a shape's side handle out into space
+- **Drag an end to re-attach it** — it attaches to the shape under the pointer (outlined as you hover) and is left free anywhere else; the other end never moves or changes side, and the toolbar fades out of the way while you drag
+- **Elbow routing like Whimsical's** — each end leaves and arrives square to its side, the route takes the fewest corners it can (an L before a Z), a Z splits halfway across the gap, shapes and frames in the way are walked round with clear space, and a free end is approached along the line the connector set off on. Routes are computed deterministically on every change, so the same board always draws the same lines
 - **Straight connectors** for direct point-to-point lines
 - **Curved connectors** that leave each shape square to the side they attach to
 - Three line styles: solid, dashed, dotted
 - Three line thicknesses: thin, regular, bold — arrowheads scale to match
 - Eight arrowhead styles per end: none, arrow, open, circle, diamond, bar, half circle, dot — the line stops at the head, so the point is always crisp
-- Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter)
-- Draggable bend points — drag a segment to add one, double-click a bend to remove it — and a Reset route button to clear them all
+- Editable connector labels (double-click a connector, use the toolbar's Add label button, or press Enter) — a connector you have just drawn opens its label for typing straight away
+- Draggable bend points — drag a segment to add one, double-click a bend to remove it — and a Reset route button to clear them all. The route passes through every bend you place without doubling back on itself
+- A selected connector is drawn in the accent colour, arrowheads included
 - Free-standing arrows that can be placed and dragged anywhere
 
 ### Text & Formatting
-- Double-click any shape to edit text inline
+- Double-click any shape to edit text inline — and a shape you have just placed from the rail is already open for typing, so draw a box and type its name
 - Multi-line text support
 - **Bold**, *italic*, <u>underline</u> and ~~strikethrough~~
 - Font size on a 10–48 px scale, stepped from the toolbar or with ⌘⌥= / ⌘⌥−
@@ -61,7 +67,7 @@ A full-featured, collaborative diagramming app inspired by Whimsical, built with
 - Add hyperlinks to shapes from the floating toolbar
 - Nudge selected shapes with the arrow keys (1 px, 10 px with Shift)
 - Quick-add neighbor buttons on hover that create a connected shape in any direction — or `⌥` + an arrow key with a shape selected, which adds one that way and opens its label, so a row of boxes goes in without touching the mouse
-- Drag connector endpoints to reconnect them to other shapes
+- Drag connector endpoints onto another shape to reconnect them, or into empty space to leave them free
 - Drag connector labels along the path to reposition them
 - Right-click a shape, a connector or the canvas for a context menu of the actions that apply
 - Find shapes and connectors by their labels with `⌘F`: every match is ringed on the board, `Enter` / `⇧Enter` cycle through them, and each one is selected and framed as you reach it. Available on read-only and publicly shared boards too
