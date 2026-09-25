@@ -2166,7 +2166,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       ...SHAPE_SIZES[shape],
       data: shapeDataWithDefaults(shape, defaults, lastStyle),
     };
-    set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'text' ? id : null }));
+    // Open for typing, as in Whimsical: draw a box, type its name — rather than
+    // the letters typed next running as tool shortcuts.
+    set((s) => ({ nodes: [...s.nodes, node], editingNodeId: shape === 'image' ? null : id }));
     return id;
   },
 

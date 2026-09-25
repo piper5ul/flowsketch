@@ -484,11 +484,12 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       if (!SHAPE_TOOL_KINDS.includes(tool as ShapeKind)) return;
       const shape = tool as ShapeKind;
       const sizeOffset = shape === 'text' ? { x: 80, y: 20 } : { x: 90, y: 55 };
-      addShape(shape, { x: point.x - sizeOffset.x, y: point.y - sizeOffset.y });
+      const id = addShape(shape, { x: point.x - sizeOffset.x, y: point.y - sizeOffset.y });
+      selectOnly('node', id);
       toolPlacedAtRef.current = Date.now();
       setTool('select');
     },
-    [tool, screenToFlowPosition, addShape, addFrame, addTable, addWire, wireComponent, setTool],
+    [tool, screenToFlowPosition, addShape, addFrame, addTable, addWire, wireComponent, setTool, selectOnly],
   );
 
   /**

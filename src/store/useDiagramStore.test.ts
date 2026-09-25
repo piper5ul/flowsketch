@@ -77,6 +77,11 @@ describe('addShape', () => {
     expect(store().editingNodeId).toBe(textId);
   });
 
+  it('opens a newly placed shape for typing', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    expect(store().editingNodeId).toBe(id);
+  });
+
   it('has a default size for every shape kind', () => {
     // A kind with no entry would be placed as a zero-sized node the user cannot
     // find, so the table has to stay exhaustive as kinds are added.

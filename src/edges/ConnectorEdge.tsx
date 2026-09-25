@@ -15,12 +15,12 @@ import {
   type PathSegment,
   type Point,
 } from '../lib/connectorPath';
-import { manhattanRoute } from '../lib/manhattanRouter';
+import { orthoRoute } from '../lib/orthoRouter';
 import { anchorFor, freeEndSide, nodeAtPoint, snapToFreeEndGrid } from '../lib/connectorGesture';
 import { absolutePosition } from '../lib/nodeTree';
 import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { markerDepthPx, markerId, MARKER_SIZE_PX, SELECTION_MARKER_COLOR } from '../lib/edgeMarkers';
-import { isAnchorNode, isFloatingArrowEdge } from '../lib/nodeKinds';
+import { isAnchorNode, isContainerNode, isFloatingArrowEdge } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
@@ -406,29 +406,20 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   // Only an elbow is routed around the other shapes; the other two kinds run
   // straight from anchor to anchor and need nothing from the router.
-  let routed: Point[] | undefined;
-  if (connectorType === 'elbow') {
-    const isVertical = (sourceAnchor.side === 'top' || sourceAnchor.side === 'bottom') &&
-      (targetAnchor.side === 'top' || targetAnchor.side === 'bottom');
-    const isHorizontal = (sourceAnchor.side === 'left' || sourceAnchor.side === 'right') &&
-      (targetAnchor.side === 'left' || targetAnchor.side === 'right');
-    const isCollinear = (isVertical && Math.abs(sx - tx) < 2) || (isHorizontal && Math.abs(sy - ty) < 2);
-
-    routed = isCollinear && waypoints.length === 0
-      ? []
-      : manhattanRoute({
-          sourceX: sx,
-          sourceY: sy,
-          targetX: tx,
-          targetY: ty,
-          sourceRect: rectOfNode(sourceNode, byId),
-          targetRect: rectOfNode(targetNode, byId),
-          obstacles: nodes.filter((n) => n.id !== source && n.id !== target).map((n) => rectOfNode(n, byId)),
-          vertices: waypoints,
-          startDirections: [sourceAnchor.side],
-          endDirections: [targetAnchor.side],
-        }).points;
-  }
+  const routed = connectorType === 'elbow'
+    ? orthoRoute({
+        source: { x: sx, y: sy },
+        sourceSide: sourceAnchor.side,
+        sourceRect: rectOfNode(sourceNode, byId),
+        target: { x: tx, y: ty },
+        targetSide: targetAnchor.side,
+        targetRect: rectOfNode(targetNode, byId),
+        obstacles: nodes
+          .filter((n) => n.id !== source && n.id !== target && !n.hidden && !isAnchorNode(n.data) && !isContainerNode(n))
+          .map((n) => rectOfNode(n, byId)),
+        vertices: waypoints,
+      })
+    : undefined;
 
   const { d: svgPathString, points: pathPoints, segments } = buildConnectorPath(connectorType, {
     source: { x: sx, y: sy },
