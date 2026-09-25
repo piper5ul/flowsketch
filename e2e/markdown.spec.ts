@@ -19,6 +19,7 @@ test('a label typed as Markdown renders as a list once editing ends, and shows i
   await expect(pane).toBeVisible();
   await page.keyboard.press('r');
   await pane.click({ position: { x: 500, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
 

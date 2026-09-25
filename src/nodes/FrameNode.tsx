@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
-import { consumeSuppressBlur, useDiagramStore } from '../store/useDiagramStore';
+import { useDiagramStore } from '../store/useDiagramStore';
+import { EditableLabel } from '../components/EditableLabel';
 import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 
@@ -35,20 +36,11 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   const titleRef = useRef<HTMLDivElement>(null);
   const tinted = data.fill !== 'transparent' && data.stroke !== 'transparent';
 
-  useEffect(() => {
-    if (!editing || !titleRef.current) return;
-    titleRef.current.focus();
-    const range = document.createRange();
-    range.selectNodeContents(titleRef.current);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  }, [editing]);
-
-  const commit = useCallback(() => {
-    if (consumeSuppressBlur()) return;
-    setEditingNodeId(null);
-    updateNodeData(id, { label: titleRef.current?.innerText.trim() ?? '' });
+  // Read before the editor is closed (see `EditableLabel`). A section's name is
+  // one line, so the stray whitespace a contentEditable collects is trimmed.
+  const commit = useCallback((text: string) => {
+    updateNodeData(id, { label: text.trim() });
+    if (useDiagramStore.getState().editingNodeId === id) setEditingNodeId(null);
   }, [id, setEditingNodeId, updateNodeData]);
 
   return (
@@ -69,12 +61,13 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
         boxShadow: selected ? '0 0 0 1.5px var(--color-accent-500)' : undefined,
       }}
     >
-      <div
+      <EditableLabel
         ref={titleRef}
-        contentEditable={editing}
-        suppressContentEditableWarning
+        editing={editing}
+        value={data.label}
+        onCommit={commit}
+        caret="all"
         data-placeholder="Frame"
-        onBlur={commit}
         onKeyDown={(e) => {
           // Enter commits rather than opening a second line: a section's name
           // is one line by construction.
@@ -90,7 +83,7 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
         )}
       >
         {data.label || null}
-      </div>
+      </EditableLabel>
 
       <NodeResizer
         isVisible={selected && !data.locked}

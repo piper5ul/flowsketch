@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
-import { consumeSuppressBlur, useDiagramStore } from '../store/useDiagramStore';
+import { useDiagramStore } from '../store/useDiagramStore';
+import { EditableLabel } from '../components/EditableLabel';
 import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 import { hasMarkdown, parseMarkdown } from '../lib/markdown';
@@ -90,20 +91,10 @@ export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeTy
   const component = wireComponentOf(data);
   const editing = editingNodeId === id;
 
-  useEffect(() => {
-    if (!editing || !labelRef.current) return;
-    labelRef.current.focus();
-    const range = document.createRange();
-    range.selectNodeContents(labelRef.current);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
-  }, [editing]);
-
-  const commit = useCallback(() => {
-    if (consumeSuppressBlur()) return;
+  // Read before the editor is closed (see `EditableLabel`).
+  const commit = useCallback((text: string) => {
+    updateNodeData(id, { label: text });
     if (useDiagramStore.getState().editingNodeId === id) setEditingNodeId(null);
-    updateNodeData(id, { label: labelRef.current?.innerText ?? '' });
   }, [id, setEditingNodeId, updateNodeData]);
 
   // Markdown renders in a paragraph and nowhere else: a button caption reading
@@ -130,12 +121,13 @@ export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeTy
   const typography = LABEL_DEFAULTS[component];
 
   const label = (extra?: React.CSSProperties) => (
-    <div
+    <EditableLabel
       ref={labelRef}
-      contentEditable={editing}
-      suppressContentEditableWarning
+      editing={editing}
+      value={data.label}
+      onCommit={commit}
+      caret="all"
       data-placeholder={labelPlaceholder(component)}
-      onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Escape') e.currentTarget.blur();
       }}
@@ -156,8 +148,8 @@ export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeTy
         ...extra,
       }}
     >
-      {!editing && markdown ? <MarkdownLabel blocks={markdown} /> : data.label || null}
-    </div>
+      {markdown ? <MarkdownLabel blocks={markdown} /> : data.label || null}
+    </EditableLabel>
   );
 
   /** The sketch itself. One case per component, in `WIRE_COMPONENTS` order. */

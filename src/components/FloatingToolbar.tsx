@@ -633,6 +633,9 @@ function ShapePicker({ current, onPick }: { current: ShapeKind | null; onPick: (
 
 export function FloatingToolbar() {
   const nodes = useDiagramStore((s) => s.nodes);
+  // Faded, and out of the pointer's way, while a connector end is dragged —
+  // the bar sits over the very board the end is being dropped on.
+  const connectorDragging = useDiagramStore((s) => s.connectorDragging);
   const edges = useDiagramStore((s) => s.edges);
   const updateSelectedNodesStyle = useDiagramStore((s) => s.updateSelectedNodesStyle);
   const updateSelectedEdgesStyle = useDiagramStore((s) => s.updateSelectedEdgesStyle);
@@ -818,8 +821,13 @@ export function FloatingToolbar() {
 
   return (
     <div
-      className="pointer-events-none absolute z-30"
-      style={{ left: screenX, top: screenY, transform: 'translate(-50%, calc(-100% - 20px))' }}
+      className="pointer-events-none absolute z-30 transition-opacity duration-150"
+      style={{
+        left: screenX,
+        top: screenY,
+        transform: 'translate(-50%, calc(-100% - 20px))',
+        opacity: connectorDragging ? 0.15 : 1,
+      }}
     >
       {/* Named, because several of its buttons share a label with the rail's
           tools — "Text" opens the typography popover here and picks the text

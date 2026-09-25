@@ -41,6 +41,7 @@ async function expectSynced(page: Page) {
 async function drawLabelledShape(page: Page, pane: Locator, label: string) {
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
   await node.dblclick();
@@ -78,6 +79,7 @@ test('a new user can create a diagram, add a labeled shape, and see it survive a
   // R selects the rectangle tool; clicking the canvas places one.
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node');
   await expect(node).toHaveCount(1);
 
@@ -107,6 +109,7 @@ async function drawConnectedPair(page: Page) {
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 500, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
 
@@ -215,6 +218,7 @@ test('the selection toolbar aligns, distributes and bolds a multi-selection', as
   for (const position of [{ x: 300, y: 300 }, { x: 520, y: 340 }, { x: 800, y: 290 }]) {
     await page.keyboard.press('r');
     await pane.click({ position });
+    await page.keyboard.press('Escape'); // the new shape opened for typing
   }
   const nodes = page.locator('.react-flow__node');
   await expect(nodes).toHaveCount(3);
@@ -284,6 +288,7 @@ test('an edit made and left behind at once survives navigating away', async ({ p
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node');
   await expect(node).toHaveCount(1);
 
@@ -394,6 +399,7 @@ test('a diagram exported as JSON can be imported back from the dashboard', async
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 500, y: 350 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node');
   await expect(node).toHaveCount(1);
   await node.dblclick();
@@ -436,6 +442,7 @@ test('exporting as SVG writes a self-contained document holding the diagram', as
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 500, y: 350 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node');
   await expect(node).toHaveCount(1);
   await node.dblclick();
@@ -528,6 +535,7 @@ test('an image dropped onto the canvas lands where it was dropped', async ({ pag
   // front gets that out of the way.
   await page.keyboard.press('r');
   await pane.click({ position: { x: 900, y: 500 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
 
   // A real OS drag cannot be driven from Playwright, so the drop event carries
@@ -576,6 +584,7 @@ test('right-clicking a shape opens a context menu that deletes it', async ({ pag
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node');
   await expect(node).toHaveCount(1);
 
@@ -597,6 +606,7 @@ test('a diagram reopens at the zoom it was left at', async ({ page }) => {
   // the viewport under test is set.
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
   await expectSynced(page);
 
@@ -645,6 +655,7 @@ test('the minimap is off until it is switched on, and is still on after a reload
   // Something to see on the map, so "visible" means it actually drew.
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
 
   const minimap = page.locator('.react-flow__minimap');
@@ -780,6 +791,10 @@ test('the colour palette hides for an image-only selection and comes back for a 
   // which would move the image out from under the assertions below.
   await page.keyboard.press('r');
   await pane.click({ position: { x: 240, y: 180 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
+  // And a second Escape clears the selection: a selected node is lifted over
+  // the rest, and would sit on top of the image inserted below.
+  await page.keyboard.press('Escape');
   const rect = page.locator('.react-flow__node').first();
   await expect(rect).toBeVisible();
 
@@ -814,6 +829,7 @@ test('a shape can be swapped from the toolbar and a new kind drawn from the rail
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const rect = page.locator('.react-flow__node').first();
   await expect(rect).toBeVisible();
 
@@ -844,6 +860,7 @@ test('the Style popover shadows and fades a shape', async ({ page }) => {
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
   await node.click();
@@ -870,6 +887,7 @@ test('a new shape is a borderless white card, and Outline hands it its stroke ba
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
   // The box inside the wrapper: the wrapper carries opacity and the shadow the
@@ -907,6 +925,7 @@ test('the format bar underlines a label being edited', async ({ page }) => {
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
 
@@ -966,6 +985,7 @@ async function drawShapeIn(page: Page, pane: Locator, at: { x: number; y: number
   const before = await page.locator('.react-flow__node').count();
   await page.keyboard.press('r');
   await pane.click({ position: at });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(before + 1);
   return page.locator('.react-flow__node').nth(before);
 }
@@ -1357,6 +1377,7 @@ test('an invited editor finds the diagram, edits it, and loses that when demoted
   await expect(inviteePage.locator('.react-flow__node')).toHaveCount(1);
   await inviteePage.keyboard.press('r');
   await inviteePane.click({ position: { x: 900, y: 260 } });
+  await inviteePage.keyboard.press('Escape'); // the new shape opened for typing
   await expect(inviteePage.locator('.react-flow__node')).toHaveCount(2);
   await expectSynced(inviteePage);
 
@@ -1515,6 +1536,7 @@ test('dark mode follows the system, can be pinned, and never repaints the diagra
   const pane = await newDiagram(page);
   await page.keyboard.press('r');
   await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const shape = page.locator('.react-flow__node div[data-shape="rectangle"] > div').first();
   await expect(shape).toBeVisible();
 
@@ -1655,6 +1677,7 @@ async function drawShapeAt(page: Page, pane: Locator, label: string, at: { x: nu
   const before = await page.locator('.react-flow__node').count();
   await page.keyboard.press('r');
   await pane.click({ position: at });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(before + 1);
 
   const node = page.locator('.react-flow__node').nth(before);
@@ -1762,6 +1785,7 @@ test('a shape dropped in a frame joins it and then travels with it', async ({ pa
   // never reaches the pane — the canvas serves the drawing tools either way.
   await page.keyboard.press('r');
   await page.mouse.click(frameBox.x + frameBox.width / 2, frameBox.y + frameBox.height / 2);
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const shape = nodesOfType(page, 'shape');
   await expect(shape).toHaveCount(1);
 
@@ -1970,9 +1994,12 @@ test('the connector tool draws from where you press to where you release', async
   expect(Math.abs(ends.end.x - release.x)).toBeLessThan(4);
   expect(ends.end.y).toBeGreaterThan(b.y + b.height - 1);
 
-  // Released on empty board instead: a new shape appears there, connected.
+  // Released on empty board instead: the end is left free there, as in
+  // Whimsical — its invisible anchor is the third node, and no box appears.
   // (Pressed away from the side-centre handles, which are React Flow's own
-  // connection gesture and are pinned by a different path.)
+  // connection gesture and are pinned by a different path.) The first
+  // connector's label opened for typing; Escape leaves it.
+  await page.keyboard.press('Escape');
   await page.keyboard.press('a');
   await page.mouse.move(a.x + a.width * 0.3, a.y + 10);
   await page.mouse.down();
@@ -1997,6 +2024,7 @@ test('a shape saved as the default style is what the next shape is drawn in', as
 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 300, y: 220 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const first = page.locator('.react-flow__node').first();
   await expect(first).toBeVisible();
   await first.click();
@@ -2019,6 +2047,7 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await page.keyboard.press('Escape');
   await page.keyboard.press('r');
   await pane.click({ position: { x: 780, y: 460 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const second = page.locator('.react-flow__node').nth(1);
   await expect(second).toBeVisible();
   await expect(shapeBox(second)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
@@ -2031,6 +2060,7 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await page.keyboard.press('r');
   await page.locator('.react-flow__pane').click({ position: { x: 300, y: 620 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const third = page.locator('.react-flow__node').nth(2);
   await expect(third).toBeVisible();
   await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
@@ -2044,6 +2074,7 @@ test('K opens the link editor for the selected shape', async ({ page }) => {
   await expect(pane).toBeVisible();
   await page.keyboard.press('r');
   await pane.click({ position: { x: 500, y: 400 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
   await node.click();
@@ -2130,8 +2161,10 @@ test('Wrap in frame puts a titled frame around the selection', async ({ page }) 
   await expect(pane).toBeVisible();
   await page.keyboard.press('r');
   await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await page.keyboard.press('r');
   await pane.click({ position: { x: 700, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await page.keyboard.press('Escape');
   await page.keyboard.press('Meta+a');
@@ -2157,10 +2190,13 @@ test('Filter selection narrows a multi-selection to one kind', async ({ page }) 
   await expect(pane).toBeVisible();
   await page.keyboard.press('r');
   await pane.click({ position: { x: 300, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await page.keyboard.press('r');
   await pane.click({ position: { x: 600, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await page.keyboard.press('o');
   await pane.click({ position: { x: 900, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await page.keyboard.press('Escape');
   await page.keyboard.press('Meta+a');

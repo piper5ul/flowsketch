@@ -11,7 +11,7 @@ import {
   labelLift,
   polylineLength,
 } from './connectorPath';
-import { manhattanRoute } from './manhattanRouter';
+import { orthoRoute } from './orthoRouter';
 
 const SOURCE: Point = { x: 0, y: 0 };
 const TARGET: Point = { x: 200, y: 100 };
@@ -43,11 +43,10 @@ function distanceToPolyline(points: Point[], p: Point): number {
  * vertices, then draw the corners that come back.
  */
 function elbowThrough(waypoints: Point[]) {
-  const { points: routed } = manhattanRoute({
-    sourceX: SOURCE.x, sourceY: SOURCE.y, targetX: TARGET.x, targetY: TARGET.y,
-    sourceRect: SOURCE_RECT, targetRect: TARGET_RECT, obstacles: [],
-    vertices: waypoints,
-    startDirections: ['right'], endDirections: ['left'],
+  const routed = orthoRoute({
+    source: SOURCE, sourceSide: 'right', sourceRect: SOURCE_RECT,
+    target: TARGET, targetSide: 'left', targetRect: TARGET_RECT,
+    obstacles: [], vertices: waypoints,
   });
   return buildConnectorPath('elbow', { ...ends, waypoints, routed });
 }
