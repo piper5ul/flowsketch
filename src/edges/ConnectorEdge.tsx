@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from '@xyflow/react';
 import {
   anchorToPoint,
@@ -20,9 +20,10 @@ import { anchorFor, freeEndSide, nodeAtPoint, snapToFreeEndGrid } from '../lib/c
 import { absolutePosition } from '../lib/nodeTree';
 import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
 import { markerDepthPx, markerId, MARKER_SIZE_PX, SELECTION_MARKER_COLOR } from '../lib/edgeMarkers';
-import { isAnchorNode, isContainerNode, isFloatingArrowEdge } from '../lib/nodeKinds';
+import { isAnchorNode, isFloatingArrowEdge, isGroupNode } from '../lib/nodeKinds';
 import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
-import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
+import { useDiagramStore } from '../store/useDiagramStore';
+import { EditableLabel } from '../components/EditableLabel';
 import { useSearchHighlight } from '../store/useSearchStore';
 import type { FontSize } from '../types';
 
@@ -179,18 +180,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const labelRef = useRef<HTMLDivElement>(null);
   const pathPointsRef = useRef<Point[]>([]);
 
-  useEffect(() => {
-    if (editing) {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => labelRef.current?.focus());
-      });
-    }
-  }, [editing]);
-
-  const commit = useCallback(() => {
-    if (consumeSuppressBlur()) return;
-    setEditingEdgeId(null);
-    updateEdgeData(id, { label: labelRef.current?.innerText ?? '' });
+  // Read before the editor is closed (see `EditableLabel`).
+  const commit = useCallback((text: string) => {
+    updateEdgeData(id, { label: text });
+    if (useDiagramStore.getState().editingEdgeId === id) setEditingEdgeId(null);
   }, [id, updateEdgeData, setEditingEdgeId]);
 
   /** Follows the pointer for as long as a drag lasts, then tidies up after it. */
@@ -407,7 +400,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const strokeWidth = CONNECTOR_STROKE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH] + (selected ? 0.5 : 0);
 
   // Only an elbow is routed around the other shapes; the other two kinds run
-  // straight from anchor to anchor and need nothing from the router.
+  // straight from anchor to anchor and need nothing from the router. A frame
+  // is drawn, so it is walked round like a shape (one that holds either end is
+  // exempt — the router lets a route out of the box it starts in); a group is
+  // an invisible handle on its members, and they are the obstacles.
   const routed = connectorType === 'elbow'
     ? orthoRoute({
         source: { x: sx, y: sy },
@@ -417,7 +413,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
         targetSide: targetAnchor.side,
         targetRect: rectOfNode(targetNode, byId),
         obstacles: nodes
-          .filter((n) => n.id !== source && n.id !== target && !n.hidden && !isAnchorNode(n.data) && !isContainerNode(n))
+          .filter((n) => n.id !== source && n.id !== target && !n.hidden && !isAnchorNode(n.data) && !isGroupNode(n))
           .map((n) => rectOfNode(n, byId)),
         vertices: waypoints,
       })
@@ -570,12 +566,12 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           className="nodrag nopan"
         >
           {(editing || data?.label) && (
-            <div
+            <EditableLabel
               ref={labelRef}
-              contentEditable={editing}
-              suppressContentEditableWarning
+              editing={editing}
+              value={data?.label ?? ''}
+              onCommit={commit}
               data-search-hit={searchHit}
-              onBlur={commit}
               onKeyDown={(e) => {
                 if (e.key === 'Escape') {
                   e.preventDefault();
@@ -586,7 +582,6 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
               onDoubleClick={(e) => {
                 e.stopPropagation();
                 setEditingEdgeId(id);
-                requestAnimationFrame(() => labelRef.current?.focus());
               }}
               data-placeholder="Add label"
               className={`rounded-md border bg-canvas px-1.5 py-0.5 font-medium text-ink-700 outline-none whitespace-pre-wrap ${
@@ -605,7 +600,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
               }}
             >
               {data?.label}
-            </div>
+            </EditableLabel>
           )}
         </div>
       </EdgeLabelRenderer>

@@ -1,8 +1,9 @@
-import { useRef, useCallback, useEffect, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import { EditableLabel } from '../components/EditableLabel';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
-import { useDiagramStore, consumeSuppressBlur } from '../store/useDiagramStore';
+import { useDiagramStore } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 import type { Direction, VerticalAlign } from '../types';
@@ -111,31 +112,21 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
     syncTextHeight();
   }, [syncTextHeight, data.label, data.fontSize, data.bold, data.italic]);
 
-  useEffect(() => {
-    if (editing && ref.current) {
-      ref.current.focus();
-      const range = document.createRange();
-      range.selectNodeContents(ref.current);
-      range.collapse(false);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(range);
-    }
-  }, [editing]);
-
   // Markdown in the label renders only while it is not being edited: the
   // source stays what is stored, and editing shows it so the markers can be
   // reached. Plain text — the usual case — never pays for a parse.
   const markdown = useMemo(() => (!editing && hasMarkdown(data.label) ? parseMarkdown(data.label) : null), [editing, data.label]);
 
-  const commit = useCallback(() => {
-    if (consumeSuppressBlur()) return;
-    // Ending the editing is only this node's to do while it is still the node
-    // being edited. A mind-map keystroke moves the editor on to the node it has
-    // just made *before* this one loses focus, and closing it then would cancel
-    // the label the user is already typing into. The text is written either way.
+  const commit = useCallback((text: string) => {
+    // What was typed is written first, and only then is the editor closed —
+    // closing it first would let a render put the old label back before it
+    // was read (see `EditableLabel`). Ending the editing is only this node's
+    // to do while it is still the node being edited: a mind-map keystroke
+    // moves the editor on to the node it has just made *before* this one
+    // loses focus, and closing it then would cancel the label the user is
+    // already typing into.
+    updateNodeData(id, { label: text });
     if (useDiagramStore.getState().editingNodeId === id) setEditingNodeId(null);
-    updateNodeData(id, { label: ref.current?.innerText ?? '' });
     syncTextHeight();
   }, [id, updateNodeData, setEditingNodeId, syncTextHeight]);
 
@@ -380,12 +371,12 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
             draggable={false}
           />
         ) : (
-          <div
+          <EditableLabel
             ref={ref}
-            contentEditable={editing}
-            suppressContentEditableWarning
+            editing={editing}
+            value={data.label}
+            onCommit={commit}
             data-placeholder={isText ? 'Text' : 'Add text'}
-            onBlur={commit}
             onInput={syncTextHeight}
             onKeyDown={(e) => {
               if (e.key === 'Escape') {
@@ -412,8 +403,8 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
               !darkBg && 'text-shape-ink',
             )}
           >
-            {!editing && markdown ? <MarkdownLabel blocks={markdown} /> : data.label || null}
-          </div>
+            {markdown ? <MarkdownLabel blocks={markdown} /> : data.label || null}
+          </EditableLabel>
         )}
 
         {data.link && !editing && (

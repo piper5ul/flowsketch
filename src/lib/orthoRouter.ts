@@ -16,8 +16,9 @@
  * - **Other shapes are walked around**, `ROUTE_MARGIN` clear — but only those
  *   near the route (see `nearby`); a board of a hundred shapes does not make
  *   every connector search all of them.
- * - **The route always arrives.** If nothing can be found clear of the other
- *   shapes, they are dropped, and a route with no obstacles always exists.
+ * - **The route always arrives.** The shapes near the route are tried first,
+ *   then every shape on the board; only a connector walled in on every side
+ *   is drawn as if they were not there.
  *
  * The search is Dijkstra over a sparse grid — the classic orthogonal-connector
  * construction: the candidate lines are the padded edges of every box that
@@ -287,11 +288,13 @@ function simplify(points: RoutePoint[]): RoutePoint[] {
   return out;
 }
 
-/** The obstacles worth considering: those overlapping the region the route can reasonably use. */
-function nearby(obstacles: readonly RouteRect[], region: Box): RouteRect[] {
-  return obstacles.filter((o) =>
-    o.x < region.r && o.x + o.width > region.l && o.y < region.b && o.y + o.height > region.t,
-  );
+/**
+ * The obstacle boxes (already grown by `ROUTE_MARGIN`) that reach into
+ * `region`. Grown *first*: a shape just outside the region can still have
+ * its clearance inside it, and a route along that edge would graze it.
+ */
+function nearby(boxes: readonly Box[], region: Box): Box[] {
+  return boxes.filter((b) => b.l < region.r && b.r > region.l && b.t < region.b && b.b > region.t);
 }
 
 /**
@@ -319,7 +322,8 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
     r: Math.max(sourceBox.r, targetBox.r, ...all.map((p) => p.x)) + ROUTE_MARGIN * 4,
     b: Math.max(sourceBox.b, targetBox.b, ...all.map((p) => p.y)) + ROUTE_MARGIN * 4,
   };
-  const obstacleBoxes = nearby(input.obstacles, region).map((o) => boxOf(o, ROUTE_MARGIN));
+  const allObstacles = input.obstacles.map((o) => boxOf(o, ROUTE_MARGIN));
+  const nearObstacles = nearby(allObstacles, region);
 
   // The midlines: halfway across the gap between the two shapes, and halfway
   // between the two stubs, on each axis. A Z lands on one of these.
@@ -333,7 +337,7 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
   if (t0.b <= s0.t) midY.push((t0.b + s0.t) / 2);
 
   const stops = [s1, ...vertices, t1];
-  const route = (withObstacles: boolean): RoutePoint[] | null => {
+  const route = (obstacleBoxes: readonly Box[]): RoutePoint[] | null => {
     let heads = new Map<Dir, Arrival>([[OUTWARD[input.sourceSide], { cost: 0, points: [s1] }]]);
     for (let k = 1; k < stops.length; k++) {
       const from = stops[k - 1];
@@ -342,7 +346,7 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
       // A box that holds either end of this leg cannot be avoided, so it is
       // not in the way: that is what lets two overlapping shapes, or a bend
       // dragged inside one, still route.
-      const candidates = [sourceBox, targetBox, ...(withObstacles ? obstacleBoxes : [])];
+      const candidates = [sourceBox, targetBox, ...obstacleBoxes];
       const blocking = candidates.filter((b) => !inside(from, b) && !inside(to, b));
       heads = searchLeg({
         from,
@@ -360,6 +364,25 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
     return cheapest?.points ?? null;
   };
 
-  const points = route(true) ?? route(false) ?? [s1, { x: s1.x, y: t1.y }, t1];
+  // Near shapes first (cheap, and almost always enough); then every shape on
+  // the board, since a way round can lie outside the first region; and only
+  // when the shapes leave no way through at all — a connector walled in — is
+  // the route drawn as if they were not there, because a connector that is
+  // not drawn is worse than one that crosses a shape.
+  // A route found among the near shapes can still detour out past one that
+  // was left out, so it is checked against all of them before it is kept.
+  // A shape that holds one of the route's own stops is exempt, as it is in
+  // the search.
+  const avoidable = allObstacles.filter((b) => !stops.some((p) => inside(p, b)));
+  const clearOfAll = (points: RoutePoint[] | null) =>
+    points && !points.some((p, i) => i > 0 && avoidable.some((b) => crosses(points[i - 1], p, b) || inside(p, b)))
+      ? points
+      : null;
+  const near = route(nearObstacles);
+  const points =
+    (nearObstacles.length === allObstacles.length ? near : clearOfAll(near)) ??
+    (nearObstacles.length < allObstacles.length ? route(allObstacles) : null) ??
+    route([]) ??
+    [s1, { x: s1.x, y: t1.y }, t1];
   return simplify([input.source, ...points, input.target]).slice(1, -1);
 }

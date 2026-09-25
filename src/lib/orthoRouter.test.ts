@@ -148,3 +148,29 @@ function onRun(p: RoutePoint, a: RoutePoint, b: RoutePoint) {
   const within = (v: number, x: number, y: number) => v >= Math.min(x, y) - 0.01 && v <= Math.max(x, y) + 0.01;
   return within(p.x, a.x, b.x) && within(p.y, a.y, b.y) && (Math.abs(a.x - b.x) < 0.01 || Math.abs(a.y - b.y) < 0.01);
 }
+
+describe('orthoRoute obstacles', () => {
+  const S: RouteRect = { x: 0, y: 0, width: 80, height: 80 };
+  const T: RouteRect = { x: 1000, y: 0, width: 80, height: 80 };
+  const ends = {
+    source: { x: 80, y: 40 }, sourceSide: 'right' as const, sourceRect: S,
+    target: { x: 1000, y: 40 }, targetSide: 'left' as const, targetRect: T,
+  };
+
+  it('keeps clear of a shape whose clearance, not its box, reaches the route', () => {
+    // Two walls force a detour below them; the third shape sits just under
+    // where that detour would run, near enough that its margin is in the way.
+    const low = { x: 500, y: 200, width: 100, height: 50 };
+    const points = path({
+      ...ends,
+      obstacles: [{ x: 300, y: -200, width: 100, height: 400 }, { x: 800, y: -200, width: 100, height: 400 }, low],
+    });
+    expect(clearOf(points, low)).toBe(true);
+  });
+
+  it('finds the way round a wall taller than the region it first looks in', () => {
+    const wall = { x: 450, y: -2000, width: 100, height: 4000 };
+    const points = path({ ...ends, obstacles: [wall] });
+    expect(clearOf(points, wall)).toBe(true);
+  });
+});

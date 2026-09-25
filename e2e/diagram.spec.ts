@@ -792,6 +792,9 @@ test('the colour palette hides for an image-only selection and comes back for a 
   await page.keyboard.press('r');
   await pane.click({ position: { x: 240, y: 180 } });
   await page.keyboard.press('Escape'); // the new shape opened for typing
+  // And a second Escape clears the selection: a selected node is lifted over
+  // the rest, and would sit on top of the image inserted below.
+  await page.keyboard.press('Escape');
   const rect = page.locator('.react-flow__node').first();
   await expect(rect).toBeVisible();
 

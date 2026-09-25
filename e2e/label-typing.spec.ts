@@ -79,3 +79,41 @@ test('a multi-line label and a Markdown one are shown once', async ({ page }) =>
   await page.mouse.click(900, 600);
   await expect(label.getByRole('listitem')).toHaveText(['•one', '•two']);
 });
+
+test('a collaborator moving the shape mid-sentence does not duplicate or lose what is being typed', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signUp(page, 'Ada Lovelace');
+  const label = await boardWith(page, '');
+  await expect(page.locator('[data-collab-status="connected"]')).toBeVisible();
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  const guestEmail = await signUp(guestPage, 'Grace Hopper');
+  await page.getByRole('button', { name: 'Share' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share' });
+  await dialog.getByLabel('Invite by email').fill(guestEmail);
+  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByRole('button', { name: 'Invite' }).click();
+  await expect(dialog.getByText(guestEmail)).toBeVisible();
+  await page.getByRole('button', { name: 'Close share dialog' }).click();
+  await guestPage.goto(page.url());
+  await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+
+  await page.locator('[data-id="a"]').dblclick();
+  await page.keyboard.type('Clearing');
+
+  // Grace drags the very shape Ada is typing in; Ada's window re-renders it.
+  const box = (await guestPage.locator('[data-id="a"]').boundingBox())!;
+  await guestPage.mouse.move(box.x + 20, box.y + 20);
+  await guestPage.mouse.down();
+  await guestPage.mouse.move(box.x + 60, box.y + 80, { steps: 8 });
+  await guestPage.mouse.up();
+  const moved = page.locator('[data-id="a"]');
+  await expect.poll(async () => (await moved.boundingBox())!.y).toBeGreaterThan(box.y + 40);
+
+  await page.keyboard.type(' account');
+  await page.keyboard.press('Escape');
+  await expect(label).toHaveText('Clearing account');
+  await expect(guestPage.locator('[data-id="a"] [contenteditable]')).toHaveText('Clearing account');
+  await guest.close();
+});
