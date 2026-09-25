@@ -24,6 +24,7 @@ async function drawShapeAt(page: Page, pane: Locator, label: string, at: { x: nu
   const before = await page.locator('.react-flow__node').count();
   await page.keyboard.press('r');
   await pane.click({ position: at });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(before + 1);
 
   const node = page.locator('.react-flow__node').nth(before);

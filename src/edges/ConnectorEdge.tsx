@@ -399,8 +399,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const startArrow = data?.startArrowStyle ?? DEFAULT_START_ARROW;
   const endArrow = data?.endArrowStyle ?? DEFAULT_END_ARROW;
   const markerSize = MARKER_SIZE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH];
-  const selMarkerStart = selected && startArrow !== 'none' ? markerId(startArrow, SELECTION_MARKER_COLOR, markerSize) : markerStart;
-  const selMarkerEnd = selected && endArrow !== 'none' ? markerId(endArrow, SELECTION_MARKER_COLOR, markerSize) : markerEnd;
+  // A marker reference is `url('#id')`, the form React Flow hands over for the
+  // unselected ones; a bare id is silently ignored and the head disappears.
+  const selMarkerStart = selected && startArrow !== 'none' ? `url('#${markerId(startArrow, SELECTION_MARKER_COLOR, markerSize)}')` : markerStart;
+  const selMarkerEnd = selected && endArrow !== 'none' ? `url('#${markerId(endArrow, SELECTION_MARKER_COLOR, markerSize)}')` : markerEnd;
   // Selection thickens the line by a hair on top of whatever width it is set to.
   const strokeWidth = CONNECTOR_STROKE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH] + (selected ? 0.5 : 0);
 

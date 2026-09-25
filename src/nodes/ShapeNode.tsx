@@ -500,8 +500,9 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
           the keystroke offers exactly what the buttons do. This component only
           ever renders a node of type `shape`, which is what makes the `type`
           half of it true here. */}
+      {/* Offered while the label is open too: a new shape opens for typing, and
+          type-then-grow is the gesture. A click blurs the label, which saves it. */}
       {canQuickAddFrom({ type: 'shape', data }) &&
-        !editing &&
         QUICK_ADD.map(({ direction, style }) => (
           <button
             key={direction}

@@ -110,6 +110,16 @@ function stubEnd(p: RoutePoint, side: Direction, rect: RouteRect, len: number): 
   }
 }
 
+/** How far `p` is out from `side` of `rect`, along that side's normal (negative: behind it). */
+function clearance(p: RoutePoint, side: Direction, rect: RouteRect): number {
+  switch (side) {
+    case 'top': return rect.y - p.y;
+    case 'bottom': return p.y - (rect.y + rect.height);
+    case 'left': return rect.x - p.x;
+    case 'right': return p.x - (rect.x + rect.width);
+  }
+}
+
 /** A minimal binary heap of [cost, state]. */
 class Heap {
   private items: [number, number][] = [];
@@ -154,10 +164,18 @@ function uniqueSorted(values: number[]): number[] {
   return out;
 }
 
+/** A partial route: what it cost to get here and the points it turned at. */
+interface Arrival { cost: number; points: RoutePoint[] }
+
 interface Leg {
   from: RoutePoint;
-  /** The direction the route is already travelling in when it leaves `from`. */
-  heading: Dir;
+  /**
+   * The ways the route can already be travelling when it leaves `from`, each
+   * with the cost of the route so far. Several, at a user's bend: which way it
+   * should arrive there depends on the leg after it, so every heading is kept
+   * and the next leg chooses (one Dijkstra with many starts does exactly that).
+   */
+  starts: Map<Dir, Arrival>;
   to: RoutePoint;
   /** The direction the route must be travelling in when it reaches `to`, if any. */
   arrive: Dir | null;
@@ -167,10 +185,12 @@ interface Leg {
 }
 
 /**
- * The cheapest orthogonal path for one leg, as the list of points it turns
- * at (both ends included), or `null` when every way is blocked.
+ * The cheapest route through one leg for each direction it can arrive in —
+ * the whole route so far included — or an empty map when every way is
+ * blocked. With `arrive` set, arriving any other way costs a corner, and
+ * arriving the opposite way is not allowed.
  */
-function searchLeg(leg: Leg): { points: RoutePoint[]; heading: Dir } | null {
+function searchLeg(leg: Leg): Map<Dir, Arrival> {
   const { from, to, blocking } = leg;
   const xs = uniqueSorted([from.x, to.x, ...leg.midX, ...blocking.flatMap((b) => [b.l, b.r])]);
   const ys = uniqueSorted([from.y, to.y, ...leg.midY, ...blocking.flatMap((b) => [b.t, b.b])]);
@@ -188,16 +208,16 @@ function searchLeg(leg: Leg): { points: RoutePoint[]; heading: Dir } | null {
   const cost = new Map<number, number>();
   const parent = new Map<number, number>();
   const heap = new Heap();
-  const start = stateOf(si, sj, leg.heading);
-  cost.set(start, 0);
-  heap.push(0, start);
+  for (const [d, arrival] of leg.starts) {
+    const start = stateOf(si, sj, d);
+    cost.set(start, arrival.cost);
+    heap.push(arrival.cost, start);
+  }
 
-  let goal = -1;
-  let goalCost = Infinity;
+  const best = new Map<Dir, { cost: number; state: number }>();
   while (heap.size > 0) {
     const [c, state] = heap.pop();
     if (c > (cost.get(state) ?? Infinity)) continue;
-    if (c >= goalCost) break;
     const d = (state & 3) as Dir;
     const cell = state >> 2;
     const i = cell % W;
@@ -205,10 +225,7 @@ function searchLeg(leg: Leg): { points: RoutePoint[]; heading: Dir } | null {
     if (i === ti && j === tj) {
       if (leg.arrive !== null && d === reverse(leg.arrive)) continue;
       const total = c + (leg.arrive !== null && d !== leg.arrive ? BEND_PENALTY : 0);
-      if (total < goalCost) {
-        goalCost = total;
-        goal = state;
-      }
+      if (total < (best.get(d)?.cost ?? Infinity)) best.set(d, { cost: total, state });
       continue;
     }
     for (let nd = 0 as Dir; nd < 4; nd = (nd + 1) as Dir) {
@@ -231,15 +248,25 @@ function searchLeg(leg: Leg): { points: RoutePoint[]; heading: Dir } | null {
       }
     }
   }
-  if (goal < 0) return null;
 
-  const cells: RoutePoint[] = [];
-  for (let s: number | undefined = goal; s !== undefined; s = parent.get(s)) {
-    const cell = s >> 2;
-    cells.push(at(cell % W, Math.floor(cell / W)));
+  const out = new Map<Dir, Arrival>();
+  for (const [d, { cost: total, state: goal }] of best) {
+    const cells: RoutePoint[] = [];
+    let s: number = goal;
+    for (;;) {
+      const cell = s >> 2;
+      cells.push(at(cell % W, Math.floor(cell / W)));
+      const p = parent.get(s);
+      if (p === undefined) break;
+      s = p;
+    }
+    cells.reverse();
+    // `s` is now the start state this route set out from: its heading says
+    // which of the routes so far it continues.
+    const before = leg.starts.get((s & 3) as Dir)!;
+    out.set(d, { cost: total, points: [...before.points, ...cells.slice(1)] });
   }
-  cells.reverse();
-  return { points: cells, heading: (goal & 3) as Dir };
+  return out;
 }
 
 /** Drops repeated points and the middle one of any three in a line. */
@@ -272,10 +299,16 @@ function nearby(obstacles: readonly RouteRect[], region: Box): RouteRect[] {
  * **not** including those two points — `buildConnectorPath` puts them on.
  */
 export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
-  const [lenS, lenT] = stubLengths(input);
+  const vertices = input.vertices ?? [];
+  let [lenS, lenT] = stubLengths(input);
+  // A bend the user dragged to inside a stub's length would have the route
+  // overshoot it and double back along itself; the stub stops level with it.
+  if (vertices.length > 0) {
+    lenS = Math.min(lenS, Math.max(0, clearance(vertices[0], input.sourceSide, input.sourceRect)));
+    lenT = Math.min(lenT, Math.max(0, clearance(vertices[vertices.length - 1], input.targetSide, input.targetRect)));
+  }
   const s1 = stubEnd(input.source, input.sourceSide, input.sourceRect, lenS);
   const t1 = stubEnd(input.target, input.targetSide, input.targetRect, lenT);
-  const vertices = input.vertices ?? [];
 
   const sourceBox = boxOf(input.sourceRect, lenS);
   const targetBox = boxOf(input.targetRect, lenT);
@@ -301,8 +334,7 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
 
   const stops = [s1, ...vertices, t1];
   const route = (withObstacles: boolean): RoutePoint[] | null => {
-    const out: RoutePoint[] = [s1];
-    let heading = OUTWARD[input.sourceSide];
+    let heads = new Map<Dir, Arrival>([[OUTWARD[input.sourceSide], { cost: 0, points: [s1] }]]);
     for (let k = 1; k < stops.length; k++) {
       const from = stops[k - 1];
       const to = stops[k];
@@ -312,20 +344,20 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
       // dragged inside one, still route.
       const candidates = [sourceBox, targetBox, ...(withObstacles ? obstacleBoxes : [])];
       const blocking = candidates.filter((b) => !inside(from, b) && !inside(to, b));
-      const leg = searchLeg({
+      heads = searchLeg({
         from,
-        heading,
+        starts: heads,
         to,
         arrive: isLast ? reverse(OUTWARD[input.targetSide]) : null,
         blocking,
         midX,
         midY,
       });
-      if (!leg) return null;
-      out.push(...leg.points.slice(1));
-      heading = leg.heading;
+      if (heads.size === 0) return null;
     }
-    return out;
+    let cheapest: Arrival | null = null;
+    for (const arrival of heads.values()) if (!cheapest || arrival.cost < cheapest.cost) cheapest = arrival;
+    return cheapest?.points ?? null;
   };
 
   const points = route(true) ?? route(false) ?? [s1, { x: s1.x, y: t1.y }, t1];

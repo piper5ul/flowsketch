@@ -35,7 +35,10 @@ async function drawSticky(page: Page, pane: Locator, at: { x: number; y: number 
   const before = await page.locator('.react-flow__node').count();
   await page.keyboard.press('s');
   await pane.click({ position: at });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
   await expect(page.locator('.react-flow__node')).toHaveCount(before + 1);
+  // A placed shape opens for typing; Escape leaves it, so the next key is a shortcut again.
+  await page.keyboard.press('Escape');
   return page.locator('.react-flow__node').nth(before);
 }
 
