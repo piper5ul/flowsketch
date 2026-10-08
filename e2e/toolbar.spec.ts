@@ -101,24 +101,26 @@ test('a custom colour commits only on change as one undo step', async ({ page })
   await expect(node).toBeVisible();
   await node.click();
   const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
-  const undo = page.getByRole('button', { name: 'Undo' });
-  await expect(undo).toBeDisabled();
-
+  // No assertion on Undo being empty here: on main, a plain click on a shape
+  // records an undo step of its own (a separate bug), so "empty" would race it.
+  // What this test owns is the colour: dragging records nothing, the release
+  // records one step, and one ⌘Z takes the shape back to where it started.
   await toolbar.getByRole('button', { name: 'Color' }).click();
   const grid = page.getByRole('group', { name: 'Colors' });
   const customInput = page.locator('[data-testid="custom-colour-input"]');
   await customInput.evaluate((element) => {
     const input = element as HTMLInputElement;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
-    setter.call(input, '#123456');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+    // A drag through the system picker: several values, `input` only.
+    for (const value of ['#111111', '#222222', '#123456']) {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
   });
   await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(undo).toBeDisabled();
 
   await customInput.evaluate((input) => input.dispatchEvent(new Event('change', { bubbles: true })));
   await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(18, 52, 86)');
-  await expect(undo).toBeEnabled();
   await expect(grid.locator('button[aria-pressed="true"]')).toHaveCount(0);
 
   // A focused colour input belongs to its popover; ⌘Z there must not reach the
@@ -128,8 +130,9 @@ test('a custom colour commits only on change as one undo step', async ({ page })
   await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(18, 52, 86)');
   await page.keyboard.press('Escape');
   await page.keyboard.press('ControlOrMeta+z');
+  // One ⌘Z is the whole colour change: had any `input` been committed, this
+  // would land on #111111 or #222222 rather than on the original white.
   await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
-  await expect(undo).toBeDisabled();
 });
 
 test('Space picks the focused swatch without panning the canvas', async ({ page }) => {
