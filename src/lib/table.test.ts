@@ -24,6 +24,7 @@ function grid(rows: string[][], header = false): TableData {
 }
 
 const text = (table: TableData) => table.rows.map((row) => row.cells);
+const styles = (table: TableData) => table.rows.map((row) => row.styles);
 
 describe('emptyTable', () => {
   it('is a grid of blanks with a header row', () => {
@@ -51,6 +52,24 @@ describe('addRow', () => {
     expect(text(addRow(grid([['a']]), 99))).toEqual([['a'], ['']]);
     expect(text(addRow(grid([['a']]), -4))).toEqual([[''], ['a']]);
   });
+
+  it('keeps styled rows rectangular and gives the new row blank styles', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [],
+      rows: [
+        { cells: ['a', 'b'], styles: [{ bold: true }, null] },
+        { cells: ['c', 'd'], styles: [null, { fill: '#FFFF00' }] },
+      ],
+    });
+    const next = addRow(table, 1);
+    expect(styles(next)).toEqual([
+      [{ bold: true }, null],
+      [null, null],
+      [null, { fill: '#FFFF00' }],
+    ]);
+    expect(next.rows.every((row) => row.styles?.length === next.columns.length)).toBe(true);
+  });
 });
 
 describe('removeRow', () => {
@@ -67,6 +86,18 @@ describe('removeRow', () => {
     // skips a patch whose value is already there.
     const table = grid([['a']]);
     expect(removeRow(table)).toBe(table);
+  });
+
+  it('keeps styles aligned when removing a row', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [],
+      rows: [
+        { cells: ['a'], styles: [{ bold: true }] },
+        { cells: ['b'], styles: [{ italic: true }] },
+      ],
+    });
+    expect(styles(removeRow(table, 0))).toEqual([[{ italic: true }]]);
   });
 });
 
@@ -88,11 +119,42 @@ describe('addColumn / removeColumn', () => {
     const table = grid([['a'], ['b']]);
     expect(removeColumn(table)).toBe(table);
   });
+
+  it('keeps styles aligned when inserting and removing a column', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [],
+      rows: [
+        { cells: ['a', 'b'], styles: [{ bold: true }, { italic: true }] },
+        { cells: ['c', 'd'], styles: [null, { fill: '#FFFF00' }] },
+      ],
+    });
+    const widened = addColumn(table, 1);
+    expect(styles(widened)).toEqual([
+      [{ bold: true }, null, { italic: true }],
+      [null, null, { fill: '#FFFF00' }],
+    ]);
+    const narrowed = removeColumn(widened, 0);
+    expect(styles(narrowed)).toEqual([
+      [null, { italic: true }],
+      [null, { fill: '#FFFF00' }],
+    ]);
+    expect(narrowed.rows.every((row) => row.styles?.length === narrowed.columns.length)).toBe(true);
+  });
 });
 
 describe('setCell', () => {
   it('writes one cell and leaves the rest alone', () => {
     expect(text(setCell(grid([['a', 'b'], ['c', 'd']]), 1, 0, 'X'))).toEqual([['a', 'b'], ['X', 'd']]);
+  });
+
+  it('preserves a cell style when its text changes', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [],
+      rows: [{ cells: ['a', 'b'], styles: [{ bold: true }, { color: '#0070C0' }] }],
+    });
+    expect(styles(setCell(table, 0, 0, 'edited'))).toEqual([[{ bold: true }, { color: '#0070C0' }]]);
   });
 
   it('returns the same table when the text is already there', () => {
@@ -150,6 +212,18 @@ describe('isHeaderRow / tableCells', () => {
 });
 
 describe('normalizeTable', () => {
+  it('returns an already normalized table by reference, including parallel styles', () => {
+    const table: TableData = {
+      header: true,
+      columns: [{ width: 120 }, { width: DEFAULT_COLUMN_WIDTH }],
+      rows: [
+        { cells: ['Name', 'Value'], styles: [{ bold: true, fill: '#203764' }, null] },
+        { cells: ['Ada', '42'], styles: [null, { align: 'right', color: '#0070C0' }] },
+      ],
+    };
+    expect(normalizeTable(table)).toBe(table);
+  });
+
   it('squares up a ragged grid, padding short rows', () => {
     const table = normalizeTable({ header: false, columns: [], rows: [{ cells: ['a'] }, { cells: ['b', 'c', 'd'] }] });
     expect(text(table)).toEqual([['a', '', ''], ['b', 'c', 'd']]);
@@ -167,6 +241,35 @@ describe('normalizeTable', () => {
       rows: [{ cells: ['a', 'b'] }],
     });
     expect(table.columns.map((c) => c.width)).toEqual([200, MIN_COLUMN_WIDTH]);
+  });
+
+  it('narrows hostile style values and keeps a present style array rectangular', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [],
+      rows: [{
+        cells: ['a', 'b', 'c', 'd', 'e'],
+        styles: [
+          { bold: true, italic: false, fill: '#203764', color: '#FFFFFF', align: 'center' },
+          { fill: 'url(javascript:alert(1))', align: 3, bold: 'yes' },
+          { italic: true, color: 'red' },
+          null,
+        ],
+      }],
+    } as unknown as TableData);
+    expect(styles(table)).toEqual([[
+      { bold: true, italic: false, fill: '#203764', color: '#FFFFFF', align: 'center' },
+      null,
+      { italic: true },
+      null,
+      null,
+    ]]);
+    expect(table.rows[0].styles).toHaveLength(table.columns.length);
+  });
+
+  it('leaves style arrays absent when the input has no styles', () => {
+    const table = normalizeTable({ header: false, columns: [], rows: [{ cells: ['a'] }] });
+    expect(table.rows[0]).not.toHaveProperty('styles');
   });
 });
 

@@ -18,7 +18,7 @@
  * is an invariant rather than a hope — with one door for the untrusted case,
  * `normalizeTable`, which is what a pasted or hand-edited grid comes through.
  */
-import type { TableData } from '../types';
+import type { TableCellStyle, TableData } from '../types';
 
 /** How wide a column starts out, and how far it can be dragged in. */
 export const DEFAULT_COLUMN_WIDTH = 140;
@@ -31,8 +31,11 @@ export const DEFAULT_ROW_HEIGHT = 36;
 export const DEFAULT_TABLE_ROWS = 3;
 export const DEFAULT_TABLE_COLUMNS = 3;
 
-function blankRow(columns: number): { cells: string[] } {
-  return { cells: Array.from({ length: columns }, () => '') };
+function blankRow(columns: number, withStyles = false): TableData['rows'][number] {
+  return {
+    cells: Array.from({ length: columns }, () => ''),
+    ...(withStyles ? { styles: Array.from({ length: columns }, () => null) } : {}),
+  };
 }
 
 /** `rows` × `cols` of empty cells, with the first row drawn as a header. */
@@ -61,7 +64,7 @@ function clampIndex(at: number | undefined, length: number): number {
 export function addRow(table: TableData, at?: number): TableData {
   const index = clampIndex(at, table.rows.length);
   const rows = [...table.rows];
-  rows.splice(index, 0, blankRow(table.columns.length));
+  rows.splice(index, 0, blankRow(table.columns.length, table.rows.some((row) => row.styles !== undefined)));
   return { ...table, rows };
 }
 
@@ -88,7 +91,10 @@ export function addColumn(table: TableData, at?: number): TableData {
     rows: table.rows.map((row) => {
       const cells = [...row.cells];
       cells.splice(index, 0, '');
-      return { cells };
+      if (row.styles === undefined) return { cells };
+      const styles = [...row.styles];
+      styles.splice(index, 0, null);
+      return { cells, styles };
     }),
   };
 }
@@ -100,7 +106,10 @@ export function removeColumn(table: TableData, at?: number): TableData {
   return {
     ...table,
     columns: table.columns.filter((_, i) => i !== index),
-    rows: table.rows.map((row) => ({ cells: row.cells.filter((_, i) => i !== index) })),
+    rows: table.rows.map((row) => ({
+      cells: row.cells.filter((_, i) => i !== index),
+      ...(row.styles === undefined ? {} : { styles: row.styles.filter((_, i) => i !== index) }),
+    })),
   };
 }
 
@@ -112,7 +121,7 @@ export function setCell(table: TableData, row: number, col: number, text: string
   return {
     ...table,
     rows: table.rows.map((r, i) =>
-      i === row ? { cells: r.cells.map((cell, j) => (j === col ? text : cell)) } : r,
+      i === row ? { ...r, cells: r.cells.map((cell, j) => (j === col ? text : cell)) } : r,
     ),
   };
 }
@@ -165,6 +174,18 @@ export function tableCells(table: TableData): string[] {
 export function normalizeTable(table: TableData): TableData {
   const rows = table.rows.length > 0 ? table.rows : [{ cells: [] }];
   const width = Math.max(1, ...rows.map((row) => row.cells.length), table.columns.length);
+  const alreadyNormalized = rows === table.rows
+    && table.columns.length === width
+    && table.columns.every((column) => column.width === Math.max(MIN_COLUMN_WIDTH, Math.round(column.width ?? DEFAULT_COLUMN_WIDTH)))
+    && table.rows.every((row) => row.cells.length === width
+      && row.cells.every((cell) => typeof cell === 'string')
+      && (row.styles === undefined
+        ? !Object.prototype.hasOwnProperty.call(row, 'styles')
+        : Array.isArray(row.styles)
+          && row.styles.length === width
+          && row.styles.every(isNarrowCellStyle)));
+  if (alreadyNormalized) return table;
+
   return {
     header: table.header,
     columns: Array.from({ length: width }, (_, i) => ({
@@ -172,8 +193,34 @@ export function normalizeTable(table: TableData): TableData {
     })),
     rows: rows.map((row) => ({
       cells: Array.from({ length: width }, (_, i) => row.cells[i] ?? ''),
+      ...(Array.isArray(row.styles)
+        ? { styles: Array.from({ length: width }, (_, i) => narrowCellStyle(row.styles?.[i])) }
+        : {}),
     })),
   };
+}
+
+/** A free-form JSON cell style, reduced to the five values the renderer uses. */
+function narrowCellStyle(value: unknown): TableCellStyle | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const input = value as Record<string, unknown>;
+  const style: TableCellStyle = {};
+  if (typeof input.bold === 'boolean') style.bold = input.bold;
+  if (typeof input.italic === 'boolean') style.italic = input.italic;
+  if (typeof input.fill === 'string' && /^#[\da-f]{6}$/i.test(input.fill)) style.fill = input.fill;
+  if (typeof input.color === 'string' && /^#[\da-f]{6}$/i.test(input.color)) style.color = input.color;
+  if (input.align === 'left' || input.align === 'center' || input.align === 'right') style.align = input.align;
+  return Object.keys(style).length > 0 ? style : null;
+}
+
+function isNarrowCellStyle(value: unknown): boolean {
+  if (value === null) return true;
+  if (typeof value !== 'object' || Array.isArray(value)) return false;
+  const original = value as Record<string, unknown>;
+  const narrowed = narrowCellStyle(value);
+  return narrowed !== null
+    && Object.keys(original).length === Object.keys(narrowed).length
+    && Object.entries(narrowed).every(([key, item]) => original[key] === item);
 }
 
 // ---- parsing ---------------------------------------------------------------

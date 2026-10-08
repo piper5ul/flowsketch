@@ -65,6 +65,8 @@ import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
 import { sanitizeThumbnailIds } from '../boardThumbnail';
 import { sanitizeVotingSession } from '../voting';
 import { sanitizeTimer } from '../timer';
+import { normalizeTable } from '../table';
+import type { TableData } from '../../types';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -349,7 +351,10 @@ export function docNodesOntoStore(
   return normalizeParentage(
     serialized.map((node) => {
       const previous = byId.get(node.id);
-      const next = { ...node } as unknown as ShapeNode;
+      const normalized = node.type === 'table' && node.data.table
+        ? { ...node, data: { ...node.data, table: normalizeTable(node.data.table as TableData) } }
+        : node;
+      const next = { ...normalized } as unknown as ShapeNode;
       if (!previous) return next;
       return {
         ...next,

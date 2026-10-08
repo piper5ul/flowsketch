@@ -213,6 +213,7 @@ describe('the board-thumbnail commands', () => {
 describe('the "paste as" commands', () => {
   const stickies = registry.find('clipboard.pasteAsStickies')!;
   const mermaid = registry.find('clipboard.pasteMermaid')!;
+  const table = registry.find('clipboard.pasteAsTable')!;
 
   /** A context whose store records what the two paste actions were handed. */
   function ctxWithClipboard(text: string | Error) {
@@ -305,6 +306,40 @@ describe('the "paste as" commands', () => {
       text: 'sequenceDiagram\n  A->>B: hi',
       origin: { x: 12, y: 34 },
     });
+    expect(messages()).toEqual([]);
+  });
+
+  it('falls back to readText when rich clipboard HTML cannot be parsed', async () => {
+    const calls: { origin: { x: number; y: number }; rows: string[][] }[] = [];
+    const ctx = {
+      store: {
+        getState: () => ({
+          addTable: (origin: { x: number; y: number }, value: { rows: { cells: string[] }[] }) => {
+            calls.push({ origin, rows: value.rows.map((row) => row.cells) });
+          },
+        }),
+      },
+      dropPoint: () => ({ x: 12, y: 34 }),
+    } as unknown as CommandContext;
+    const readText = vi.fn(async () => 'Name\tValue\nA\t1');
+    vi.stubGlobal('navigator', {
+      clipboard: {
+        read: async () => [{
+          types: ['text/html'],
+          getType: async () => new Blob(['<p>not a table</p>'], { type: 'text/html' }),
+        }],
+        readText,
+      },
+    });
+
+    table.run(ctx);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+    expect(readText).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual([{
+      origin: { x: 12, y: 34 },
+      rows: [['Name', 'Value'], ['A', '1']],
+    }]);
     expect(messages()).toEqual([]);
   });
 

@@ -52,7 +52,9 @@
  * so there is nothing an older spelling could be misread as. Like `defaults` it
  * is squared up rather than migrated — `normalizeTable`, applied in
  * `loadDiagram`, where a ragged grid out of the free-form JSON column would
- * otherwise reach the canvas.
+ * otherwise reach the canvas. Per-cell `styles` are optional too: absent means
+ * plain cells, and `normalizeTable` narrows them when a newer browser writes
+ * them into the free-form JSON column.
  *
  * **`ShapeData.wire` is the same case once more, and then some**: only a node
  * of type `wire` carries one, and a diagram written before wireframes existed

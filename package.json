@@ -69,6 +69,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.0.4",
     "concurrently": "^10.0.4",
+    "jsdom": "^29.1.1",
     "oxlint": "^1.75.0",
     "prisma": "^7.9.1",
     "simple-git-hooks": "^2.14.0",

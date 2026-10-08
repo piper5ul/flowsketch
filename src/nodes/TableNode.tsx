@@ -6,6 +6,7 @@ import { useDiagramStore } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 import { resolveFontSize } from '../lib/text';
+import { isDarkFill } from '../lib/palette';
 import {
   DEFAULT_ROW_HEIGHT,
   MIN_COLUMN_WIDTH,
@@ -244,14 +245,27 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
               <tr key={rowIndex} style={{ height: DEFAULT_ROW_HEIGHT }}>
                 {row.cells.map((cell, col) => {
                   const open = editing?.row === rowIndex && editing.col === col;
+                  const cellStyle = row.styles?.[col] ?? null;
+                  const align = cellStyle?.align ?? data.textAlign ?? 'left';
+                  const cellFill = cellStyle?.fill;
+                  const cellTextColor = cellStyle?.color
+                    ?? (cellFill
+                      ? (isDarkFill(cellFill) ? '#FFFFFF' : '#21232F')
+                      : data.textColor);
+                  const fontWeight = cellStyle?.bold !== undefined
+                    ? (cellStyle.bold ? 700 : 400)
+                    : header ? 600 : data.bold ? 700 : undefined;
+                  const fontStyle = cellStyle?.italic !== undefined
+                    ? (cellStyle.italic ? 'italic' : 'normal')
+                    : data.italic ? 'italic' : undefined;
                   return (
                     <td
                       key={col}
                       style={{
                         borderRight: col < table.columns.length - 1 ? `1px solid ${rule}` : undefined,
                         borderBottom: rowIndex < table.rows.length - 1 ? `1px solid ${rule}` : undefined,
-                        background: header ? headerBackground : undefined,
-                        textAlign: data.textAlign ?? 'left',
+                        background: cellFill ?? (header ? headerBackground : undefined),
+                        textAlign: align,
                         padding: 0,
                       }}
                       onPointerDown={() => setActiveTableCell({ nodeId: id, row: rowIndex, col })}
@@ -263,7 +277,7 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
                           // `nodrag`/`nopan` or a text selection inside the cell
                           // would drag the table around instead.
                           className="nodrag nopan h-full w-full bg-transparent px-2 text-inherit outline-none"
-                          style={{ fontSize, textAlign: data.textAlign ?? 'left' }}
+                          style={{ fontSize, color: cellTextColor, fontWeight, fontStyle, textAlign: align }}
                           aria-label={`Row ${rowIndex + 1} column ${col + 1}`}
                           value={draft}
                           onChange={(e) => setDraft(e.target.value)}
@@ -289,15 +303,15 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
                             header && 'font-semibold',
                           )}
                           style={{
-                            color: data.textColor,
-                            fontWeight: header ? 600 : data.bold ? 700 : undefined,
-                            fontStyle: data.italic ? 'italic' : undefined,
+                            color: cellTextColor,
+                            fontWeight,
+                            fontStyle,
                             display: 'flex',
                             alignItems: 'center',
                             justifyContent:
-                              (data.textAlign ?? 'left') === 'center'
+                              align === 'center'
                                 ? 'center'
-                                : (data.textAlign ?? 'left') === 'right'
+                                : align === 'right'
                                   ? 'flex-end'
                                   : 'flex-start',
                           }}

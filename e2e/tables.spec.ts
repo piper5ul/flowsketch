@@ -114,3 +114,58 @@ test('a pasted Markdown table becomes a table with a header row', async ({ page,
     page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Header row' }),
   ).toHaveClass(/bg-accent-500/);
 });
+
+test('pasting Excel HTML keeps cell formatting', async ({ page }) => {
+  await signUp(page);
+  await openEmptyBoard(page, 'Excel table formatting');
+
+  const plain = 'Metric\tAmount\nTransaction Value\t$0.12';
+  const html = `
+    <html xmlns:o="urn:schemas-microsoft-com:office:office">
+      <head><style>
+        .xl65 { background: #203764; color: #FFFFFF; font-weight: 700; }
+        .xl66 { font-weight: 700; }
+      </style></head>
+      <body><table>
+        <col width="180"><col width="100">
+        <tr><td class="xl65">Metric</td><td class="xl65">Amount</td></tr>
+        <tr><td class="xl66">Transaction Value</td><td>$0.12</td></tr>
+      </table></body>
+    </html>`;
+
+  await page.evaluate(({ plainText, htmlText }) => {
+    // `page.evaluate` runs in the browser, but this test file is typechecked
+    // with Node globals. Describe only the browser APIs this callback uses.
+    const browser = globalThis as unknown as {
+      DataTransfer: new () => { setData(type: string, value: string): void };
+      ClipboardEvent: new (
+        type: string,
+        init: { bubbles: boolean; cancelable: boolean; clipboardData: object },
+      ) => object;
+      dispatchEvent(event: object): boolean;
+    };
+    const clipboardData = new browser.DataTransfer();
+    clipboardData.setData('text/plain', plainText);
+    clipboardData.setData('text/html', htmlText);
+    browser.dispatchEvent(new browser.ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    }));
+  }, { plainText: plain, htmlText: html });
+
+  await expect(tableNode(page)).toHaveCount(1);
+  const header = tableNode(page).locator('tr').first().locator('td').first();
+  await expect.poll(() => header.evaluate((cell) => (
+    globalThis as unknown as {
+      getComputedStyle(element: object): { backgroundColor: string };
+    }
+  ).getComputedStyle(cell).backgroundColor)).toBe('rgb(32, 55, 100)');
+
+  const section = tableNode(page).getByText('Transaction Value', { exact: true });
+  await expect.poll(() => section.evaluate((cell) => (
+    globalThis as unknown as {
+      getComputedStyle(element: object): { fontWeight: string };
+    }
+  ).getComputedStyle(cell).fontWeight)).toBe('700');
+});
