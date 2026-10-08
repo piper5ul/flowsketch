@@ -6,17 +6,19 @@ import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useCollabStore } from '../store/useCollabStore';
-import { useDiagramStore } from '../store/useDiagramStore';
+import { createDiagramPictureChangeTracker, useDiagramStore } from '../store/useDiagramStore';
 import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
 import { thumbnailSubsetIds } from '../lib/boardThumbnail';
+import { listenForCanvasPointerActivity } from '../lib/canvasPointerActivity';
 import { renderDiagramPng } from '../lib/exportImage';
 import { backfillBase64Images, findBase64ImageNodes } from '../lib/imageBackfill';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
 import { toastError } from '../store/useToastStore';
 
 const AUTOSAVE_DELAY_MS = 2000;
+const THUMBNAIL_TRANSIENT_QUIET_MS = 500;
 
 export function CanvasPage() {
   const { id } = useParams<{ id: string }>();
@@ -205,7 +207,12 @@ export function CanvasPage() {
     // store it as A's thumbnail. Both ends of the capture check the store still
     // holds this diagram.
     const isCurrent = () => useDiagramStore.getState().diagramId === id;
+    let pointerDown = false;
+    let lastTransientAt = Number.NEGATIVE_INFINITY;
+    let pendingPictureCheckTimer: ReturnType<typeof setTimeout> | null = null;
+    const pictureChanges = createDiagramPictureChangeTracker();
     const thumbnails = createThumbnailScheduler({
+      isBusy: () => pointerDown || Date.now() - lastTransientAt < THUMBNAIL_TRANSIENT_QUIET_MS,
       render: () => {
         if (!isCurrent()) return Promise.resolve(null);
         // A custom thumbnail names shapes, and a shape can be deleted while its
@@ -213,7 +220,11 @@ export function CanvasPage() {
         // What is left of it is what gets drawn; nothing left means the whole
         // board again, which is a better card than none. The stale ids stay put
         // (see `setThumbnailNodeIds`): the shape may come back.
-        const { thumbnailNodeIds, nodes } = useDiagramStore.getState();
+        const { thumbnailNodeIds, nodes, edges, voting } = useDiagramStore.getState();
+        // The quiet checkpoint usually resolves this. If another dirty update
+        // already queued a capture while a gesture was active, resolve it here
+        // against the live picture state before rasterizing.
+        pictureChanges.checkPending(nodes, edges, voting);
         const nodeIds = thumbnailSubsetIds(thumbnailNodeIds, nodes);
         return renderDiagramPng({
           pixelRatio: 1,
@@ -233,28 +244,91 @@ export function CanvasPage() {
       },
     });
 
-    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
-      // Neither a retitle nor a pan changes the picture, so only shape edits —
-      // and a change of *which* shapes the card is drawn from — mark the
-      // thumbnail stale.
-      if (state.thumbnailNodeIds !== prev.thumbnailNodeIds) {
-        // Captured at once rather than within the interval: this one is a
-        // command the user just ran, and a card that goes on showing the old
-        // picture for another half a minute reads as a menu item that did
-        // nothing. `markDirty` first, because `flush` only captures what is
-        // pending. Safe inside a subscription — the capture preserves the
-        // selection, so it writes nothing back to this store.
-        thumbnails.markDirty();
-        void thumbnails.flush();
+    const schedulePendingPictureCheck = () => {
+      if (pendingPictureCheckTimer !== null) clearTimeout(pendingPictureCheckTimer);
+      if (!pictureChanges.hasPending()) {
+        pendingPictureCheckTimer = null;
         return;
       }
-      if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
+      const quietWait = Math.max(0, lastTransientAt + THUMBNAIL_TRANSIENT_QUIET_MS - Date.now());
+      pendingPictureCheckTimer = setTimeout(() => {
+        pendingPictureCheckTimer = null;
+        if (pointerDown || Date.now() - lastTransientAt < THUMBNAIL_TRANSIENT_QUIET_MS) {
+          schedulePendingPictureCheck();
+          return;
+        }
+        const { nodes, edges, voting } = useDiagramStore.getState();
+        if (pictureChanges.checkPending(nodes, edges, voting)) thumbnails.markDirty();
+      }, Math.max(quietWait, pointerDown ? 100 : 0));
+    };
+
+    const onPointerDown = () => {
+      pointerDown = true;
+      thumbnails.notifyInput();
+    };
+    const onPointerEnd = () => {
+      pointerDown = false;
+      thumbnails.notifyInput();
+      schedulePendingPictureCheck();
+    };
+    const onBlur = () => {
+      pointerDown = false;
+      thumbnails.notifyInput();
+      schedulePendingPictureCheck();
+    };
+    const onWheel = () => thumbnails.notifyInput('wheel');
+    const onKeyDown = () => thumbnails.notifyInput('keyboard');
+
+    const removePointerActivityListeners = listenForCanvasPointerActivity(
+      window,
+      onPointerDown,
+      onPointerEnd,
+    );
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('wheel', onWheel);
+    window.addEventListener('keydown', onKeyDown);
+
+    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
+      const transientChanged = state.transientSeq !== prev.transientSeq;
+      if (transientChanged) lastTransientAt = Date.now();
+      const alreadyPendingPictureCheck = pictureChanges.hasPending();
+      const pictureChanged = pictureChanges.update(
+        prev.nodes,
+        prev.edges,
+        state.nodes,
+        state.edges,
+        transientChanged,
+        prev.voting,
+        state.voting,
+      );
+      if (transientChanged) schedulePendingPictureCheck();
+      else if (!pictureChanges.hasPending() && pendingPictureCheckTimer !== null) {
+        clearTimeout(pendingPictureCheckTimer);
+        pendingPictureCheckTimer = null;
+      }
+      // Neither a retitle nor a pan changes the picture. Shape edits, visible
+      // voting changes, and a change of *which* shapes the card draws do.
+      if (state.thumbnailNodeIds !== prev.thumbnailNodeIds) {
+        // Bypass the interval for this explicit command, but let the scheduler
+        // wait until the canvas is idle and input has gone quiet.
+        thumbnails.markDirty({ urgent: true });
+        return;
+      }
+      if (transientChanged && !alreadyPendingPictureCheck) return;
+      if (!transientChanged && pictureChanged) {
+        thumbnails.markDirty();
+      }
     });
 
     void runImageBackfill(id);
 
     return () => {
       unsubscribe();
+      if (pendingPictureCheckTimer !== null) clearTimeout(pendingPictureCheckTimer);
+      removePointerActivityListeners();
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKeyDown);
       // Best-effort: the capture reads the live canvas, so it only produces a
       // thumbnail while the viewport is still mounted. `renderDiagramPng`
       // returns null once it is gone, which the scheduler treats as "nothing

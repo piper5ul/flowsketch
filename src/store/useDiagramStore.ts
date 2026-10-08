@@ -1618,8 +1618,8 @@ function seedPosition(parent: ShapeNode): { x: number; y: number } {
   };
 }
 
-function serializeNodes(nodes: ShapeNode[]) {
-  return nodes.map((n) => ({
+function serializeNode(n: ShapeNode) {
+  return {
     id: n.id, type: n.type, position: n.position,
     width: n.width, height: n.height, data: n.data,
     // Only written when there is one, so an ordinary diagram's JSON is byte for
@@ -1628,16 +1628,127 @@ function serializeNodes(nodes: ShapeNode[]) {
     // not silently undone by one that does not.
     ...(n.parentId !== undefined ? { parentId: n.parentId } : {}),
     ...(n.extent !== undefined ? { extent: n.extent } : {}),
-  }));
+  };
 }
 
-function serializeEdges(edges: ConnectorEdge[]) {
-  return edges.map((e) => ({
+function serializeNodes(nodes: ShapeNode[]) {
+  return nodes.map(serializeNode);
+}
+
+function serializeEdge(e: ConnectorEdge) {
+  return {
     id: e.id, source: e.source, target: e.target, type: e.type,
     sourceHandle: e.sourceHandle, targetHandle: e.targetHandle,
     zIndex: e.zIndex, markerStart: e.markerStart, markerEnd: e.markerEnd,
     data: e.data,
-  }));
+  };
+}
+
+function serializeEdges(edges: ConnectorEdge[]) {
+  return edges.map(serializeEdge);
+}
+
+const serializedNodeKeys = new WeakMap<ShapeNode, string>();
+const serializedEdgeKeys = new WeakMap<ConnectorEdge, string>();
+
+function serializedNodeKey(node: ShapeNode): string {
+  let key = serializedNodeKeys.get(node);
+  if (key === undefined) {
+    key = JSON.stringify(serializeNode(node));
+    serializedNodeKeys.set(node, key);
+  }
+  return key;
+}
+
+function serializedEdgeKey(edge: ConnectorEdge): string {
+  let key = serializedEdgeKeys.get(edge);
+  if (key === undefined) {
+    key = JSON.stringify(serializeEdge(edge));
+    serializedEdgeKeys.set(edge, key);
+  }
+  return key;
+}
+
+/**
+ * Whether an immutable store update changed the diagram JSON that feeds its
+ * board picture. React Flow's selection, measured size and drag state are left
+ * out by the same serializers `serializeDiagram` uses for saves.
+ */
+export function diagramPictureChanged(
+  previousNodes: ShapeNode[],
+  previousEdges: ConnectorEdge[],
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+  previousVoting: VotingSession | null = null,
+  voting: VotingSession | null = null,
+): boolean {
+  // These are the two round fields VoteBadge draws: an open round shows the
+  // reader's dots, and a revealed round shows totals. The other session fields
+  // are controls or attribution and stay out of the board picture.
+  if (
+    Boolean(previousVoting?.active) !== Boolean(voting?.active) ||
+    Boolean(previousVoting?.revealed) !== Boolean(voting?.revealed)
+  ) return true;
+  if (previousNodes === nodes && previousEdges === edges) return false;
+  if (previousNodes !== nodes) {
+    if (previousNodes.length !== nodes.length) return true;
+    for (let i = 0; i < previousNodes.length; i += 1) {
+      const previous = previousNodes[i];
+      const current = nodes[i];
+      if (previous === current) continue;
+      if (previous.id !== current.id || serializedNodeKey(previous) !== serializedNodeKey(current)) return true;
+    }
+  }
+  if (previousEdges !== edges) {
+    if (previousEdges.length !== edges.length) return true;
+    for (let i = 0; i < previousEdges.length; i += 1) {
+      const previous = previousEdges[i];
+      const current = edges[i];
+      if (previous === current) continue;
+      if (previous.id !== current.id || serializedEdgeKey(previous) !== serializedEdgeKey(current)) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Tracks a picture comparison across React Flow's transient gesture frames.
+ * The first transient update saves its starting diagram without serializing;
+ * the comparison is made at the quiet checkpoint or before a pending capture.
+ */
+export function createDiagramPictureChangeTracker() {
+  let pending: { nodes: ShapeNode[]; edges: ConnectorEdge[]; voting: VotingSession | null } | null = null;
+
+  function checkPending(nodes: ShapeNode[], edges: ConnectorEdge[], voting: VotingSession | null = null): boolean | null {
+    if (!pending) return null;
+    const baseline = pending;
+    pending = null;
+    return diagramPictureChanged(baseline.nodes, baseline.edges, nodes, edges, baseline.voting, voting);
+  }
+
+  return {
+    hasPending: () => pending !== null,
+    update(
+      previousNodes: ShapeNode[],
+      previousEdges: ConnectorEdge[],
+      nodes: ShapeNode[],
+      edges: ConnectorEdge[],
+      transientChanged: boolean,
+      previousVoting: VotingSession | null = null,
+      voting: VotingSession | null = null,
+    ): boolean {
+      if (transientChanged) {
+        pending ??= { nodes: previousNodes, edges: previousEdges, voting: previousVoting };
+        return false;
+      }
+      // A non-transient notification does not necessarily mean the gesture
+      // committed; unrelated UI/store updates can arrive while it is pending.
+      // The page resolves it only at the quiet checkpoint or before capture.
+      if (pending) return false;
+      return diagramPictureChanged(previousNodes, previousEdges, nodes, edges, previousVoting, voting);
+    },
+    checkPending,
+  };
 }
 
 /** The exact JSON written to `Diagram.data` — always stamped with a version. */
