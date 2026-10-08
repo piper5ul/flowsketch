@@ -2191,16 +2191,26 @@ test('a swatch tooltip never stands between the pointer and the swatch under it'
   await toolbar.getByRole('button', { name: 'Outline' }).click();
   await toolbar.getByRole('button', { name: 'Color' }).click();
 
-  // Hovering a bottom-row swatch opens its name above it, over the swatch in
-  // the row above. Moving up and clicking that swatch has to reach the swatch.
-  await page.getByRole('button', { name: 'mint-4' }).hover();
-  await expect(page.getByRole('tooltip', { name: 'mint-4' })).toBeVisible();
-  const above = await page.getByRole('button', { name: 'mint-3' }).boundingBox();
-  if (!above) throw new Error('mint-3 is not on screen');
+  // Hovering a bottom-row swatch names it, and the name sits above the whole
+  // picker, as Whimsical's does: never over a swatch. Moving up and clicking
+  // the swatch directly above the hovered one has to reach that swatch.
+  const hovered = page.getByRole('button', { name: 'Red', exact: true });
+  await hovered.hover();
+  const name = page.locator('.swatch-name');
+  await expect(name).toHaveText('Red');
+  const nameBox = await name.boundingBox();
+  const gridBox = await page.getByRole('group', { name: 'Colors' }).boundingBox();
+  if (!nameBox || !gridBox) throw new Error('the picker is not on screen');
+  expect(nameBox.y + nameBox.height).toBeLessThanOrEqual(gridBox.y);
+
+  const above = await page.getByRole('button', { name: 'Mint', exact: true }).boundingBox();
+  const hoveredBox = await hovered.boundingBox();
+  if (!above || !hoveredBox) throw new Error('the swatches are not on screen');
+  expect(above.x).toBeCloseTo(hoveredBox.x, 0);
   await page.mouse.click(above.x + above.width / 2, above.y + above.height / 2);
 
-  // `mint-3`'s stroke: Whimsical's mint shaded a fifth towards black.
-  await expect(shapeBox(shape)).toHaveCSS('border-color', 'rgb(21, 139, 127)');
+  // Mint, drawn as an outline: the border is the colour itself.
+  await expect(shapeBox(shape)).toHaveCSS('border-color', 'rgb(38, 175, 160)');
 });
 
 test('K opens the link editor for the selected shape', async ({ page }) => {
