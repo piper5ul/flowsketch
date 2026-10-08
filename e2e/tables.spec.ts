@@ -115,21 +115,64 @@ test('a pasted Markdown table becomes a table with a header row', async ({ page,
   ).toHaveClass(/bg-accent-500/);
 });
 
+test('plain paste leaves a single HTML cell alone and falls back to text for unsupported table HTML', async ({ page }) => {
+  await signUp(page);
+  await openEmptyBoard(page, 'Paste fall-through');
+
+  const dispatchPaste = (html: string, plainText: string) => page.evaluate(({ htmlText, text }) => {
+    const browser = globalThis as unknown as {
+      DataTransfer: new () => { setData(type: string, value: string): void };
+      ClipboardEvent: new (
+        type: string,
+        init: { bubbles: boolean; cancelable: boolean; clipboardData: object },
+      ) => { defaultPrevented: boolean };
+      dispatchEvent(event: object): boolean;
+    };
+    const clipboardData = new browser.DataTransfer();
+    clipboardData.setData('text/plain', text);
+    clipboardData.setData('text/html', htmlText);
+    const event = new browser.ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData,
+    });
+    browser.dispatchEvent(event);
+    return event.defaultPrevented;
+  }, { htmlText: html, text: plainText });
+
+  // A copied 1×1 Excel range is prose for the table parser, and the browser's
+  // ordinary paste remains available.
+  expect(await dispatchPaste('<table><tr><td>Only cell</td></tr></table>', 'Only cell')).toBe(false);
+  await expect(tableNode(page)).toHaveCount(0);
+
+  // A page-layout table is refused, then the valid TSV representation is used.
+  expect(await dispatchPaste(
+    '<table><tr><td>Logo <img src="logo.png" alt="Logo"></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>',
+    'Name\tRole\nAda\tMaths',
+  )).toBe(true);
+  await expect(tableNode(page).locator('tr')).toHaveCount(2);
+  for (const cell of ['Name', 'Role', 'Ada', 'Maths']) {
+    await expect(tableNode(page).getByText(cell, { exact: true })).toBeVisible();
+  }
+});
+
 test('pasting Excel HTML keeps cell formatting', async ({ page }) => {
   await signUp(page);
   await openEmptyBoard(page, 'Excel table formatting');
 
-  const plain = 'Metric\tAmount\nTransaction Value\t$0.12';
+  const plain = 'Metric\tAmount\nTransaction Value\t$0.12\nTotal\t$0.12';
   const html = `
     <html xmlns:o="urn:schemas-microsoft-com:office:office">
       <head><style>
         .xl65 { background: #203764; color: #FFFFFF; font-weight: 700; }
         .xl66 { font-weight: 700; }
+        .xl68 { background: yellow; color: windowtext; font-weight: 700; }
       </style></head>
       <body><table>
         <col width="180"><col width="100">
         <tr><td class="xl65">Metric</td><td class="xl65">Amount</td></tr>
         <tr><td class="xl66">Transaction Value</td><td>$0.12</td></tr>
+        <tr><td class="xl68">Total</td><td class="xl68">$0.12</td></tr>
       </table></body>
     </html>`;
 
@@ -168,4 +211,16 @@ test('pasting Excel HTML keeps cell formatting', async ({ page }) => {
       getComputedStyle(element: object): { fontWeight: string };
     }
   ).getComputedStyle(cell).fontWeight)).toBe('700');
+
+  const totalCell = tableNode(page).locator('tr').nth(2).locator('td').first();
+  await expect.poll(() => totalCell.evaluate((cell) => (
+    globalThis as unknown as {
+      getComputedStyle(element: object): { backgroundColor: string };
+    }
+  ).getComputedStyle(cell).backgroundColor)).toBe('rgb(255, 255, 0)');
+  await expect.poll(() => totalCell.locator('div').evaluate((label) => (
+    globalThis as unknown as {
+      getComputedStyle(element: object): { color: string };
+    }
+  ).getComputedStyle(label).color)).toBe('rgb(24, 26, 36)');
 });

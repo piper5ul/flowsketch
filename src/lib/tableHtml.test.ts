@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './table';
 import { parseTableHtml } from './tableHtml';
 import type { TableData } from '../types';
@@ -97,6 +97,58 @@ describe('parseTableHtml', () => {
     expect(parsed?.rows[1].styles?.[1]).toBeNull();
   });
 
+  it('resolves named colors deterministically without asking the DOM', () => {
+    const getComputedStyle = vi.spyOn(window, 'getComputedStyle').mockReturnValue({ color: '' } as CSSStyleDeclaration);
+    const createElement = vi.spyOn(document, 'createElement');
+    try {
+      const parsed = parseTableHtml(`
+        <table>
+          <tr><td style="background: yellow; color: white">Yellow</td><td style="color: Navy">Navy</td></tr>
+          <tr><td style="color: red">Red</td><td style="color: windowtext">Default</td></tr>
+          <tr><td style="color: window">Default window</td><td style="color: auto">Automatic</td></tr>
+        </table>`);
+
+      expect(parsed?.rows.map((row) => row.styles)).toEqual([
+        [{ fill: '#FFFF00', color: '#FFFFFF' }, { color: '#000080' }],
+        [{ color: '#FF0000' }, null],
+        [null, null],
+      ]);
+      expect(getComputedStyle).not.toHaveBeenCalled();
+      expect(createElement).not.toHaveBeenCalled();
+    } finally {
+      getComputedStyle.mockRestore();
+      createElement.mockRestore();
+    }
+  });
+
+  it('resolves opaque rgb() and rgba() values to the same stored hex format', () => {
+    const parsed = parseTableHtml(`
+      <table>
+        <tr><td style="color: rgb(0, 112, 192)">RGB</td><td style="color: rgba(0, 112, 192, 1)">RGBA</td></tr>
+        <tr><td style="color: rgb(100% 0% 0%)">Percent RGB</td><td style="color: rgba(0 0 255 / 100%)">Percent RGBA</td></tr>
+      </table>`);
+
+    expect(parsed?.rows.map((row) => row.styles)).toEqual([
+      [{ color: '#0070C0' }, { color: '#0070C0' }],
+      [{ color: '#FF0000' }, { color: '#0000FF' }],
+    ]);
+  });
+
+  it('keeps the yellow Total row from an Excel-style named-color fixture', () => {
+    const parsed = parseTableHtml(`
+      <html><head><style>.xlTotal { background: yellow; font-weight: 700; }</style></head>
+      <body><table>
+        <tr><td>Item</td><td>Amount</td></tr>
+        <tr><td class="xlTotal">Total</td><td class="xlTotal">$0.12</td></tr>
+      </table></body></html>`);
+
+    expect(parsed?.rows[1].cells).toEqual(['Total', '$0.12']);
+    expect(parsed?.rows[1].styles).toEqual([
+      { bold: true, fill: '#FFFF00' },
+      { bold: true, fill: '#FFFF00' },
+    ]);
+  });
+
   it('expands colspans, uses default widths, and falls back to text parsing for header choice', () => {
     const parsed = parseTableHtml('<table><col width="10"><tr><td>Value</td><td colspan="2">Note</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>');
     expect(parsed?.columns.map((column) => column.width)).toEqual([MIN_COLUMN_WIDTH, DEFAULT_COLUMN_WIDTH, DEFAULT_COLUMN_WIDTH]);
@@ -111,5 +163,31 @@ describe('parseTableHtml', () => {
 
   it('returns null when the clipboard HTML has no table', () => {
     expect(parseTableHtml('<p>Not a table</p>')).toBeNull();
+  });
+
+  it('returns null for a single copied spreadsheet cell', () => {
+    expect(parseTableHtml('<table><tr><td>Only cell</td></tr></table>')).toBeNull();
+  });
+
+  it('mirrors the text parser refusal for a single-row table', () => {
+    expect(parseTableHtml('<table><tr><td>Name</td><td>Role</td></tr></table>')).toBeNull();
+  });
+
+  it('mirrors the text parser refusal for a one-column table', () => {
+    expect(parseTableHtml('<table><tr><td>First</td></tr><tr><td>Second</td></tr></table>')).toBeNull();
+  });
+
+  it('requires at least two rows and two columns that contain text', () => {
+    expect(parseTableHtml('<table><tr><td>A</td><td></td></tr><tr><td>B</td><td></td></tr></table>')).toBeNull();
+    expect(parseTableHtml('<table><tr><td>A</td><td>B</td></tr><tr><td></td><td></td></tr></table>')).toBeNull();
+  });
+
+  it.each([
+    ['nested table', '<table><tr><td><table><tr><td>Nested</td><td>Grid</td></tr></table></td><td>Sidebar</td></tr><tr><td>Footer</td><td>Link</td></tr></table>'],
+    ['image', '<table><tr><td>Logo <img src="logo.png" alt="Logo"></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>'],
+    ['unordered list', '<table><tr><td><ul><li>First</li><li>Second</li></ul></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>'],
+    ['ordered list', '<table><tr><td><ol><li>First</li><li>Second</li></ol></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>'],
+  ])('returns null when table cells contain a %s', (_kind, html) => {
+    expect(parseTableHtml(html)).toBeNull();
   });
 });

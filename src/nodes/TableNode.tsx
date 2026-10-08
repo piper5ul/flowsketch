@@ -250,7 +250,7 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
                   const cellFill = cellStyle?.fill;
                   const cellTextColor = cellStyle?.color
                     ?? (cellFill
-                      ? (isDarkFill(cellFill) ? '#FFFFFF' : '#21232F')
+                      ? (isDarkFill(cellFill) ? '#FFFFFF' : 'var(--color-shape-ink)')
                       : data.textColor);
                   const fontWeight = cellStyle?.bold !== undefined
                     ? (cellStyle.bold ? 700 : 400)
