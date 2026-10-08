@@ -21,6 +21,7 @@
  * `nodenext` — see the note on `diagramMigrations.ts` in CLAUDE.md.
  */
 import type { ConnectorData, ShapeData } from '../types.js';
+import { sanitizeConnectorStyleValues, sanitizeShapeStyleValues } from './colorSafety.js';
 
 /**
  * The four things a board can hold a default for.
@@ -44,8 +45,9 @@ export const DEFAULT_STYLE_KIND_LABELS: Record<DefaultStyleKind, string> = {
 };
 
 /**
- * The style keys a shape's default keeps: the fill and outline, which of the
- * two is painted, and the whole of the label's typography. Deliberately not
+ * The style keys a shape's default keeps: the fill and outline, which look is
+ * painted, whether the inside is transparent, and the whole of the label's
+ * typography. Deliberately not
  * `shape` (a default says how a thing looks, never what it is), not `label`,
  * `link`, `locked`, `imageSrc` or `uploading`, and not width or height —
  * Whimsical's own default style is not a size either.
@@ -54,6 +56,7 @@ export const SHAPE_STYLE_KEYS = [
   'fill',
   'stroke',
   'fillStyle',
+  'transparent',
   'fontSize',
   'bold',
   'italic',
@@ -157,7 +160,10 @@ export function sanitizeDefaults(raw: unknown): BoardDefaults | undefined {
   for (const kind of DEFAULT_STYLE_KINDS) {
     const value = raw[kind];
     if (!isRecord(value)) continue;
-    const style = kind === 'connector' ? pickConnectorStyle(value) : pickShapeStyle(value);
+    const picked = kind === 'connector' ? pickConnectorStyle(value) : pickShapeStyle(value);
+    const style = kind === 'connector'
+      ? sanitizeConnectorStyleValues(picked)
+      : sanitizeShapeStyleValues(picked);
     if (Object.keys(style).length === 0) continue;
     // The cast is the union collapsing: `connector` took the connector branch.
     (out as Record<string, unknown>)[kind] = style;

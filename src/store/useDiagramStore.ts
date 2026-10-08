@@ -21,6 +21,7 @@ import type {
   InkPoint,
   ShapeData,
   ShapeKind,
+  SwatchColor,
   TableData,
   Tool,
 } from '../types';
@@ -41,7 +42,7 @@ import {
   labelPlaceholder,
   type WireComponent,
 } from '../lib/wireframe';
-import { DEFAULT_SWATCH } from '../lib/palette';
+import { DEFAULT_SWATCH, PALETTE, swatchPair } from '../lib/palette';
 import { makeEdgeData } from '../lib/defaults';
 import {
   kindOf,
@@ -79,7 +80,9 @@ import {
   isGroupNode,
   isInkNode,
   isTableNode,
+  isWireNode,
 } from '../lib/nodeKinds';
+import { resolveFillLook } from '../lib/shapeStyle';
 import { emptyTable, normalizeTable, tableSize } from '../lib/table';
 import {
   absolutePosition,
@@ -907,6 +910,7 @@ export interface DiagramState {
    */
   updateNodeDataTransient: (id: string, data: Partial<ShapeData>) => void;
   updateSelectedNodesStyle: (patch: Partial<Pick<ShapeData, 'fill' | 'stroke'>>) => void;
+  updateSelectedNodesColour: (swatch: SwatchColor) => void;
 
   updateEdgeData: (id: string, data: Partial<ConnectorData>) => void;
   updateSelectedEdgesStyle: (patch: Partial<ConnectorData>) => void;
@@ -1061,6 +1065,7 @@ export interface DiagramState {
   sendBackward: () => void;
   toggleLock: () => void;
   updateSelectedNodesData: (patch: Partial<ShapeData>) => void;
+  toggleSelectedNodesTransparent: () => void;
   /** `updateSelectedNodesData` without the history entry, for a slider drag. */
   updateSelectedNodesDataTransient: (patch: Partial<ShapeData>) => void;
   /** Redraws the selection as another kind of shape, keeping everything else. */
@@ -1790,9 +1795,9 @@ export function serializeDiagram(
   };
 }
 
-/** A sticky note's own colours, which no swatch and no board default supplies. */
-const STICKY_FILL = '#FBF3D0';
-const STICKY_STROKE = '#E9B10A';
+/** New sticky notes start from the palette's Yellow sticky pair. */
+const YELLOW_SWATCH = PALETTE.find((swatch) => swatch.id === 'yellow')!;
+const STICKY_DEFAULT = swatchPair(YELLOW_SWATCH, 'sticky');
 
 /**
  * How big a new shape of each kind is.
@@ -1832,7 +1837,7 @@ export const SHAPE_SIZES: Record<ShapeKind, { width: number; height: number }> =
  * its own paper; everything else starts on the default swatch.
  */
 function builtInShapeData(shape: ShapeKind): ShapeData {
-  if (shape === 'sticky') return { label: '', shape, fill: STICKY_FILL, stroke: STICKY_STROKE };
+  if (shape === 'sticky') return { label: '', shape, ...STICKY_DEFAULT };
   if (shape === 'text') return { label: '', shape, fill: 'transparent', stroke: 'transparent' };
   return { label: '', shape, fill: DEFAULT_SWATCH.fill, stroke: DEFAULT_SWATCH.stroke };
 }
@@ -2847,6 +2852,23 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     }));
   },
 
+  updateSelectedNodesColour: (swatch) => {
+    pushHistory(get());
+    set((s) => ({
+      nodes: s.nodes.map((node) => {
+        if (!node.selected || node.type === 'group' || node.data.shape === 'image') return node;
+        const pair = swatchPair(swatch, node.data.shape === 'sticky' ? 'sticky' : 'shape');
+        return { ...node, data: { ...node.data, ...pair } };
+      }),
+      // Like the style action, this is a session habit for the next element of
+      // each selected kind. Sticky notes keep their tinted palette fill.
+      lastStyle: kindsOf(s.nodes.filter((node) => node.selected)).reduce((acc, kind) => {
+        const pair = swatchPair(swatch, kind === 'sticky' ? 'sticky' : 'shape');
+        return withDefault(acc, kind, { ...acc?.[kind], ...pickShapeStyle(pair) }) ?? {};
+      }, s.lastStyle),
+    }));
+  },
+
   updateEdgeData: (id, data) => {
     const edge = get().edges.find((e) => e.id === id);
     if (!edge || (edge.data && isNoOpPatch(edge.data, data))) return;
@@ -3305,6 +3327,46 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       nodes: s.nodes.map((n) =>
         n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
       ),
+    }));
+  },
+
+  // Transparent toggles the inside without losing each node's look. A Fill
+  // node becomes tinted Outline as it clears its inside; Dash and legacy or
+  // tinted Outline nodes keep their stored look. The selection is exactly the
+  // subset the toolbar offers the fill controls for.
+  toggleSelectedNodesTransparent: () => {
+    const state = get();
+    const selected = state.nodes.filter(
+      (node) =>
+        node.selected &&
+        node.data.shape !== 'image' &&
+        !isContainerNode(node) &&
+        !isTableNode(node) &&
+        !isInkNode(node) &&
+        !isWireNode(node),
+    );
+    if (selected.length === 0) return;
+
+    const allTransparent = selected.every((node) => node.data.transparent === true);
+    const makeTransparent = !allTransparent;
+    const selectedIds = new Set(selected.map((node) => node.id));
+    pushHistory(state);
+    set((s) => ({
+      nodes: s.nodes.map((node) => {
+        if (!selectedIds.has(node.id)) return node;
+        const fillStyle =
+          makeTransparent && resolveFillLook(node.data) === 'fill'
+            ? 'tinted'
+            : node.data.fillStyle;
+        return {
+          ...node,
+          data: {
+            ...node.data,
+            ...(makeTransparent ? { fillStyle } : {}),
+            transparent: makeTransparent,
+          },
+        };
+      }),
     }));
   },
 

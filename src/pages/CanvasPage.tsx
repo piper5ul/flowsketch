@@ -63,6 +63,16 @@ export function CanvasPage() {
   const viewerId = session?.user.id ?? null;
   /** The diagram whose image backfill has already been started on this page. */
   const backfilled = useRef<string | null>(null);
+  const flushBoardRef = useRef<() => Promise<boolean>>(async () => true);
+  const flushTitleRef = useRef<() => Promise<boolean>>(async () => true);
+
+  const beforeSignOut = useCallback(async () => {
+    const boardSaved = bound
+      ? await useDiagramStore.getState().saveDiagram() === 'saved'
+      : await flushBoardRef.current();
+    if (!boardSaved) return false;
+    return flushTitleRef.current();
+  }, [bound]);
 
   // A 401 elsewhere in the app means "go and sign in"; here it means "the edits
   // on screen have nowhere to go yet", and navigating would be what loses them.
@@ -346,9 +356,11 @@ export function CanvasPage() {
   useEffect(() => {
     if (loading || loadError || !id || readOnly || bound) return;
 
+    let latestOutcome: string | null = null;
     const autosaver = createAutosaver({
       save: async () => {
         const outcome = await useDiagramStore.getState().saveDiagram();
+        latestOutcome = outcome;
         // Neither a conflict nor an expired session is transient: another
         // attempt would be refused in exactly the same way, so the autosaver
         // stands down and the banner (or the re-auth dialog) takes over. It is
@@ -370,6 +382,14 @@ export function CanvasPage() {
         if (state === 'retrying' || state === 'error') useDiagramStore.setState({ saveStatus: state });
       },
     });
+
+    const flushPendingBoard = async () => {
+      if (!autosaver.isPending()) return true;
+      latestOutcome = null;
+      await autosaver.flush();
+      return latestOutcome === 'saved' && !autosaver.isPending();
+    };
+    flushBoardRef.current = flushPendingBoard;
 
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
       // A pan is a change worth saving on its own — the viewport is stored with
@@ -402,6 +422,7 @@ export function CanvasPage() {
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       unsubscribe();
+      if (flushBoardRef.current === flushPendingBoard) flushBoardRef.current = async () => true;
       // Navigating away inside the debounce window must not drop the edit —
       // and a diagram that binds while a save is pending flushes it here, which
       // is what carries the last unsynced JSON edit into the document's world.
@@ -415,26 +436,54 @@ export function CanvasPage() {
   // sends a metadata-only PUT.
   useEffect(() => {
     if (loading || loadError || !id || readOnly) return;
-    let prevTitle = useDiagramStore.getState().title;
+    let latestTitle = useDiagramStore.getState().title;
+    let pending = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight: Promise<boolean> | null = null;
+
+    const flushPendingTitle = async (): Promise<boolean> => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (inFlight && !(await inFlight)) return false;
+      if (!pending) return true;
+
+      pending = false;
+      const title = latestTitle;
+      const request = api.saveDiagram(id, { title })
+        .then((result) => {
+          if (result?.updatedAt) useDiagramStore.getState().noteSaved(result.updatedAt);
+          return true;
+        })
+        .catch(() => {
+          pending = true;
+          return false;
+        });
+      inFlight = request;
+      const saved = await request;
+      if (inFlight === request) inFlight = null;
+      if (!saved) return false;
+      return pending ? flushPendingTitle() : true;
+    };
+    flushTitleRef.current = flushPendingTitle;
 
     const unsubscribe = useDiagramStore.subscribe((state) => {
-      if (state.title === prevTitle) return;
-      prevTitle = state.title;
+      if (state.title === latestTitle) return;
+      latestTitle = state.title;
+      pending = true;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
+        timer = null;
         if (useDiagramStore.getState().diagramId !== id) return;
-        void api.saveDiagram(id, { title: useDiagramStore.getState().title });
+        void flushPendingTitle();
       }, 1000);
     });
 
     return () => {
       unsubscribe();
       if (timer) clearTimeout(timer);
-      // Flush a pending title save on unmount.
-      if (useDiagramStore.getState().title !== prevTitle && useDiagramStore.getState().diagramId === id) {
-        void api.saveDiagram(id, { title: useDiagramStore.getState().title });
-      }
+      if (flushTitleRef.current === flushPendingTitle) flushTitleRef.current = async () => true;
+      // Leave a pending database-column update on the wire before the page goes.
+      if (pending || inFlight) void flushPendingTitle();
     };
   }, [loading, loadError, id, readOnly]);
 
@@ -468,7 +517,7 @@ export function CanvasPage() {
     <TooltipProvider>
       <ReactFlowProvider>
         <div className="h-screen w-screen overflow-hidden">
-          <Canvas />
+          <Canvas beforeSignOut={beforeSignOut} />
           {(saveStatus === 'unauthorized' || authFailed) && (
             // `session` is the one that just expired: better-auth keeps the
             // last response it read, so the address is usually still there to

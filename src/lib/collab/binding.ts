@@ -65,6 +65,7 @@ import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
 import { sanitizeThumbnailIds } from '../boardThumbnail';
 import { sanitizeVotingSession } from '../voting';
 import { sanitizeTimer } from '../timer';
+import { sanitizeConnectorData, sanitizeShapeData } from '../colorSafety';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -349,7 +350,10 @@ export function docNodesOntoStore(
   return normalizeParentage(
     serialized.map((node) => {
       const previous = byId.get(node.id);
-      const next = { ...node } as unknown as ShapeNode;
+      const next = {
+        ...node,
+        data: sanitizeShapeData(node.data, node.type),
+      } as unknown as ShapeNode;
       if (!previous) return next;
       return {
         ...next,
@@ -368,7 +372,10 @@ export function docEdgesOntoStore(
 ): ConnectorEdge[] {
   const byId = new Map(existing.map((edge) => [edge.id, edge]));
   return serialized.map((edge) => {
-    const next = { ...edge } as unknown as ConnectorEdge;
+    const next = {
+      ...edge,
+      data: sanitizeConnectorData(edge.data),
+    } as unknown as ConnectorEdge;
     const previous = byId.get(edge.id);
     return previous ? { ...next, selected: previous.selected } : next;
   });

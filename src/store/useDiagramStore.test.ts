@@ -20,7 +20,7 @@ import {
   setCell,
   setColumnWidth,
 } from '../lib/table';
-import { DEFAULT_SWATCH } from '../lib/palette';
+import { DEFAULT_SWATCH, PALETTE } from '../lib/palette';
 import { WIRE_FILL, WIRE_STROKE, defaultSizeOf } from '../lib/wireframe';
 import type { InkPoint } from '../types';
 import {
@@ -77,7 +77,7 @@ describe('addShape', () => {
   it('gives sticky notes and text their own fixed styling', () => {
     const stickyId = store().addShape('sticky', { x: 0, y: 0 });
     const sticky = store().nodes.find((n) => n.id === stickyId)!;
-    expect(sticky.data).toMatchObject({ fill: '#FBF3D0', stroke: '#E9B10A' });
+    expect(sticky.data).toMatchObject({ fill: '#FBF1D3', stroke: '#F0C54F' });
 
     const textId = store().addShape('text', { x: 0, y: 0 });
     const text = store().nodes.find((n) => n.id === textId)!;
@@ -1761,6 +1761,95 @@ describe('updateSelectedNodesStyle', () => {
   });
 });
 
+describe('updateSelectedNodesColour', () => {
+  it('applies palette pairs to selected shapes and stickies as one undoable edit', () => {
+    const rectangle = store().addShape('rectangle', { x: 0, y: 0 });
+    const sticky = store().addShape('sticky', { x: 200, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 40, height: 40, position: { x: 400, y: 0 } });
+    const firstMember = store().addShape('rectangle', { x: 600, y: 0 });
+    const secondMember = store().addShape('rectangle', { x: 800, y: 0 });
+    select(firstMember, secondMember);
+    store().groupSelected();
+    const group = store().nodes.find((node) => node.type === 'group')!;
+
+    select(rectangle, sticky, image, group.id);
+    const before = new Map(store().nodes.map((node) => [node.id, { ...node.data }]));
+    const blue = PALETTE.find((swatch) => swatch.id === 'blue')!;
+
+    store().updateSelectedNodesColour(blue);
+
+    expect(store().nodes.find((node) => node.id === rectangle)!.data).toMatchObject({
+      fill: blue.fill,
+      stroke: blue.stroke,
+    });
+    expect(store().nodes.find((node) => node.id === sticky)!.data).toMatchObject({
+      fill: blue.sticky,
+      stroke: blue.stroke,
+    });
+    expect(store().nodes.find((node) => node.id === image)!.data).toEqual(before.get(image));
+    expect(store().nodes.find((node) => node.id === group.id)!.data).toEqual(before.get(group.id));
+    expect(store().newShapeData('rectangle')).toMatchObject({ fill: blue.fill, stroke: blue.stroke });
+    expect(store().newShapeData('sticky')).toMatchObject({ fill: blue.sticky, stroke: blue.stroke });
+
+    store().undo();
+
+    expect(store().nodes.find((node) => node.id === rectangle)!.data).toEqual(before.get(rectangle));
+    expect(store().nodes.find((node) => node.id === sticky)!.data).toEqual(before.get(sticky));
+  });
+});
+
+describe('toggleSelectedNodesTransparent', () => {
+  it('keeps each selected look while making a mixed Fill/Dash selection transparent, and undoes once', () => {
+    const fill = store().addShape('rectangle', { x: 0, y: 0 });
+    const dash = store().addShape('star', { x: 200, y: 0 });
+    store().updateNodeData(dash, { fillStyle: 'dashed' });
+    select(fill, dash);
+    const before = new Map(
+      store().nodes.map((node) => [node.id, { ...node.data }]),
+    );
+
+    store().toggleSelectedNodesTransparent();
+
+    expect(store().nodes.find((node) => node.id === fill)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    expect(store().nodes.find((node) => node.id === dash)!.data).toMatchObject({
+      fillStyle: 'dashed',
+      transparent: true,
+    });
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === fill)!.data).toEqual(before.get(fill));
+    expect(store().nodes.find((node) => node.id === dash)!.data).toEqual(before.get(dash));
+  });
+
+  it('turns Transparent off in one undoable edit and restores it on undo', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    const original = { ...store().nodes.find((node) => node.id === id)!.data };
+
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: false,
+    });
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toEqual(original);
+  });
+});
+
 describe('updateSelectedNodesData', () => {
   it('formats every selected shape at once', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
@@ -1838,6 +1927,18 @@ describe('updateSelectedNodesData', () => {
 
     store().undo();
     expect(store().nodes.map((n) => n.data.fillStyle)).toEqual(['outline', 'outline']);
+  });
+
+  it.each(['tinted', 'dashed'] as const)('undo restores the stored pair after the %s look', (fillStyle) => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    const before = { ...store().nodes.find((node) => node.id === id)!.data };
+
+    store().updateSelectedNodesData({ fillStyle });
+    expect(store().nodes.find((node) => node.id === id)!.data.fillStyle).toBe(fillStyle);
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toEqual(before);
   });
 
   it('leaves an image out of a fill-style change, as it has no fill to style', () => {
@@ -3170,6 +3271,7 @@ describe('layoutSelected', () => {
 describe('pasteAsStickies', () => {
   const origin = { x: 200, y: 120 };
   const stickies = () => store().nodes.filter((n) => n.data.shape === 'sticky');
+  const yellow = PALETTE.find((swatch) => swatch.id === 'yellow')!;
 
   it('makes one selected note per line, at the sticky note\'s own size and colour', () => {
     const ids = store().pasteAsStickies('- milk\n- eggs\n- bread', origin);
@@ -3182,7 +3284,7 @@ describe('pasteAsStickies', () => {
         width: 160,
         height: 160,
         selected: true,
-        data: { shape: 'sticky', fill: '#FBF3D0', stroke: '#E9B10A' },
+        data: { shape: 'sticky', fill: yellow.sticky, stroke: yellow.stroke },
       });
     }
     expect(stickies().map((n) => n.data.label)).toEqual(['milk', 'eggs', 'bread']);

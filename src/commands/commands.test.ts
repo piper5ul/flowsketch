@@ -101,6 +101,64 @@ describe('the read-only gate', () => {
   });
 });
 
+describe('copy and paste style commands', () => {
+  const copy = registry.find('style.copy')!;
+  const paste = registry.find('style.paste')!;
+
+  it('copies the selected shape look, including its fill style and transparency', () => {
+    const clipboard: { value: Record<string, unknown> | null } = { value: null };
+    const ctx = {
+      store: {
+        getState: () => ({
+          nodes: [{
+            id: 'n1',
+            selected: true,
+            data: {
+              fill: '#FF0000',
+              stroke: '#880000',
+              fillStyle: 'dashed',
+              transparent: true,
+              fontSize: 20,
+              bold: true,
+              label: 'not a style',
+            },
+          }],
+        }),
+      },
+      styleClipboard: {
+        get: () => clipboard.value,
+        set: (value: Record<string, unknown>) => { clipboard.value = value; },
+      },
+    } as unknown as CommandContext;
+
+    copy.run(ctx);
+
+    expect(clipboard.value).toEqual({
+      fill: '#FF0000',
+      stroke: '#880000',
+      fillStyle: 'dashed',
+      transparent: true,
+      fontSize: 20,
+      bold: true,
+    });
+  });
+
+  it('is offered only when the style clipboard has a value', () => {
+    const clipboard: { value: Record<string, unknown> | null } = { value: null };
+    const ctx = {
+      store: { getState: () => ({ readOnly: false }) },
+      styleClipboard: {
+        get: () => clipboard.value,
+        set: (value: Record<string, unknown>) => { clipboard.value = value; },
+      },
+    } as unknown as CommandContext;
+
+    expect(paste.when!(ctx)).toBe(false);
+    clipboard.value = { fill: '#FF0000' };
+    expect(paste.when!(ctx)).toBe(true);
+  });
+});
+
 describe('the save-as-default command', () => {
   const command = registry.find('style.saveDefault')!;
 

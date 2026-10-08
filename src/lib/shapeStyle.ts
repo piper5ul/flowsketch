@@ -1,24 +1,18 @@
 /**
- * How a shape is painted: what fills its silhouette and what (if anything)
- * outlines it. A filled shape wears no outline and no shadow — the board's
- * grey (`--canvas`) is what a white shape stands out against, the way
- * Whimsical's does — so the drawing stays flat.
- *
- * A shape carries a `fill` *and* a `stroke` — the palette hands out both as one
- * swatch — but only one of them is drawn at a time. `fillStyle` says which:
- * `'filled'` (the default, and what an absent field means) paints the fill and
- * no outline at all, `'outline'` paints white behind the label and draws the
- * stroke around it. Nothing rewrites the stored pair, so toggling back and
- * forth is lossless and no diagram had to be migrated for the field to exist.
- *
- * This is the pure half — `ShapeNode` renders what it returns and holds no
- * opinion of its own about which colour goes where.
+ * The pure paint resolver shared by the node renderer and toolbar. It keeps
+ * legacy `outline` shapes white while new Outline and Dash looks tint the
+ * shape's stored fill; `transparent` can clear any look's inside without
+ * changing its border.
  */
 import type { FillStyle, ShapeData } from '../types';
+import { isHex6, mix, TINT_AMOUNT } from './palette';
 import { isAnchorNode } from './nodeKinds';
 
-/** What an outline shape puts behind its label. */
+/** What a legacy outline shape puts behind its label. */
 export const OUTLINE_FILL = '#FFFFFF';
+
+/** The SVG dash rhythm; CSS boxes use `border-style: dashed`. */
+export const DASH_ARRAY = '5 4';
 
 /**
  * The line across a filled cylinder's shoulder. A cylinder is the one shape
@@ -28,11 +22,31 @@ export const OUTLINE_FILL = '#FFFFFF';
  */
 export const CYLINDER_SEAM = 'rgba(20, 20, 40, 0.14)';
 
-type PaintData = Pick<ShapeData, 'shape' | 'fill' | 'stroke' | 'fillStyle'>;
+type PaintData = Pick<ShapeData, 'shape' | 'fill' | 'stroke' | 'fillStyle' | 'transparent'>;
 
-/** `'filled'` unless the shape says otherwise — an absent field is the default. */
+/** Unknown or absent values stay Fill so hand-edited JSON remains renderable. */
 export function resolveFillStyle(data: Pick<ShapeData, 'fillStyle'>): FillStyle {
-  return data.fillStyle === 'outline' ? 'outline' : 'filled';
+  switch (data.fillStyle as string | undefined) {
+    case 'outline':
+      return 'outline';
+    case 'tinted':
+      return 'tinted';
+    case 'dashed':
+      return 'dashed';
+    case 'filled':
+    default:
+      return 'filled';
+  }
+}
+
+export type FillLook = 'fill' | 'outline' | 'dash';
+
+/** Maps stored looks to the three buttons shown by the toolbar. */
+export function resolveFillLook(data: Pick<ShapeData, 'fillStyle'>): FillLook {
+  const style = resolveFillStyle(data);
+  if (style === 'dashed') return 'dash';
+  if (style === 'outline' || style === 'tinted') return 'outline';
+  return 'fill';
 }
 
 export interface ShapePaint {
@@ -40,20 +54,35 @@ export interface ShapePaint {
   fill: string;
   /** The outline's colour, or `null` when the shape wears none. */
   stroke: string | null;
+  /** Whether the stroke is rendered dashed. */
+  dashed: boolean;
 }
 
-/**
- * What to paint a shape with.
- *
- * Two kinds answer for themselves whatever the field says. A floating arrow's
- * endpoint is a 1×1 node with a transparent fill *and* stroke (see
- * `isAnchorNode`), and giving it a white box would put a speck on the board
- * that nothing selected; a text shape draws no outline at all, and a white
- * background behind it would be a box the user never asked for.
- */
+function tintedFill(fill: unknown): string {
+  return isHex6(fill) ? mix(fill, '#FFFFFF', TINT_AMOUNT) : OUTLINE_FILL;
+}
+
+/** Resolve the shape's stored look into the fill and border the renderer draws. */
 export function shapePaint(data: PaintData): ShapePaint {
-  if (isAnchorNode(data)) return { fill: 'transparent', stroke: null };
-  if (data.shape === 'text' || data.shape === 'image') return { fill: data.fill, stroke: null };
-  if (resolveFillStyle(data) === 'outline') return { fill: OUTLINE_FILL, stroke: data.stroke };
-  return { fill: data.fill, stroke: null };
+  if (isAnchorNode(data)) return { fill: 'transparent', stroke: null, dashed: false };
+  if (data.shape === 'text' || data.shape === 'image') {
+    return { fill: data.fill, stroke: null, dashed: false };
+  }
+
+  const style = resolveFillStyle(data);
+  let fill = data.fill;
+  let stroke: string | null = null;
+  let dashed = false;
+
+  if (style === 'outline') {
+    fill = OUTLINE_FILL;
+    stroke = data.stroke;
+  } else if (style === 'tinted' || style === 'dashed') {
+    fill = tintedFill(data.fill);
+    stroke = data.stroke;
+    dashed = style === 'dashed';
+  }
+
+  if (data.transparent === true) fill = 'transparent';
+  return { fill, stroke, dashed };
 }

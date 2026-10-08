@@ -80,7 +80,7 @@ function ThemeButton({ preference, onClick }: { preference: ThemePreference; onC
   );
 }
 
-export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void }) {
+export function BottomBar({ onRunCommand, showTheme }: { onRunCommand: (id: string) => void; showTheme: boolean }) {
   const undo = useDiagramStore((s) => s.undo);
   const redo = useDiagramStore((s) => s.redo);
   const canUndo = useDiagramStore((s) => s.canUndo);
@@ -138,7 +138,7 @@ export function BottomBar({ onRunCommand }: { onRunCommand: (id: string) => void
         <IconButton onClick={run('view.toggleGridSnap')} label="Snap to grid" pressed={gridSnap}>
           <Grid3x3 size={16} />
         </IconButton>
-        <ThemeButton preference={theme} onClick={run('view.toggleTheme')} />
+        {showTheme && <ThemeButton preference={theme} onClick={run('view.toggleTheme')} />}
       </div>
       <div className="pointer-events-auto flex items-center rounded-2xl bg-panel/95 p-1 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <IconButton onClick={run('view.shortcuts')} label="Keyboard shortcuts">
