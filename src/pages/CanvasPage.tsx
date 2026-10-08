@@ -6,7 +6,7 @@ import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useCollabStore } from '../store/useCollabStore';
-import { useDiagramStore } from '../store/useDiagramStore';
+import { diagramPictureChanged, useDiagramStore } from '../store/useDiagramStore';
 import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
@@ -17,6 +17,7 @@ import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
 import { toastError } from '../store/useToastStore';
 
 const AUTOSAVE_DELAY_MS = 2000;
+const THUMBNAIL_TRANSIENT_QUIET_MS = 500;
 
 export function CanvasPage() {
   const { id } = useParams<{ id: string }>();
@@ -205,7 +206,10 @@ export function CanvasPage() {
     // store it as A's thumbnail. Both ends of the capture check the store still
     // holds this diagram.
     const isCurrent = () => useDiagramStore.getState().diagramId === id;
+    let pointerDown = false;
+    let lastTransientAt = Number.NEGATIVE_INFINITY;
     const thumbnails = createThumbnailScheduler({
+      isBusy: () => pointerDown || Date.now() - lastTransientAt < THUMBNAIL_TRANSIENT_QUIET_MS,
       render: () => {
         if (!isCurrent()) return Promise.resolve(null);
         // A custom thumbnail names shapes, and a shape can be deleted while its
@@ -233,28 +237,54 @@ export function CanvasPage() {
       },
     });
 
+    const onPointerDown = () => {
+      pointerDown = true;
+      thumbnails.notifyInput();
+    };
+    const onPointerEnd = () => {
+      pointerDown = false;
+      thumbnails.notifyInput();
+    };
+    const onBlur = () => {
+      pointerDown = false;
+      thumbnails.notifyInput();
+    };
+    const onWheel = () => thumbnails.notifyInput();
+    const onKeyDown = () => thumbnails.notifyInput('keyboard');
+
+    window.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerEnd);
+    window.addEventListener('pointercancel', onPointerEnd);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('wheel', onWheel);
+    window.addEventListener('keydown', onKeyDown);
+
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
+      if (state.transientSeq !== prev.transientSeq) lastTransientAt = Date.now();
       // Neither a retitle nor a pan changes the picture, so only shape edits —
       // and a change of *which* shapes the card is drawn from — mark the
       // thumbnail stale.
       if (state.thumbnailNodeIds !== prev.thumbnailNodeIds) {
-        // Captured at once rather than within the interval: this one is a
-        // command the user just ran, and a card that goes on showing the old
-        // picture for another half a minute reads as a menu item that did
-        // nothing. `markDirty` first, because `flush` only captures what is
-        // pending. Safe inside a subscription — the capture preserves the
-        // selection, so it writes nothing back to this store.
-        thumbnails.markDirty();
-        void thumbnails.flush();
+        // Bypass the interval for this explicit command, but let the scheduler
+        // wait until the canvas is idle and input has gone quiet.
+        thumbnails.markDirty({ urgent: true });
         return;
       }
-      if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
+      if (diagramPictureChanged(prev.nodes, prev.edges, state.nodes, state.edges)) {
+        thumbnails.markDirty();
+      }
     });
 
     void runImageBackfill(id);
 
     return () => {
       unsubscribe();
+      window.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerEnd);
+      window.removeEventListener('pointercancel', onPointerEnd);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKeyDown);
       // Best-effort: the capture reads the live canvas, so it only produces a
       // thumbnail while the viewport is still mounted. `renderDiagramPng`
       // returns null once it is gone, which the scheduler treats as "nothing

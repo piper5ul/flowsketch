@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
+import {
+  computeMarkers,
+  diagramPictureChanged,
+  serializeDiagram,
+  useDiagramStore,
+  type ConnectorEdge,
+  type ShapeNode,
+} from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
 import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
@@ -1982,6 +1989,129 @@ describe('serializeDiagram', () => {
     store().addConnectedShape(a, 'right');
     const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges)));
     expect(migrateDiagramData(saved)).toEqual(saved);
+  });
+});
+
+describe('diagramPictureChanged', () => {
+  const node = (overrides: Record<string, unknown> = {}) => ({
+    id: 'node-1',
+    type: 'shape',
+    position: { x: 10, y: 20 },
+    width: 180,
+    height: 100,
+    data: { shape: 'rectangle', label: 'Start', fill: '#ffffff', stroke: '#111111' },
+    ...overrides,
+  }) as unknown as ShapeNode;
+
+  const edge = (overrides: Record<string, unknown> = {}) => ({
+    id: 'edge-1',
+    source: 'node-1',
+    target: 'node-2',
+    type: 'connector',
+    sourceHandle: 'right',
+    targetHandle: 'left',
+    zIndex: 0,
+    data: { connectorType: 'straight', stroke: '#111111', strokeStyle: 'solid', label: '' },
+    ...overrides,
+  }) as unknown as ConnectorEdge;
+
+  it('ignores React Flow selection, measurement and dragging state', () => {
+    const nodes = [node()];
+    const edges = [edge()];
+    const transientNodes = [node({
+      selected: true,
+      dragging: true,
+      measured: { width: 220, height: 120 },
+    })];
+    const selectedEdges = [edge({ selected: true })];
+
+    expect(diagramPictureChanged(nodes, edges, transientNodes, selectedEdges)).toBe(false);
+  });
+
+  it('marks label, committed position and fill changes dirty', () => {
+    const nodes = [node()];
+    const edges: ConnectorEdge[] = [];
+
+    expect(diagramPictureChanged(nodes, edges, [node({ data: { ...nodes[0].data, label: 'Finish' } })], edges)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, [node({ position: { x: 11, y: 20 } })], edges)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, [node({ data: { ...nodes[0].data, fill: '#ff0000' } })], edges)).toBe(true);
+  });
+
+  it('marks edge addition and removal dirty', () => {
+    const nodes: ShapeNode[] = [];
+    const edges: ConnectorEdge[] = [];
+    const withEdge = [edge()];
+
+    expect(diagramPictureChanged(nodes, edges, nodes, withEdge)).toBe(true);
+    expect(diagramPictureChanged(nodes, withEdge, nodes, edges)).toBe(true);
+  });
+
+  it('skips unchanged array references and reuses each reference’s serialized key', () => {
+    let positionReads = 0;
+    const countedNode = {
+      id: 'counted',
+      type: 'shape',
+      get position() {
+        positionReads += 1;
+        return { x: 0, y: 0 };
+      },
+      width: 100,
+      height: 60,
+      data: { shape: 'rectangle', label: 'Counted', fill: '#ffffff', stroke: '#111111' },
+    } as unknown as ShapeNode;
+    const nodes = [countedNode];
+    const changed = [node({ id: 'changed' })];
+    const edges: ConnectorEdge[] = [];
+
+    expect(diagramPictureChanged(nodes, edges, changed, edges)).toBe(true);
+    const readsAfterFirstCompare = positionReads;
+    expect(readsAfterFirstCompare).toBe(1);
+
+    expect(diagramPictureChanged(nodes, edges, changed, edges)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, nodes, edges)).toBe(false);
+    expect(positionReads).toBe(readsAfterFirstCompare);
+
+    let sourceReads = 0;
+    const countedEdge = {
+      id: 'counted-edge',
+      get source() {
+        sourceReads += 1;
+        return 'node-1';
+      },
+      target: 'node-2',
+      type: 'connector',
+      data: {},
+    } as unknown as ConnectorEdge;
+    const edgeList = [countedEdge];
+    const changedEdgeList = [edge({ id: 'changed-edge' })];
+    expect(diagramPictureChanged(nodes, edgeList, nodes, changedEdgeList)).toBe(true);
+    expect(sourceReads).toBe(1);
+    expect(diagramPictureChanged(nodes, edgeList, nodes, changedEdgeList)).toBe(true);
+    expect(sourceReads).toBe(1);
+  });
+
+  it('measures checks on a 500-node diagram', () => {
+    const nodes = Array.from({ length: 500 }, (_, index) => node({
+      id: `node-${index}`,
+      position: { x: index * 12, y: index * 7 },
+      data: { shape: 'rectangle', label: `Node ${index}`, fill: '#ffffff', stroke: '#111111' },
+    }));
+    const edges: ConnectorEdge[] = [];
+    const samples = 25;
+    const variants = Array.from({ length: samples }, (_, sample) => nodes.map((current, index) => index === 0
+      ? node({ ...current, data: { ...current.data, label: `Updated ${sample}` } })
+      : current));
+    const started = performance.now();
+    let dirtyCount = 0;
+
+    for (const changed of variants) {
+      if (diagramPictureChanged(nodes, edges, changed, edges)) dirtyCount += 1;
+    }
+
+    const millisecondsPerCheck = (performance.now() - started) / samples;
+    console.info(`diagramPictureChanged: 500 nodes, ${millisecondsPerCheck.toFixed(3)} ms/check (25 fresh arrays)`);
+    expect(dirtyCount).toBe(samples);
+    expect(millisecondsPerCheck).toBeGreaterThanOrEqual(0);
   });
 });
 

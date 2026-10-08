@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type Request } from '@playwright/test';
 
 async function signUp(page: Page, name = 'E2E User') {
   const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
@@ -39,6 +39,21 @@ test('a shape can be set as the board thumbnail, and removed again', async ({ pa
     return ((await r.json()) as { id: string }).id;
   });
 
+  const thumbnailPuts: string[] = [];
+  const isThumbnailPut = (request: Request) => {
+    const url = new URL(request.url());
+    if (request.method() !== 'PUT' || url.pathname !== `/api/diagrams/${id}`) return false;
+    try {
+      const body = request.postDataJSON() as { thumbnail?: unknown };
+      return typeof body.thumbnail === 'string';
+    } catch {
+      return false;
+    }
+  };
+  page.on('request', (request) => {
+    if (isThumbnailPut(request)) thumbnailPuts.push(request.url());
+  });
+
   // The stored thumbnail's pixel size. PNG dimensions live in the IHDR chunk:
   // width at bytes 16-19, height at 20-23 — the same read as the export-options
   // test in `diagram.spec.ts`, done on the data URL the row holds.
@@ -54,10 +69,33 @@ test('a shape can be set as the board thumbnail, and removed again', async ({ pa
   await page.goto(`/d/${id}`);
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
 
-  // Selecting a shape is an edit to `nodes`, which is what marks the thumbnail
-  // stale; the first capture is taken straight away.
+  // Let initial load settle past the 2s keyboard quiet period. Loading an
+  // unchanged board must not write a thumbnail.
+  await page.waitForTimeout(2_500);
+  expect(thumbnailPuts).toHaveLength(0);
+
+  // Selection changes no pixels, so it also must not write a thumbnail. The
+  // observation window exceeds the scheduler's 2s keyboard quiet period, giving
+  // any mistakenly scheduled capture time to reach the request listener.
   const shape = page.locator('[data-id="a"]');
   await shape.click();
+  await page.waitForTimeout(2_500);
+  expect(thumbnailPuts).toHaveLength(0);
+
+  // A committed label edit changes the rendered board, so exactly one
+  // thumbnail write should follow after keyboard input has gone quiet.
+  const labelEditPut = page.waitForRequest(isThumbnailPut);
+  await shape.dblclick();
+  await expect(shape.locator('[contenteditable="true"]')).toBeFocused();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Edited label');
+  await page.keyboard.press('Escape');
+  await expect(shape).toContainText('Edited label');
+  await labelEditPut;
+  // Allow a full quiet-period window after the first write to catch duplicates.
+  await page.waitForTimeout(2_500);
+  expect(thumbnailPuts).toHaveLength(1);
+
   // 1380 px of board scaled down to the 480 px thumbnail limit.
   await expect.poll(thumbnailWidth, { timeout: 20_000 }).toBeGreaterThan(400);
 

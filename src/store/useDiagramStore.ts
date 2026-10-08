@@ -1640,6 +1640,44 @@ function serializeEdges(edges: ConnectorEdge[]) {
   }));
 }
 
+const serializedNodeKeys = new WeakMap<ShapeNode[], string>();
+const serializedEdgeKeys = new WeakMap<ConnectorEdge[], string>();
+
+function serializedNodeKey(nodes: ShapeNode[]): string {
+  let key = serializedNodeKeys.get(nodes);
+  if (key === undefined) {
+    key = JSON.stringify(serializeNodes(nodes));
+    serializedNodeKeys.set(nodes, key);
+  }
+  return key;
+}
+
+function serializedEdgeKey(edges: ConnectorEdge[]): string {
+  let key = serializedEdgeKeys.get(edges);
+  if (key === undefined) {
+    key = JSON.stringify(serializeEdges(edges));
+    serializedEdgeKeys.set(edges, key);
+  }
+  return key;
+}
+
+/**
+ * Whether an immutable store update changed the diagram JSON that feeds its
+ * board picture. React Flow's selection, measured size and drag state are left
+ * out by the same serializers `serializeDiagram` uses for saves.
+ */
+export function diagramPictureChanged(
+  previousNodes: ShapeNode[],
+  previousEdges: ConnectorEdge[],
+  nodes: ShapeNode[],
+  edges: ConnectorEdge[],
+): boolean {
+  if (previousNodes === nodes && previousEdges === edges) return false;
+  if (previousNodes !== nodes && serializedNodeKey(previousNodes) !== serializedNodeKey(nodes)) return true;
+  if (previousEdges !== edges && serializedEdgeKey(previousEdges) !== serializedEdgeKey(edges)) return true;
+  return false;
+}
+
 /** The exact JSON written to `Diagram.data` — always stamped with a version. */
 export function serializeDiagram(
   nodes: ShapeNode[],
