@@ -724,3 +724,10 @@ a:focus-visible {
     animation: none;
   }
 }
+
+/* A tooltip is a label, never a target (see `Tooltip.tsx`). Radix positions it
+   inside a wrapper of its own, and that wrapper is a box the pointer can hit
+   just as well as the tooltip itself, so both have to let a click through. */
+[data-radix-popper-content-wrapper]:has(> .app-tooltip) {
+  pointer-events: none;
+}

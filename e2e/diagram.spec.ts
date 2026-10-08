@@ -2066,6 +2066,31 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
 });
 
+test('a swatch tooltip never stands between the pointer and the swatch under it', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 300, y: 320 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
+  const shape = page.locator('.react-flow__node').first();
+  await shape.click();
+  await toolbar.getByRole('button', { name: 'Outline' }).click();
+  await toolbar.getByRole('button', { name: 'Color' }).click();
+
+  // Hovering a bottom-row swatch opens its name above it, over the swatch in
+  // the row above. Moving up and clicking that swatch has to reach the swatch.
+  await page.getByRole('button', { name: 'mint-4' }).hover();
+  await expect(page.getByRole('tooltip', { name: 'mint-4' })).toBeVisible();
+  const above = await page.getByRole('button', { name: 'mint-3' }).boundingBox();
+  if (!above) throw new Error('mint-3 is not on screen');
+  await page.mouse.click(above.x + above.width / 2, above.y + above.height / 2);
+
+  // `mint-3`'s stroke: Whimsical's mint shaded a fifth towards black.
+  await expect(shapeBox(shape)).toHaveCSS('border-color', 'rgb(21, 139, 127)');
+});
+
 test('K opens the link editor for the selected shape', async ({ page }) => {
   await signUp(page);
   await page.getByRole('button', { name: 'New Diagram' }).first().click();
