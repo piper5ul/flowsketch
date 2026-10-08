@@ -212,6 +212,67 @@ describe('isHeaderRow / tableCells', () => {
 });
 
 describe('normalizeTable', () => {
+  it('normalizes missing and non-array columns and rows into a blank 1×1 table', () => {
+    expect(normalizeTable({ header: false }).columns).toEqual([{ width: DEFAULT_COLUMN_WIDTH }]);
+    expect(text(normalizeTable({ header: false }))).toEqual([['']]);
+    expect(text(normalizeTable({ header: false, rows: [{ cells: ['a', 'b'] }] }))).toEqual([['a', 'b']]);
+    expect(text(normalizeTable({
+      header: false,
+      columns: [{ width: 90 }, { width: 100 }],
+    }))).toEqual([['']]);
+    expect(normalizeTable({ header: false, columns: [{ width: 90 }, { width: 100 }] }).columns).toHaveLength(1);
+    expect(text(normalizeTable({
+      header: false,
+      columns: 'not columns',
+      rows: [{ cells: ['a'] }],
+    }))).toEqual([['a']]);
+    expect(text(normalizeTable({
+      header: false,
+      columns: [{ width: 90 }, { width: 100 }],
+      rows: 'not rows',
+    }))).toEqual([['']]);
+  });
+
+  it('replaces null and other non-object rows with blank rows', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [{ width: 100 }, { width: 120 }],
+      rows: [null, 'not a row', { cells: ['kept'] }],
+    });
+    expect(text(table)).toEqual([['', ''], ['', ''], ['kept', '']]);
+  });
+
+  it('stringifies numeric cells and blanks other non-string values', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [],
+      rows: [{ cells: [42, null, { value: 'hostile' }, true] }],
+    });
+    expect(text(table)).toEqual([['42', '', '', '']]);
+  });
+
+  it('uses the default width for non-finite column widths', () => {
+    const table = normalizeTable({
+      header: false,
+      columns: [{ width: Number.NaN }, { width: Number.POSITIVE_INFINITY }],
+      rows: [{ cells: ['a', 'b'] }],
+    });
+    expect(table.columns.map((column) => column.width)).toEqual([
+      DEFAULT_COLUMN_WIDTH,
+      DEFAULT_COLUMN_WIDTH,
+    ]);
+  });
+
+  it('normalizes header to a boolean', () => {
+    const table = normalizeTable({
+      header: 'yes',
+      columns: [],
+      rows: [{ cells: ['a'] }],
+    });
+    expect(table.header).toBe(true);
+    expect(typeof table.header).toBe('boolean');
+  });
+
   it('returns an already normalized table by reference, including parallel styles', () => {
     const table: TableData = {
       header: true,

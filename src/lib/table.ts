@@ -18,7 +18,7 @@
  * is an invariant rather than a hope — with one door for the untrusted case,
  * `normalizeTable`, which is what a pasted or hand-edited grid comes through.
  */
-import type { TableCellStyle, TableData } from '../types';
+import type { TableCellStyle, TableData } from '../types.js';
 
 /** How wide a column starts out, and how far it can be dragged in. */
 export const DEFAULT_COLUMN_WIDTH = 140;
@@ -171,33 +171,73 @@ export function tableCells(table: TableData): string[] {
  * nothing in it becomes a 1×1 — a node drawn as an empty box is far worse to
  * meet than one blank cell.
  */
-export function normalizeTable(table: TableData): TableData {
-  const rows = table.rows.length > 0 ? table.rows : [{ cells: [] }];
-  const width = Math.max(1, ...rows.map((row) => row.cells.length), table.columns.length);
-  const alreadyNormalized = rows === table.rows
-    && table.columns.length === width
-    && table.columns.every((column) => column.width === Math.max(MIN_COLUMN_WIDTH, Math.round(column.width ?? DEFAULT_COLUMN_WIDTH)))
-    && table.rows.every((row) => row.cells.length === width
+export function normalizeTable(value: unknown): TableData {
+  const input = isRecord(value) ? value : {};
+  const inputColumns: unknown[] = Array.isArray(input.columns) ? input.columns : [];
+  const inputRows: unknown[] = Array.isArray(input.rows) ? input.rows : [];
+  // A table without rows is empty even if stale column metadata remains. Give
+  // it the same one-cell shape as any other empty input.
+  const rows: Array<{ cells: unknown[]; styles?: unknown[] }> = inputRows.length === 0
+    ? [{ cells: [] }]
+    : inputRows.map((value) => {
+      if (!isRecord(value)) return { cells: [] };
+      return {
+        cells: Array.isArray(value.cells) ? value.cells : [],
+        ...(Array.isArray(value.styles) ? { styles: value.styles } : {}),
+      };
+    });
+  const width = inputRows.length === 0
+    ? 1
+    : Math.max(1, inputColumns.length, ...rows.map((row) => row.cells.length));
+  const header = Boolean(input.header);
+
+  const alreadyNormalized = isRecord(value)
+    && input.header === header
+    && Array.isArray(input.columns)
+    && input.columns.length === width
+    && input.columns.every((column) => isRecord(column)
+      && typeof column.width === 'number'
+      && Number.isFinite(column.width)
+      && Number.isInteger(column.width)
+      && column.width >= MIN_COLUMN_WIDTH)
+    && Array.isArray(input.rows)
+    && input.rows.length > 0
+    && input.rows.every((row) => isRecord(row)
+      && Array.isArray(row.cells)
+      && row.cells.length === width
       && row.cells.every((cell) => typeof cell === 'string')
       && (row.styles === undefined
         ? !Object.prototype.hasOwnProperty.call(row, 'styles')
         : Array.isArray(row.styles)
           && row.styles.length === width
           && row.styles.every(isNarrowCellStyle)));
-  if (alreadyNormalized) return table;
+  if (alreadyNormalized) return value as unknown as TableData;
 
   return {
-    header: table.header,
-    columns: Array.from({ length: width }, (_, i) => ({
-      width: Math.max(MIN_COLUMN_WIDTH, Math.round(table.columns[i]?.width ?? DEFAULT_COLUMN_WIDTH)),
-    })),
+    header,
+    columns: Array.from({ length: width }, (_, i) => {
+      const column = inputColumns[i];
+      const storedWidth = isRecord(column) ? column.width : undefined;
+      return {
+        width: typeof storedWidth === 'number' && Number.isFinite(storedWidth)
+          ? Math.max(MIN_COLUMN_WIDTH, Math.round(storedWidth))
+          : DEFAULT_COLUMN_WIDTH,
+      };
+    }),
     rows: rows.map((row) => ({
-      cells: Array.from({ length: width }, (_, i) => row.cells[i] ?? ''),
-      ...(Array.isArray(row.styles)
-        ? { styles: Array.from({ length: width }, (_, i) => narrowCellStyle(row.styles?.[i])) }
-        : {}),
+      cells: Array.from({ length: width }, (_, i) => {
+        const cell = row.cells[i];
+        return typeof cell === 'string' ? cell : typeof cell === 'number' ? String(cell) : '';
+      }),
+      ...(row.styles === undefined
+        ? {}
+        : { styles: Array.from({ length: width }, (_, i) => narrowCellStyle(row.styles?.[i])) }),
     })),
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /** A free-form JSON cell style, reduced to the five values the renderer uses. */

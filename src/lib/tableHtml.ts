@@ -9,6 +9,13 @@ import { DEFAULT_COLUMN_WIDTH, MIN_COLUMN_WIDTH, normalizeTable, parseTableText 
 interface CssRule {
   selectors: string[];
   declarations: string;
+  order: number;
+}
+
+interface CssRuleIndex {
+  byClass: Map<string, CssRule[]>;
+  byTag: Map<string, CssRule[]>;
+  rest: CssRule[];
 }
 
 interface ParsedStyle {
@@ -19,13 +26,19 @@ interface ParsedStyle {
   align?: TableCellStyle['align'] | 'general';
 }
 
+const MAX_HTML_SIZE = 2 * 1024 * 1024;
+const MAX_CSS_RULES = 5_000;
+const MAX_GRID_CELLS = 10_000;
+const MAX_REST_RULES = 32;
+const INDEXED_TAGS = new Set(['table', 'tr', 'td', 'th']);
+
 /**
  * Parse an HTML clipboard fragment into a rectangular table, or return null
  * when it does not contain a table. Excel writes much of its formatting in
  * class rules and the rest inline; inline declarations are applied last.
  */
-export function parseTableHtml(html: string): TableData | null {
-  if (typeof DOMParser === 'undefined' || !html.trim()) return null;
+export function parseTableHtml(html: string, clipboardText: string): TableData | null {
+  if (typeof DOMParser === 'undefined' || html.length > MAX_HTML_SIZE || !html.trim()) return null;
 
   let document: Document;
   try {
@@ -34,6 +47,8 @@ export function parseTableHtml(html: string): TableData | null {
     return null;
   }
 
+  if (!hasSpreadsheetOrigin(document) && !parseTableText(clipboardText)) return null;
+
   const table = document.querySelector('table');
   if (!table) return null;
   const tableCells = Array.from(table.querySelectorAll('td, th'))
@@ -41,30 +56,66 @@ export function parseTableHtml(html: string): TableData | null {
   if (tableCells.some((cell) => cell.querySelector('table, img, ul, ol'))) return null;
 
   const rules = readCssRules(document);
+  if (!rules) return null;
   const htmlRows = Array.from(table.querySelectorAll('tr')).filter((row) => row.closest('table') === table);
-  const parsedRows: { cells: string[]; styles: (TableCellStyle | null)[] }[] = [];
+  const rowCells = htmlRows.map((htmlRow) =>
+    Array.from(htmlRow.children).filter((child) => child.tagName === 'TD' || child.tagName === 'TH'),
+  );
+  if (htmlRows.length > MAX_GRID_CELLS) return null;
 
-  for (const htmlRow of htmlRows) {
+  const parsedRows: { cells: string[]; styles: (TableCellStyle | null)[] }[] = [];
+  let width = 0;
+  let rowspansRemaining: number[] = [];
+
+  for (let rowIndex = 0; rowIndex < htmlRows.length; rowIndex++) {
     const cells: string[] = [];
     const styles: (TableCellStyle | null)[] = [];
-    const htmlCells = Array.from(htmlRow.children).filter((child) => child.tagName === 'TD' || child.tagName === 'TH');
-    for (const htmlCell of htmlCells) {
+    const occupied = rowspansRemaining.map((remaining) => remaining > 0);
+    const nextRowspansRemaining = rowspansRemaining.map((remaining) => Math.max(0, remaining - 1));
+    let column = 0;
+
+    for (const htmlCell of rowCells[rowIndex]) {
       const text = displayedText(htmlCell);
       const cellStyle = readCellStyle(htmlCell, rules, text);
-      cells.push(text);
-      styles.push(cellStyle);
-
       const colspan = positiveSpan(htmlCell.getAttribute('colspan'));
-      for (let i = 1; i < colspan; i++) {
-        cells.push('');
-        styles.push(null);
+      const rowspan = positiveSpan(htmlCell.getAttribute('rowspan'));
+
+      // Find the first contiguous run of free slots large enough for this
+      // cell. Slots covered by rowspans from earlier rows are unavailable.
+      while (true) {
+        let blockedOffset = -1;
+        for (let offset = 0; offset < colspan; offset++) {
+          if (occupied[column + offset]) {
+            blockedOffset = offset;
+            break;
+          }
+        }
+        if (blockedOffset < 0) break;
+        column += blockedOffset + 1;
       }
+
+      const endColumn = column + colspan;
+      if (endColumn > Math.floor(MAX_GRID_CELLS / Math.max(1, htmlRows.length))) return null;
+      for (let index = column; index < endColumn; index++) {
+        occupied[index] = true;
+        if (rowspan > 1) nextRowspansRemaining[index] = Math.max(nextRowspansRemaining[index] ?? 0, rowspan - 1);
+      }
+      cells[column] = text;
+      styles[column] = cellStyle;
+      for (let index = column + 1; index < endColumn; index++) {
+        cells[index] = '';
+        styles[index] = null;
+      }
+      width = Math.max(width, endColumn);
+      column = endColumn;
     }
-    if (cells.length > 0) parsedRows.push({ cells, styles });
+
+    parsedRows.push({ cells, styles });
+    rowspansRemaining = nextRowspansRemaining;
   }
 
   if (parsedRows.length === 0) return null;
-  const width = Math.max(1, ...parsedRows.map((row) => row.cells.length));
+  width = Math.max(1, width);
   const widths = readColumnWidths(table, width);
   const hasAnyStyle = parsedRows.some((row) => row.styles.some((style) => style !== null));
   const rows = parsedRows.map((row) => ({
@@ -88,55 +139,102 @@ export function parseTableHtml(html: string): TableData | null {
   return normalizeTable({ header, columns: widths.map((width) => ({ width })), rows });
 }
 
-function readCssRules(document: Document): CssRule[] {
+function hasSpreadsheetOrigin(document: Document): boolean {
+  const root = document.documentElement;
+  if (root?.getAttribute('xmlns:x')?.toLowerCase() === 'urn:schemas-microsoft-com:office:excel') return true;
+
+  for (const meta of Array.from(document.querySelectorAll('meta'))) {
+    const name = meta.getAttribute('name')?.toLowerCase();
+    const content = meta.getAttribute('content')?.trim() ?? '';
+    if (name === 'progid' && /^excel\./i.test(content)) return true;
+    if (name === 'google-sheets-html-origin') return true;
+  }
+  return false;
+}
+
+function readCssRules(document: Document): CssRuleIndex | null {
   const rules: CssRule[] = [];
   for (const style of Array.from(document.querySelectorAll('style'))) {
-    const css = style.textContent?.replace(/\/\*[\s\S]*?\*\//g, '') ?? '';
-    for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const selectors = match[1].split(',').map((selector) => selector.trim()).filter(Boolean);
-      if (selectors.length > 0) rules.push({ selectors, declarations: match[2] });
+    if (!scanCssRules(style.textContent ?? '', rules)) return null;
+  }
+
+  const byClass = new Map<string, CssRule[]>();
+  const byTag = new Map<string, CssRule[]>();
+  const rest: CssRule[] = [];
+  for (const rule of rules) {
+    const classes = new Set<string>();
+    const tags = new Set<string>();
+    let hasUnindexedSelector = false;
+    for (const selector of rule.selectors) {
+      const { tag, classes: selectorClasses } = selectorParts(selector);
+      if (selectorClasses.length > 0) {
+        for (const className of selectorClasses) classes.add(className);
+      } else if (tag && INDEXED_TAGS.has(tag.toLowerCase())) {
+        tags.add(tag.toLowerCase());
+      } else {
+        hasUnindexedSelector = true;
+      }
+    }
+    for (const className of classes) pushIndexed(byClass, className, rule);
+    for (const tag of tags) pushIndexed(byTag, tag, rule);
+    if (hasUnindexedSelector && classes.size === 0 && tags.size === 0) {
+      rest.push(rule);
+      if (rest.length > MAX_REST_RULES) return null;
     }
   }
-  return rules;
+  return { byClass, byTag, rest };
 }
 
 function selectorMatchesElement(selector: string, element: Element): boolean {
-  // The clipboard styles we need are class rules such as `.xl65` or
-  // `td.xl65`. Ignore ancestor selectors and pseudo-classes.
-  const target = selector.trim().split(/[\s>+~]+/).at(-1)?.replace(/:{1,2}[\w-]+(?:\([^)]*\))?/g, '') ?? '';
-  const tag = target.match(/^[a-z][\w-]*/i)?.[0];
+  // The clipboard styles we need are class rules such as `.xl65`, bare
+  // spreadsheet tags, and tag-qualified classes. Ignore ancestor selectors
+  // and pseudo-classes.
+  const { tag, classes } = selectorParts(selector);
   if (tag && tag.toLowerCase() !== element.tagName.toLowerCase()) return false;
-  const classes = Array.from(target.matchAll(/\.([\w-]+)/g), (match) => match[1]);
-  return classes.length > 0 && classes.every((className) => element.classList.contains(className));
+  return classes.length > 0
+    ? classes.every((className) => element.classList.contains(className))
+    : Boolean(tag);
 }
 
-function readCellStyle(cell: Element, rules: CssRule[], text: string): TableCellStyle | null {
+function selectorParts(selector: string): { tag: string | undefined; classes: string[] } {
+  const target = selector.trim().split(/[\s>+~]+/).at(-1)?.replace(/:{1,2}[\w-]+(?:\([^)]*\))?/g, '') ?? '';
+  const tag = target.match(/^[a-z][\w-]*/i)?.[0];
+  const classes = Array.from(target.matchAll(/\.([\w-]+)/g), (match) => match[1]);
+  return { tag, classes };
+}
+
+function pushIndexed(index: Map<string, CssRule[]>, key: string, rule: CssRule): void {
+  const rules = index.get(key);
+  if (rules) rules.push(rule);
+  else index.set(key, [rule]);
+}
+
+function candidateRules(index: CssRuleIndex, element: Element): CssRule[] {
+  const candidates = new Set<CssRule>(index.rest);
+  for (const className of Array.from(element.classList)) {
+    for (const rule of index.byClass.get(className) ?? []) candidates.add(rule);
+  }
+  for (const rule of index.byTag.get(element.tagName.toLowerCase()) ?? []) candidates.add(rule);
+  return Array.from(candidates).sort((a, b) => a.order - b.order);
+}
+
+function readCellStyle(cell: Element, rules: CssRuleIndex, text: string): TableCellStyle | null {
   const style: ParsedStyle = {};
+  const table = cell.closest('table');
+  const row = cell.closest('tr');
+  if (table) inheritTextFormatting(style, readElementStyle(table, rules));
+  if (row) {
+    const rowStyle = readElementStyle(row, rules);
+    inheritTextFormatting(style, rowStyle);
+    // A row background paints its cells; a table background does not become
+    // a cell fill in the imported table model.
+    if (rowStyle.fill) style.fill = rowStyle.fill;
+  }
+
   for (const element of [cell, ...Array.from(cell.querySelectorAll('*'))]) {
-    const elementStyle: ParsedStyle = {};
-    for (const rule of rules) {
-      if (rule.selectors.some((selector) => selectorMatchesElement(selector, element))) {
-        applyDeclarations(elementStyle, rule.declarations);
-      }
-    }
-
-    if (element.tagName === 'FONT') {
-      const color = element.getAttribute('color');
-      if (color) {
-        const normalized = normalizeColor(color);
-        if (normalized) elementStyle.color = normalized;
-      }
-    }
-    const inline = element.getAttribute('style');
-    if (inline) applyDeclarations(elementStyle, inline);
-
-    if (element.tagName === 'B' || element.tagName === 'STRONG') {
-      if (elementStyle.bold === undefined) elementStyle.bold = true;
-    }
-    if (element.tagName === 'I' || element.tagName === 'EM') {
-      if (elementStyle.italic === undefined) elementStyle.italic = true;
-    }
-    Object.assign(style, elementStyle);
+    const elementStyle = readElementStyle(element, rules);
+    if (element === cell) Object.assign(style, elementStyle);
+    else inheritTextFormatting(style, elementStyle);
   }
 
   if (style.align === 'general') style.align = isNumericDisplay(text) ? 'right' : undefined;
@@ -147,6 +245,135 @@ function readCellStyle(cell: Element, rules: CssRule[], text: string): TableCell
   if (style.color) narrowed.color = style.color;
   if (style.align === 'left' || style.align === 'center' || style.align === 'right') narrowed.align = style.align;
   return Object.keys(narrowed).length > 0 ? narrowed : null;
+}
+
+function inheritTextFormatting(target: ParsedStyle, source: ParsedStyle): void {
+  if (source.color !== undefined) target.color = source.color;
+  if (source.bold !== undefined) target.bold = source.bold;
+  if (source.italic !== undefined) target.italic = source.italic;
+  if (source.align !== undefined) target.align = source.align;
+}
+
+function readElementStyle(element: Element, rules: CssRuleIndex): ParsedStyle {
+  const style: ParsedStyle = {};
+  for (const rule of candidateRules(rules, element)) {
+    if (rule.selectors.some((selector) => selectorMatchesElement(selector, element))) {
+      applyDeclarations(style, rule.declarations);
+    }
+  }
+
+  if (element.tagName === 'FONT') {
+    const color = element.getAttribute('color');
+    if (color) {
+      const normalized = normalizeColor(color);
+      if (normalized) style.color = normalized;
+    }
+  }
+  const inline = element.getAttribute('style');
+  if (inline) applyDeclarations(style, inline);
+
+  if ((element.tagName === 'B' || element.tagName === 'STRONG') && style.bold === undefined) {
+    style.bold = true;
+  }
+  if ((element.tagName === 'I' || element.tagName === 'EM') && style.italic === undefined) {
+    style.italic = true;
+  }
+  return style;
+}
+
+/** Scan CSS once, ignoring comments and complete at-rule blocks. */
+function scanCssRules(css: string, rules: CssRule[]): boolean {
+  let position = 0;
+  while (position < css.length) {
+    const preludeParts: string[] = [];
+    let segmentStart = position;
+    while (position < css.length) {
+      if (css[position] === '/' && css[position + 1] === '*') {
+        if (segmentStart < position) preludeParts.push(css.slice(segmentStart, position));
+        position = skipCssComment(css, position);
+        segmentStart = position;
+        continue;
+      }
+      const character = css[position];
+      if (character === '{' || character === '}' || character === ';') break;
+      position++;
+    }
+    if (segmentStart < position) preludeParts.push(css.slice(segmentStart, position));
+    const prelude = preludeParts.join('').trim();
+    const delimiter = css[position];
+    if (delimiter === ';' || delimiter === '}') {
+      position++;
+      continue;
+    }
+    if (delimiter !== '{') break;
+
+    position++;
+    if (prelude.startsWith('@')) {
+      position = skipCssBlock(css, position);
+      continue;
+    }
+
+    const block = readCssBlock(css, position);
+    position = block.end;
+    const selectors = prelude.split(',').map((selector) => selector.trim()).filter(Boolean);
+    if (selectors.length > 0) {
+      if (rules.length >= MAX_CSS_RULES) return false;
+      rules.push({ selectors, declarations: block.contents, order: rules.length });
+    }
+  }
+  return true;
+}
+
+function skipCssComment(css: string, start: number): number {
+  const end = css.indexOf('*/', start + 2);
+  return end < 0 ? css.length : end + 2;
+}
+
+function skipCssBlock(css: string, start: number): number {
+  let depth = 1;
+  let position = start;
+  while (position < css.length && depth > 0) {
+    if (css[position] === '/' && css[position + 1] === '*') {
+      position = skipCssComment(css, position);
+    } else if (css[position] === '{') {
+      depth++;
+      position++;
+    } else if (css[position] === '}') {
+      depth--;
+      position++;
+    } else {
+      position++;
+    }
+  }
+  return position;
+}
+
+function readCssBlock(css: string, start: number): { contents: string; end: number } {
+  const parts: string[] = [];
+  let depth = 1;
+  let position = start;
+  let segmentStart = start;
+  while (position < css.length && depth > 0) {
+    if (css[position] === '/' && css[position + 1] === '*') {
+      if (segmentStart < position) parts.push(css.slice(segmentStart, position));
+      position = skipCssComment(css, position);
+      segmentStart = position;
+    } else if (css[position] === '{') {
+      depth++;
+      position++;
+    } else if (css[position] === '}') {
+      depth--;
+      if (depth === 0) {
+        if (segmentStart < position) parts.push(css.slice(segmentStart, position));
+        position++;
+      } else {
+        position++;
+      }
+    } else {
+      position++;
+    }
+  }
+  return { contents: parts.join(''), end: position };
 }
 
 function applyDeclarations(style: ParsedStyle, declarations: string): void {

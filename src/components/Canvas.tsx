@@ -1045,7 +1045,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
           return;
         }
       }
-      const table = parseTableHtml(data.getData('text/html')) ?? (text ? parseTableText(text) : null);
+      const table = parseTableHtml(data.getData('text/html'), text) ?? (text ? parseTableText(text) : null);
       if (!table) return;
       e.preventDefault();
       useDiagramStore.getState().addTable(dropPoint(), table);

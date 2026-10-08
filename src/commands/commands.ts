@@ -130,7 +130,7 @@ async function pasteAsTable(ctx: CommandContext) {
     // `read()` is not supported consistently; `readText()` below is the
     // existing permission and error path for browsers that cannot use it.
   }
-  let table = parseTableHtml(html) ?? parseTableText(text);
+  let table = parseTableHtml(html, text) ?? parseTableText(text);
   if (!table && !text) {
     const fallback = await clipboardText();
     if (fallback === null) return;

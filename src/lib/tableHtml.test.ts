@@ -1,8 +1,27 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './table';
-import { parseTableHtml } from './tableHtml';
+import { parseTableHtml as parseClipboardTableHtml } from './tableHtml';
 import type { TableData } from '../types';
+
+// The existing parser cases focus on the HTML-to-grid behavior, so model the
+// matching text/plain grid that a spreadsheet puts beside those fixtures.
+function parseTableHtml(html: string, plainText?: string): TableData | null {
+  return parseClipboardTableHtml(html, plainText ?? tableHtmlAsPlainText(html));
+}
+
+function tableHtmlAsPlainText(html: string): string {
+  const document = new DOMParser().parseFromString(html, 'text/html');
+  const table = document.querySelector('table');
+  if (!table) return '';
+  return Array.from(table.querySelectorAll('tr'))
+    .filter((row) => row.closest('table') === table)
+    .map((row) => Array.from(row.children)
+      .filter((cell) => cell.tagName === 'TD' || cell.tagName === 'TH')
+      .map((cell) => cell.textContent?.trim() ?? '')
+      .join('\t'))
+    .join('\n');
+}
 
 /** Excel for Mac 16 clipboard HTML: namespaced document, CSS classes, inline styles and col widths. */
 const excelClipboard = `
@@ -97,6 +116,62 @@ describe('parseTableHtml', () => {
     expect(parsed?.rows[1].styles?.[1]).toBeNull();
   });
 
+  it('matches bare table, row, cell, and header tag selectors', () => {
+    const parsed = parseTableHtml(`
+      <style>
+        table { color: red; }
+        tr { font-style: italic; }
+        td { color: blue; text-align: right; }
+        th { font-weight: bold; }
+      </style>
+      <table><tr><th>H1</th><th>H2</th></tr><tr><td>A</td><td>B</td></tr></table>`);
+
+    expect(parsed?.rows.map((row) => row.styles)).toEqual([
+      [{ bold: true, italic: true, color: '#FF0000' }, { bold: true, italic: true, color: '#FF0000' }],
+      [{ italic: true, color: '#0000FF', align: 'right' }, { italic: true, color: '#0000FF', align: 'right' }],
+    ]);
+  });
+
+  it('inherits table and row formatting in order, while keeping fills cell-local except for row backgrounds', () => {
+    const parsed = parseTableHtml(`
+      <style>
+        table { color: red; font-weight: bold; font-style: italic; text-align: center; background: blue; }
+        tr { color: green; background-color: yellow; }
+        .own { color: blue; text-align: left; }
+      </style>
+      <table style="font-style: normal">
+        <tr><td style="color: orange">A</td><td>B</td></tr>
+        <tr style="color: purple; text-align: right; background: pink">
+          <td class="own" style="color: orange">C</td><td><b style="color: black; font-weight: normal">D</b></td>
+        </tr>
+      </table>`);
+
+    expect(parsed?.rows.map((row) => row.styles)).toEqual([
+      [
+        { bold: true, italic: false, fill: '#FFFF00', color: '#FFA500', align: 'center' },
+        { bold: true, italic: false, fill: '#FFFF00', color: '#008000', align: 'center' },
+      ],
+      [
+        { bold: true, italic: false, fill: '#FFC0CB', color: '#FFA500', align: 'left' },
+        { bold: false, italic: false, fill: '#FFC0CB', color: '#000000', align: 'right' },
+      ],
+    ]);
+  });
+
+  it("keeps a cell's background over its row fill and ignores descendant backgrounds", () => {
+    const parsed = parseTableHtml(`
+      <style>tr { background: yellow; }</style>
+      <table>
+        <tr><td style="background: red">A</td><td><span style="background: blue">B</span></td></tr>
+        <tr><td>C</td><td>D</td></tr>
+      </table>`);
+
+    expect(parsed?.rows.map((row) => row.styles)).toEqual([
+      [{ fill: '#FF0000' }, { fill: '#FFFF00' }],
+      [{ fill: '#FFFF00' }, { fill: '#FFFF00' }],
+    ]);
+  });
+
   it('resolves named colors deterministically without asking the DOM', () => {
     const getComputedStyle = vi.spyOn(window, 'getComputedStyle').mockReturnValue({ color: '' } as CSSStyleDeclaration);
     const createElement = vi.spyOn(document, 'createElement');
@@ -150,10 +225,20 @@ describe('parseTableHtml', () => {
   });
 
   it('expands colspans, uses default widths, and falls back to text parsing for header choice', () => {
-    const parsed = parseTableHtml('<table><col width="10"><tr><td>Value</td><td colspan="2">Note</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>');
+    const parsed = parseTableHtml('<table><col width="10"><tr><td>Value</td><td colspan="2">Note</td></tr><tr><td>1</td><td>2</td><td>3</td></tr></table>', 'Value\t\tNote\n1\t2\t3');
     expect(parsed?.columns.map((column) => column.width)).toEqual([MIN_COLUMN_WIDTH, DEFAULT_COLUMN_WIDTH, DEFAULT_COLUMN_WIDTH]);
     expect(parsed?.rows.map((row) => row.cells)).toEqual([['Value', 'Note', ''], ['1', '2', '3']]);
     expect(parsed?.header).toBe(true);
+  });
+
+  it('places cells after rowspans into the next available grid slot', () => {
+    const parsed = parseTableHtml(`
+      <table>
+        <tr><td rowspan="2">A</td><td>B</td></tr>
+        <tr><td>C</td></tr>
+      </table>`, 'A\tB\n\tC');
+
+    expect(parsed?.rows.map((row) => row.cells)).toEqual([['A', 'B'], ['', 'C']]);
   });
 
   it('uses right alignment for numeric general-aligned cells, but not text', () => {
@@ -182,6 +267,29 @@ describe('parseTableHtml', () => {
     expect(parseTableHtml('<table><tr><td>A</td><td>B</td></tr><tr><td></td><td></td></tr></table>')).toBeNull();
   });
 
+  it('refuses an unmarked navigation table when plain text is not a table', () => {
+    const navigation = `
+      <table>
+        <tr><td><a href="/">Home</a></td><td><a href="/products">Products</a></td></tr>
+        <tr><td><a href="/about">About</a></td><td><a href="/contact">Contact</a></td></tr>
+      </table>`;
+
+    expect(parseTableHtml(navigation, 'Home Products About Contact')).toBeNull();
+  });
+
+  it.each([
+    ['Excel namespace', '<html xmlns:x="urn:schemas-microsoft-com:office:excel">'],
+    ['Excel ProgId', '<html><head><meta name="ProgId" content="Excel.Sheet"></head>'],
+    ['Google Sheets', '<html><head><meta name="google-sheets-html-origin" content="1.0"></head>'],
+  ])('accepts a %s table when plain text has no tabs', (_origin, prefix) => {
+    const html = `${prefix}<body><table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table></body></html>`;
+
+    expect(parseTableHtml(html, 'A B C D')?.rows.map((row) => row.cells)).toEqual([
+      ['A', 'B'],
+      ['C', 'D'],
+    ]);
+  });
+
   it.each([
     ['nested table', '<table><tr><td><table><tr><td>Nested</td><td>Grid</td></tr></table></td><td>Sidebar</td></tr><tr><td>Footer</td><td>Link</td></tr></table>'],
     ['image', '<table><tr><td>Logo <img src="logo.png" alt="Logo"></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>'],
@@ -189,5 +297,80 @@ describe('parseTableHtml', () => {
     ['ordered list', '<table><tr><td><ol><li>First</li><li>Second</li></ol></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>'],
   ])('returns null when table cells contain a %s', (_kind, html) => {
     expect(parseTableHtml(html)).toBeNull();
+  });
+
+  it('handles an 80 KB style block without braces in under 500 ms', () => {
+    const html = `<style>${'x'.repeat(80_000)}</style><table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>`;
+    const started = performance.now();
+    const parsed = parseClipboardTableHtml(html, 'A\tB\nC\tD');
+    const elapsed = performance.now() - started;
+
+    expect(parsed?.rows.map((row) => row.cells)).toEqual([['A', 'B'], ['C', 'D']]);
+    expect(elapsed).toBeLessThan(500);
+  }, 15_000);
+
+  it('ignores comments and at-rule blocks while scanning CSS', () => {
+    const parsed = parseTableHtml(`
+      <style>
+        /* .cell { background: red; } */
+        @media screen { .cell { color: red; } }
+        @font-face { font-family: ignored; src: url(ignored.woff); }
+        .cell { color: blue; }
+      </style>
+      <table><tr><td class="cell">A</td><td class="cell">B</td></tr><tr><td>C</td><td>D</td></tr></table>`);
+    expect(parsed?.rows[0].styles).toEqual([{ color: '#0000FF' }, { color: '#0000FF' }]);
+  });
+
+  it('indexes 2,000 CSS rules instead of checking every rule against 2,000 cells', () => {
+    const css = Array.from({ length: 2_000 }, (_, index) => `.unused${index}{color:red}`).join('');
+    const row = '<tr><td class="target">A</td><td class="target">B</td></tr>';
+    const html = `<style>${css}</style><table>${row.repeat(1_000)}</table>`;
+    const plain = Array.from({ length: 1_000 }, () => 'A\tB').join('\n');
+    const contains = vi.spyOn(DOMTokenList.prototype, 'contains');
+    const started = performance.now();
+    let parsed: TableData | null;
+    try {
+      parsed = parseClipboardTableHtml(html, plain);
+    } finally {
+      contains.mockRestore();
+    }
+    const elapsed = performance.now() - started;
+
+    expect(parsed?.rows).toHaveLength(1_000);
+    expect(contains).toHaveBeenCalledTimes(0);
+    expect(elapsed).toBeLessThan(500);
+  }, 15_000);
+
+  it('falls back when 2,000 unindexed selectors would scan every cell', () => {
+    const css = Array.from({ length: 2_000 }, (_, index) => `custom${index}{color:red}`).join('');
+    const row = '<tr><td>A</td><td>B</td></tr>';
+    const html = `<style>${css}</style><table>${row.repeat(1_000)}</table>`;
+    const plain = Array.from({ length: 1_000 }, () => 'A\tB').join('\n');
+    const started = performance.now();
+    const parsed = parseClipboardTableHtml(html, plain);
+    const elapsed = performance.now() - started;
+
+    expect(parsed === null).toBe(true);
+    expect(elapsed).toBeLessThan(500);
+  }, 15_000);
+
+  it('falls back for HTML larger than 2 MB before parsing it', () => {
+    const parseFromString = vi.spyOn(DOMParser.prototype, 'parseFromString');
+    try {
+      expect(parseClipboardTableHtml(`<table>${'x'.repeat(2 * 1024 * 1024)}</table>`, '') === null).toBe(true);
+      expect(parseFromString.mock.calls.length).toBe(0);
+    } finally {
+      parseFromString.mockRestore();
+    }
+  });
+
+  it('falls back when a clipboard style block contains more than 5,000 rules', () => {
+    const css = Array.from({ length: 5_001 }, (_, index) => `.unused${index}{color:red}`).join('');
+    expect(parseTableHtml(`<style>${css}</style><table><tr><td>A</td><td>B</td></tr><tr><td>C</td><td>D</td></tr></table>`)).toBeNull();
+  });
+
+  it('falls back when the table grid would exceed 10,000 cells', () => {
+    const row = '<tr><td>A</td><td>B</td></tr>';
+    expect(parseTableHtml(`<table>${row.repeat(5_001)}</table>`) === null).toBe(true);
   });
 });

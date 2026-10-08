@@ -145,6 +145,14 @@ test('plain paste leaves a single HTML cell alone and falls back to text for uns
   expect(await dispatchPaste('<table><tr><td>Only cell</td></tr></table>', 'Only cell')).toBe(false);
   await expect(tableNode(page)).toHaveCount(0);
 
+  // A page-layout navigation table is not spreadsheet data when its plain
+  // clipboard text is ordinary prose, so the browser's paste remains available.
+  expect(await dispatchPaste(
+    '<table><tr><td><a href="/">Home</a></td><td><a href="/products">Products</a></td></tr><tr><td><a href="/about">About</a></td><td><a href="/contact">Contact</a></td></tr></table>',
+    'Home Products About Contact',
+  )).toBe(false);
+  await expect(tableNode(page)).toHaveCount(0);
+
   // A page-layout table is refused, then the valid TSV representation is used.
   expect(await dispatchPaste(
     '<table><tr><td>Logo <img src="logo.png" alt="Logo"></td><td>Navigation</td></tr><tr><td>Article</td><td>Footer</td></tr></table>',
@@ -160,10 +168,10 @@ test('pasting Excel HTML keeps cell formatting', async ({ page }) => {
   await signUp(page);
   await openEmptyBoard(page, 'Excel table formatting');
 
-  const plain = 'Metric\tAmount\nTransaction Value\t$0.12\nTotal\t$0.12';
+  const plain = 'Metric Amount Transaction Value $0.12 Total $0.12';
   const html = `
-    <html xmlns:o="urn:schemas-microsoft-com:office:office">
-      <head><style>
+    <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head><meta name="ProgId" content="Excel.Sheet"><style>
         .xl65 { background: #203764; color: #FFFFFF; font-weight: 700; }
         .xl66 { font-weight: 700; }
         .xl68 { background: yellow; color: windowtext; font-weight: 700; }

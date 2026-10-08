@@ -81,6 +81,7 @@ import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } fro
 import type { ArrowStyle, StrokeWidth } from '../types.js';
 import { computeMarkers } from './edgeMarkers.js';
 import { DEFAULT_EDGE_STROKE } from './defaults.js';
+import { normalizeTable } from './table.js';
 import { sanitizeDefaults } from './defaultStyle.js';
 import { sanitizeThumbnailIds } from './boardThumbnail.js';
 import { sanitizeVotingSession } from './voting.js';
@@ -101,6 +102,15 @@ function isNonEmptyString(value: unknown): value is string {
 
 function recordsOf(value: unknown): Bag[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function normalizeTableNode(node: Bag): Bag {
+  if (node.type !== 'table') return node;
+  const data = isRecord(node.data) ? node.data : {};
+  return {
+    ...node,
+    data: { ...data, table: normalizeTable(data.table) },
+  };
 }
 
 /**
@@ -259,7 +269,7 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const migrated: DiagramData = {
     ...data,
     version: CURRENT_DIAGRAM_VERSION,
-    nodes: recordsOf(data.nodes) as unknown as SerializedNode[],
+    nodes: recordsOf(data.nodes).map(normalizeTableNode) as unknown as SerializedNode[],
     // Whatever version it came in at: see `withCurrentMarkers`.
     edges: recordsOf(data.edges).map(withCurrentMarkers) as unknown as SerializedEdge[],
   };
