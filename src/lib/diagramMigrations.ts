@@ -13,8 +13,12 @@
  * Not every new field is a version. `ShapeData.fillStyle` is optional and an
  * absent one reads as `'filled'` (`resolveFillStyle` in `src/lib/shapeStyle.ts`),
  * so every diagram written before it existed is already correct and there is no
- * step here for it — a field is only worth a version when the *old* spelling
- * would be misread without one. `DiagramData.defaults` (the board's "save as
+ * step here for it. Its new values `'tinted'` and `'dashed'` need no step either:
+ * older rows do not hold them, and `'outline'` keeps its old meaning.
+ * `ShapeData.transparent` is optional and absent means false, as existing
+ * diagrams already intend. A field is only worth a version when the *old*
+ * spelling would be misread without one.
+ * `DiagramData.defaults` (the board's "save as
  * default style") is the same case: absent means "no board defaults" and the
  * built-in ones apply, which is what every diagram written before it already
  * wants. It is *narrowed* rather than migrated — see `sanitizeDefaults`. So is
@@ -86,6 +90,7 @@ import { sanitizeDefaults } from './defaultStyle.js';
 import { sanitizeThumbnailIds } from './boardThumbnail.js';
 import { sanitizeVotingSession } from './voting.js';
 import { sanitizeTimer } from './timer.js';
+import { sanitizeConnectorData, sanitizeShapeData } from './colorSafety.js';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 3;
@@ -111,6 +116,17 @@ function normalizeTableNode(node: Bag): Bag {
     ...node,
     data: { ...data, table: normalizeTable(data.table) },
   };
+}
+
+function sanitizeNodeColours(node: Bag): Bag {
+  return {
+    ...node,
+    data: sanitizeShapeData(node.data, typeof node.type === 'string' ? node.type : undefined),
+  };
+}
+
+function sanitizeEdgeColours(edge: Bag): Bag {
+  return { ...edge, data: sanitizeConnectorData(edge.data) };
 }
 
 /**
@@ -269,9 +285,9 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const migrated: DiagramData = {
     ...data,
     version: CURRENT_DIAGRAM_VERSION,
-    nodes: recordsOf(data.nodes).map(normalizeTableNode) as unknown as SerializedNode[],
+    nodes: recordsOf(data.nodes).map((node) => normalizeTableNode(sanitizeNodeColours(node))) as unknown as SerializedNode[],
     // Whatever version it came in at: see `withCurrentMarkers`.
-    edges: recordsOf(data.edges).map(withCurrentMarkers) as unknown as SerializedEdge[],
+    edges: recordsOf(data.edges).map(sanitizeEdgeColours).map(withCurrentMarkers) as unknown as SerializedEdge[],
   };
 
   const viewport = viewportOf(data.viewport);

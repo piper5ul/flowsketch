@@ -18,8 +18,8 @@
  * stroke's colour, opacity and export look like; the pressure is captured
  * anyway (`InkPoint`) so that is a change of renderer, not of format.
  */
-import { catmullRomToBezier, type Point } from './connectorPath';
-import type { InkKind, InkPoint, Tool } from '../types';
+import { catmullRomToBezier, type Point } from './connectorPath.js';
+import type { InkKind, InkPoint, Tool } from '../types.js';
 
 /** How wide each pen draws, in board pixels. */
 export const INK_WIDTH: Record<InkKind, number> = {

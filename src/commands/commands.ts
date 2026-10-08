@@ -8,7 +8,7 @@ import { slidesOf } from '../lib/presentation';
 import { parseTableHtml } from '../lib/tableHtml';
 import { parseTableText } from '../lib/table';
 import { subtreeIds } from '../lib/nodeTree';
-import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
+import { DEFAULT_STYLE_KIND_LABELS, kindOf, pickShapeStyle } from '../lib/defaultStyle';
 import { canGroupSelection } from '../store/useDiagramStore';
 import { toastError, toastInfo } from '../store/useToastStore';
 import { useSearchStore } from '../store/useSearchStore';
@@ -600,8 +600,7 @@ export const commandDeclarations: Command[] = [
     run: (ctx) => {
       const selected = ctx.store.getState().nodes.find((n) => n.selected);
       if (!selected) return;
-      const { fill, stroke, fontSize, bold, italic, textAlign, verticalAlign } = selected.data;
-      ctx.styleClipboard.set({ fill, stroke, fontSize, bold, italic, textAlign, verticalAlign });
+      ctx.styleClipboard.set(pickShapeStyle(selected.data));
     },
   },
   {
@@ -609,6 +608,7 @@ export const commandDeclarations: Command[] = [
     title: 'Paste style',
     group: 'style',
     shortcut: { key: 'v', meta: true, alt: true },
+    when: (ctx) => ctx.styleClipboard.get() !== null,
     run: (ctx) => {
       const style = ctx.styleClipboard.get();
       if (style) ctx.store.getState().updateSelectedNodesData(style);

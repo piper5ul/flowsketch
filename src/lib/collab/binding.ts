@@ -67,6 +67,7 @@ import { sanitizeVotingSession } from '../voting';
 import { sanitizeTimer } from '../timer';
 import { normalizeTable } from '../table';
 import type { TableData } from '../../types';
+import { sanitizeConnectorData, sanitizeShapeData } from '../colorSafety';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -351,10 +352,11 @@ export function docNodesOntoStore(
   return normalizeParentage(
     serialized.map((node) => {
       const previous = byId.get(node.id);
-      const normalized = node.type === 'table' && node.data.table
-        ? { ...node, data: { ...node.data, table: normalizeTable(node.data.table as TableData) } }
-        : node;
-      const next = { ...normalized } as unknown as ShapeNode;
+      const data = sanitizeShapeData(node.data, node.type);
+      const next = {
+        ...node,
+        data: node.type === 'table' && data.table ? { ...data, table: normalizeTable(data.table as TableData) } : data,
+      } as unknown as ShapeNode;
       if (!previous) return next;
       return {
         ...next,
@@ -373,7 +375,10 @@ export function docEdgesOntoStore(
 ): ConnectorEdge[] {
   const byId = new Map(existing.map((edge) => [edge.id, edge]));
   return serialized.map((edge) => {
-    const next = { ...edge } as unknown as ConnectorEdge;
+    const next = {
+      ...edge,
+      data: sanitizeConnectorData(edge.data),
+    } as unknown as ConnectorEdge;
     const previous = byId.get(edge.id);
     return previous ? { ...next, selected: previous.selected } : next;
   });

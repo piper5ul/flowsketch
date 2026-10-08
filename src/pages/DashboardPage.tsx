@@ -5,7 +5,6 @@ import {
   Plus,
   Star,
   Trash2,
-  LogOut,
   MoreHorizontal,
   FileText,
   RotateCw,
@@ -17,7 +16,6 @@ import {
   FolderInput,
   PanelLeft,
 } from 'lucide-react';
-import { signOut, useSession } from '../lib/authClient';
 import { api } from '../lib/api';
 import {
   ALL_DIAGRAMS,
@@ -35,8 +33,9 @@ import {
 import { parseDiagramExport } from '../lib/diagramFile';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import type { DiagramData, DiagramMeta, FolderInfo } from '../../shared/types';
-import { Tooltip, TooltipProvider } from '../components/Tooltip';
+import { TooltipProvider } from '../components/Tooltip';
 import { Toasts } from '../components/Toasts';
+import { AccountMenu } from '../components/AccountMenu';
 import { FolderSidebar } from '../components/FolderSidebar';
 import { DIAGRAM_DRAG_TYPE } from '../lib/diagramDrag';
 import { toastError } from '../store/useToastStore';
@@ -50,7 +49,6 @@ const CARD_GRID = 'grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-
 type ListState = 'loading' | 'ready' | 'error';
 
 export function DashboardPage() {
-  const { data: session } = useSession();
   const navigate = useNavigate();
   const [diagrams, setDiagrams] = useState<DiagramMeta[]>([]);
   const [folders, setFolders] = useState<FolderInfo[]>([]);
@@ -249,11 +247,6 @@ export function DashboardPage() {
     }
   }, [diagrams, openMenu]);
 
-  const handleSignOut = useCallback(async () => {
-    await signOut();
-    navigate('/login');
-  }, [navigate]);
-
   /** One card, wired to the dashboard's state. Both sections render the same one. */
   const renderCard = (d: DiagramMeta) => (
     <DiagramCard
@@ -287,18 +280,7 @@ export function DashboardPage() {
         <header className="border-b border-line bg-panel/80 backdrop-blur">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
             <h1 className="text-lg font-bold text-ink-900">FlowSketch</h1>
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-ink-600">{session?.user?.name || session?.user?.email}</span>
-              <Tooltip label="Sign out" side="bottom">
-                <button
-                  onClick={handleSignOut}
-                  aria-label="Sign out"
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-600 transition hover:bg-hover hover:text-ink-900"
-                >
-                  <LogOut size={16} />
-                </button>
-              </Tooltip>
-            </div>
+            <AccountMenu />
           </div>
         </header>
 

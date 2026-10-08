@@ -15,8 +15,9 @@
    its value — see the theming note in CLAUDE.md.
 
    What deliberately does *not* move with the theme:
-   - `--color-ink-950` and the accents: the floating rail, toolbars, menus and
-     tooltips are dark chrome in both themes, so their ground is a constant.
+   - `--color-ink-950`, `--color-chrome*` and the accents: the floating rail,
+     toolbars, menus and tooltips are dark chrome in both themes, so their
+     ground is a constant.
    - `--color-shape-ink`: the label on a shape, whose colour is decided by the
      user's fill through `isDarkFill`, never by the theme. A white shape keeps
      dark text on a dark canvas.
@@ -31,12 +32,126 @@
   /* Dark chrome. Fixed: the rail and the floating toolbars are dark in both themes. */
   --color-ink-950: #12131a;
 
+  /* Selection toolbar and its popovers: dark slate in both themes. */
+  --color-chrome: oklch(0.33 0.03 248);
+  --color-chrome-track: oklch(0.4 0.033 248);
+  --color-chrome-ring: oklch(0.6 0.03 248 / 0.3);
+  --color-chrome-hover: oklch(1 0 0 / 0.1);
+  --color-chrome-selected: oklch(0.58 0.23 301);
+  --color-chrome-text: #ffffff;
+  --color-chrome-text-muted: oklch(1 0 0 / 0.6);
+  --shadow-chrome: 0 1px 2px -0.5px rgba(15,18,21,.04), 0 2px 3px -1px rgba(15,18,21,.08),
+                   0 3px 4px -1px rgba(15,18,21,.08), 0 6px 8px -1.5px rgba(15,18,21,.12);
+  --radius-chrome: 10px;
+
   /* Text drawn on top of a user-chosen fill. Never themed — see above. */
   --color-shape-ink: #181a24;
 
   --color-accent-500: #7c5cff;
   --color-accent-600: #6a45f5;
   --color-accent-400: #9b81ff;
+}
+
+/* Fixed selection toolbar chrome and its popovers (PR 1 foundations). */
+.chrome-bar {
+  height: 40px;
+  padding: 6px;
+  gap: 2px;
+  display: flex;
+  align-items: center;
+  background: var(--color-chrome);
+  border-radius: var(--radius-chrome);
+  box-shadow: var(--shadow-chrome), inset 0 0 0 1px var(--color-chrome-ring);
+  color: var(--color-chrome-text);
+}
+.chrome-btn {
+  position: relative;
+  width: 30px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  cursor: pointer;
+}
+.chrome-btn:hover { background: var(--color-chrome-hover); }
+.chrome-btn:disabled { opacity: .3; pointer-events: none; }
+.chrome-btn[aria-pressed="true"], .chrome-btn[data-active] { background: var(--color-chrome-selected); }
+.chrome-btn[data-popover]::after {
+  content: "";
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 5px;
+  height: 5px;
+  background: var(--color-chrome-selected);
+  clip-path: polygon(100% 0, 100% 100%, 0 100%);
+}
+.chrome-btn[data-popover][aria-pressed="true"]::after { background: #fff; }
+.chrome-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 6px;
+  background: var(--color-chrome-ring);
+  flex: none;
+}
+.chrome-track { display: flex; background: var(--color-chrome-track); border-radius: 6px; }
+.chrome-track > .chrome-btn { width: 32px; border-radius: 0; }
+.chrome-track > .chrome-btn:first-child { border-radius: 6px 0 0 6px; }
+.chrome-track > .chrome-btn:last-child { border-radius: 0 6px 6px 0; }
+.chrome-pop {
+  background: var(--color-chrome);
+  border-radius: var(--radius-chrome);
+  padding: 7px;
+  box-shadow: var(--shadow-chrome), inset 0 0 0 1px var(--color-chrome-ring);
+  color: #fff;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 28px);
+  grid-auto-rows: 28px;
+  gap: 0;
+}
+.color-cell {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: transparent;
+  cursor: pointer;
+}
+.color-cell:hover, .color-cell:focus-visible { box-shadow: inset 0 0 0 1px var(--color-chrome-ring); }
+.color-cell:focus-visible { outline: none; }
+.color-cell[aria-pressed="true"] { background: var(--color-chrome-selected); }
+.color-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px var(--color-chrome-ring);
+}
+.color-circle[data-white="true"] { box-shadow: inset 0 0 0 2px #fff; }
+.swatch-name {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 6px);
+  transform: translateX(-50%);
+  z-index: 1;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--color-chrome);
+  box-shadow: var(--shadow-chrome), inset 0 0 0 1px var(--color-chrome-ring);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 /* The themed half. `inline` is what makes `bg-panel` compile to
@@ -723,4 +838,11 @@ a:focus-visible {
   .timer-flash {
     animation: none;
   }
+}
+
+/* A tooltip is a label, never a target (see `Tooltip.tsx`). Radix positions it
+   inside a wrapper of its own, and that wrapper is a box the pointer can hit
+   just as well as the tooltip itself, so both have to let a click through. */
+[data-radix-popper-content-wrapper]:has(> .app-tooltip) {
+  pointer-events: none;
 }

@@ -69,6 +69,16 @@ describe('pickShapeStyle', () => {
   it('drops keys that are absent or explicitly undefined', () => {
     expect(pickShapeStyle({ fill: '#FF0000', stroke: undefined })).toEqual({ fill: '#FF0000' });
   });
+
+  it('keeps the transparent toggle and each new fill look', () => {
+    for (const fillStyle of ['tinted', 'dashed'] as const) {
+      expect(pickShapeStyle({ fill: '#FF0000', fillStyle, transparent: true })).toEqual({
+        fill: '#FF0000',
+        fillStyle,
+        transparent: true,
+      });
+    }
+  });
 });
 
 describe('pickConnectorStyle', () => {
@@ -137,6 +147,45 @@ describe('sanitizeDefaults', () => {
       sticky: { fill: '#FBF3D0' },
       text: { fontSize: 30 },
       connector: { stroke: '#123456' },
+    });
+  });
+
+  it('keeps the transparent toggle and new fill looks in shape defaults', () => {
+    expect(
+      sanitizeDefaults({
+        shape: { fill: '#FF0000', fillStyle: 'tinted', transparent: true },
+        sticky: { fillStyle: 'dashed', transparent: false },
+      }),
+    ).toEqual({
+      shape: { fill: '#FF0000', fillStyle: 'tinted', transparent: true },
+      sticky: { fillStyle: 'dashed', transparent: false },
+    });
+  });
+
+  it.each([
+    ['URL', 'url(https://attacker.example/pixel)'],
+    ['CSS expression', 'expression(alert(1))'],
+    ['number', 42],
+    ['object', { value: '#FF0000' }],
+    ['custom property', 'var(--x)'],
+  ])('drops a %s from every colour field in defaults', (_label, unsafe) => {
+    expect(
+      sanitizeDefaults({
+        shape: { fill: unsafe, stroke: unsafe, textColor: unsafe, fillStyle: 'bogus', transparent: 'yes' },
+        connector: { stroke: unsafe },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('keeps a legacy palette colour exactly while dropping invalid look values', () => {
+    expect(
+      sanitizeDefaults({
+        shape: { fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE', fillStyle: 'legacy', transparent: 1 },
+        connector: { stroke: '#236DAE' },
+      }),
+    ).toEqual({
+      shape: { fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' },
+      connector: { stroke: '#236DAE' },
     });
   });
 

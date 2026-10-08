@@ -110,6 +110,7 @@ export function TextFormatBar() {
           value={{ fontSize, bold, italic, underline, strikethrough, textColor, textAlign, verticalAlign }}
           onChange={apply}
           target={isEdge ? 'connectorLabel' : 'shape'}
+          keepEditorFocus
         />
       </div>
     </div>

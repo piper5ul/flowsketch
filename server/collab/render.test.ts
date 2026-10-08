@@ -91,6 +91,53 @@ describe('docToDiagramData', () => {
     expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['a', 'b']);
   });
 
+  it.each([
+    'url(https://attacker.example/pixel)',
+    'expression(alert(1))',
+    42,
+    { value: '#FF0000' },
+    'var(--x)',
+  ])('narrows colours and fill looks from document nodes and edges (%s)', (unsafe) => {
+    const doc = new Y.Doc();
+    nodeEntries(doc).set('n1', {
+      order: 0,
+      value: {
+        ...node('n1'),
+        data: {
+          shape: 'rectangle', fill: unsafe, stroke: unsafe, textColor: unsafe,
+          fillStyle: 'legacy', transparent: 'yes',
+        },
+      } as never,
+    });
+    edgeEntries(doc).set('e1', {
+      order: 0,
+      value: { ...edge('e1', 'n1', 'n2'), data: { stroke: unsafe } } as never,
+    });
+
+    const rendered = docToDiagramData(doc);
+    expect(rendered.nodes[0].data).toMatchObject({ fill: '#FFFFFF', stroke: '#CBD5E1' });
+    expect(rendered.nodes[0].data).not.toHaveProperty('textColor');
+    expect(rendered.nodes[0].data).not.toHaveProperty('fillStyle');
+    expect(rendered.nodes[0].data).not.toHaveProperty('transparent');
+    expect(rendered.edges[0].data?.stroke).toBe('#788896');
+  });
+
+  it('keeps legacy palette hexes unchanged in document nodes and edges', () => {
+    const doc = new Y.Doc();
+    nodeEntries(doc).set('n1', {
+      order: 0,
+      value: { ...node('n1'), data: { shape: 'rectangle', fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' } } as never,
+    });
+    edgeEntries(doc).set('e1', {
+      order: 0,
+      value: { ...edge('e1', 'n1', 'n2'), data: { stroke: '#236DAE' } } as never,
+    });
+
+    const rendered = docToDiagramData(doc);
+    expect(rendered.nodes[0].data).toMatchObject({ fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' });
+    expect(rendered.edges[0].data?.stroke).toBe('#236DAE');
+  });
+
   it('breaks a tie on order by id, so every window draws the same board', () => {
     const doc = new Y.Doc();
     const nodes = nodeEntries(doc);
@@ -170,6 +217,13 @@ describe('docToDiagramData', () => {
     const without = new Y.Doc();
     seedDocFromDiagramData(without, diagram());
     expect('defaults' in docToDiagramData(without)).toBe(false);
+  });
+
+  it('keeps the transparent toggle in shape defaults when rendering a document', () => {
+    const doc = new Y.Doc();
+    seedDocFromDiagramData(doc, diagram({ defaults: { shape: { transparent: true } } }));
+
+    expect(docToDiagramData(doc).defaults).toEqual({ shape: { transparent: true } });
   });
 
   it('narrows a default the document holds to style keys before writing it out', () => {

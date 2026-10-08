@@ -109,6 +109,14 @@ function isTypingTarget(el: EventTarget | null) {
   return el.isContentEditable || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
 }
 
+/** Canvas shortcuts do not own keystrokes inside menus and popovers. */
+function isCanvasControlTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.closest(
+    '[data-radix-popper-content-wrapper], [data-radix-popover-content], [data-radix-menu-content], [role="menu"], [role="menuitem"], [role="radiogroup"], [role="listbox"]',
+  ) !== null;
+}
+
 /**
  * Writes what has been typed into the open label to the store, without closing
  * it — for the mind-map keystrokes, which grow the map while the label the user
@@ -133,7 +141,10 @@ function commitOpenLabel(target: EventTarget | null) {
  * in read-only mode under a slim header of its own, and the editing top bar —
  * title field, star, Share, History — belongs to a signed-in reader.
  */
-export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
+export function Canvas({
+  topBar = true,
+  beforeSignOut,
+}: { topBar?: boolean; beforeSignOut?: () => Promise<boolean> } = {}) {
   const nodes = useDiagramStore((s) => s.nodes);
   const edges = useDiagramStore((s) => s.edges);
   const onNodesChange = useDiagramStore((s) => s.onNodesChange);
@@ -1062,6 +1073,10 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
     function onKeyDown(e: KeyboardEvent) {
       // The sheet is modal: it takes Escape itself and swallows the rest.
       if (shortcutsOpen) return;
+      // Menus, popovers, radios and listboxes own their keyboard interactions.
+      // In particular, Space activates a picker button and ⌘Z in the native
+      // colour input is not a canvas history command.
+      if (isCanvasControlTarget(e.target)) return;
       if (isTypingTarget(e.target)) {
         // …with one exception. **A mind map is typed, not clicked**: Tab and
         // Enter make the next node while the label is still open, so a
@@ -1270,7 +1285,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       {/* Every piece of chrome goes while a slide is up: the top bar, the rail,
           both floating toolbars, the bottom bar and the find bar. What is left
           on screen is the frame and what is inside it. */}
-      {topBar && !presenting && <TopBar />}
+      {topBar && !presenting && <TopBar beforeSignOut={beforeSignOut} />}
       {!readOnly && !presenting && (
         <>
           <LeftRail wirePickerOpen={wirePickerOpen} onWirePickerOpenChange={setWirePickerOpen} />
@@ -1278,7 +1293,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
           <TextFormatBar />
         </>
       )}
-      {!presenting && <BottomBar onRunCommand={runCommand} />}
+      {!presenting && <BottomBar onRunCommand={runCommand} showTheme={!topBar} />}
       {/* Rendered whether or not the board can be edited: ⌘F is a way of
           reading a diagram, and the public share page mounts this too. */}
       {!presenting && <SearchBar belowTopBar={topBar} />}

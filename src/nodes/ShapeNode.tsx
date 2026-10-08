@@ -14,6 +14,7 @@ import { hasMarkdown, parseMarkdown } from '../lib/markdown';
 import { MarkdownLabel } from '../components/MarkdownLabel';
 import {
   CYLINDER_SEAM,
+  DASH_ARRAY,
   shapePaint,
 } from '../lib/shapeStyle';
 import { isClipShape, svgPaths, textInset } from '../lib/shapePaths';
@@ -216,9 +217,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   const textAlign = data.textAlign ?? (isText ? 'left' : 'center');
   const verticalAlign: VerticalAlign = data.verticalAlign ?? 'middle';
   const fontSizePx = resolveFontSize(data.fontSize);
-  // Which of the shape's two colours is actually drawn. A filled shape wears no
-  // outline at all — and no shadow: the board's grey is what it stands on — while
-  // an outline one is white with its stroke around it. Neither reads the stored pair differently — see
+  // Which fill and border the shape's stored look resolves to — see
   // `src/lib/shapeStyle.ts`.
   const paint = shapePaint(data);
   // The contrast that decides the label's colour is against what is *painted*,
@@ -302,6 +301,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
           background: hasClipShape || isCylinder ? 'transparent' : paint.fill,
           borderColor: paint.stroke ?? 'transparent',
           borderWidth: paint.stroke ? 1.5 : 0,
+          borderStyle: paint.dashed ? 'dashed' : 'solid',
           boxShadow: hasClipShape || isCylinder
             ? undefined
             : selected
@@ -323,6 +323,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
               strokeWidth="1.5"
               vectorEffect="non-scaling-stroke"
               strokeLinejoin="round"
+              strokeDasharray={paint.dashed ? DASH_ARRAY : undefined}
             />
           </svg>
         )}
@@ -346,6 +347,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
               strokeWidth="1.5"
               vectorEffect="non-scaling-stroke"
               strokeLinejoin="round"
+              strokeDasharray={paint.dashed ? DASH_ARRAY : undefined}
             />
             {/* The cap. A cylinder is the one silhouette made of two surfaces,
                 so a filled one keeps a hairline across its shoulder — without it

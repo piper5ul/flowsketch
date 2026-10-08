@@ -35,6 +35,7 @@ import { sanitizeThumbnailIds } from '../../src/lib/boardThumbnail.js';
 import { sanitizeVotingSession } from '../../src/lib/voting.js';
 import { sanitizeTimer } from '../../src/lib/timer.js';
 import { normalizeTable } from '../../src/lib/table.js';
+import { sanitizeConnectorData, sanitizeShapeData } from '../../src/lib/colorSafety.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -74,8 +75,14 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
   const timer = sanitizeTimer(timerOf(doc));
   return {
     version: CURRENT_DIAGRAM_VERSION,
-    nodes: nodesOf(doc).map(normalizeTableNode),
-    edges: edgesOf(doc),
+    nodes: nodesOf(doc).map((node) => normalizeTableNode({
+      ...node,
+      data: sanitizeShapeData(node.data, node.type),
+    })),
+    edges: edgesOf(doc).map((edge) => ({
+      ...edge,
+      data: sanitizeConnectorData(edge.data),
+    })),
     // Left out entirely rather than written as null, exactly as
     // `serializeDiagram` does: a diagram nobody has panned should open framed
     // on whatever screen it is opened on.

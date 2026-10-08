@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeMarkers, serializeDiagram, useDiagramStore } from './useDiagramStore';
+import {
+  computeMarkers,
+  createDiagramPictureChangeTracker,
+  diagramPictureChanged,
+  serializeDiagram,
+  useDiagramStore,
+  type ConnectorEdge,
+  type ShapeNode,
+} from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
 import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
@@ -12,7 +20,7 @@ import {
   setCell,
   setColumnWidth,
 } from '../lib/table';
-import { DEFAULT_SWATCH } from '../lib/palette';
+import { DEFAULT_SWATCH, PALETTE } from '../lib/palette';
 import { WIRE_FILL, WIRE_STROKE, defaultSizeOf } from '../lib/wireframe';
 import type { InkPoint } from '../types';
 import {
@@ -69,7 +77,7 @@ describe('addShape', () => {
   it('gives sticky notes and text their own fixed styling', () => {
     const stickyId = store().addShape('sticky', { x: 0, y: 0 });
     const sticky = store().nodes.find((n) => n.id === stickyId)!;
-    expect(sticky.data).toMatchObject({ fill: '#FBF3D0', stroke: '#E9B10A' });
+    expect(sticky.data).toMatchObject({ fill: '#FBF1D3', stroke: '#F0C54F' });
 
     const textId = store().addShape('text', { x: 0, y: 0 });
     const text = store().nodes.find((n) => n.id === textId)!;
@@ -1753,6 +1761,95 @@ describe('updateSelectedNodesStyle', () => {
   });
 });
 
+describe('updateSelectedNodesColour', () => {
+  it('applies palette pairs to selected shapes and stickies as one undoable edit', () => {
+    const rectangle = store().addShape('rectangle', { x: 0, y: 0 });
+    const sticky = store().addShape('sticky', { x: 200, y: 0 });
+    const image = store().addImageNode({ src: '/api/images/x', width: 40, height: 40, position: { x: 400, y: 0 } });
+    const firstMember = store().addShape('rectangle', { x: 600, y: 0 });
+    const secondMember = store().addShape('rectangle', { x: 800, y: 0 });
+    select(firstMember, secondMember);
+    store().groupSelected();
+    const group = store().nodes.find((node) => node.type === 'group')!;
+
+    select(rectangle, sticky, image, group.id);
+    const before = new Map(store().nodes.map((node) => [node.id, { ...node.data }]));
+    const blue = PALETTE.find((swatch) => swatch.id === 'blue')!;
+
+    store().updateSelectedNodesColour(blue);
+
+    expect(store().nodes.find((node) => node.id === rectangle)!.data).toMatchObject({
+      fill: blue.fill,
+      stroke: blue.stroke,
+    });
+    expect(store().nodes.find((node) => node.id === sticky)!.data).toMatchObject({
+      fill: blue.sticky,
+      stroke: blue.stroke,
+    });
+    expect(store().nodes.find((node) => node.id === image)!.data).toEqual(before.get(image));
+    expect(store().nodes.find((node) => node.id === group.id)!.data).toEqual(before.get(group.id));
+    expect(store().newShapeData('rectangle')).toMatchObject({ fill: blue.fill, stroke: blue.stroke });
+    expect(store().newShapeData('sticky')).toMatchObject({ fill: blue.sticky, stroke: blue.stroke });
+
+    store().undo();
+
+    expect(store().nodes.find((node) => node.id === rectangle)!.data).toEqual(before.get(rectangle));
+    expect(store().nodes.find((node) => node.id === sticky)!.data).toEqual(before.get(sticky));
+  });
+});
+
+describe('toggleSelectedNodesTransparent', () => {
+  it('keeps each selected look while making a mixed Fill/Dash selection transparent, and undoes once', () => {
+    const fill = store().addShape('rectangle', { x: 0, y: 0 });
+    const dash = store().addShape('star', { x: 200, y: 0 });
+    store().updateNodeData(dash, { fillStyle: 'dashed' });
+    select(fill, dash);
+    const before = new Map(
+      store().nodes.map((node) => [node.id, { ...node.data }]),
+    );
+
+    store().toggleSelectedNodesTransparent();
+
+    expect(store().nodes.find((node) => node.id === fill)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    expect(store().nodes.find((node) => node.id === dash)!.data).toMatchObject({
+      fillStyle: 'dashed',
+      transparent: true,
+    });
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === fill)!.data).toEqual(before.get(fill));
+    expect(store().nodes.find((node) => node.id === dash)!.data).toEqual(before.get(dash));
+  });
+
+  it('turns Transparent off in one undoable edit and restores it on undo', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    const original = { ...store().nodes.find((node) => node.id === id)!.data };
+
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: false,
+    });
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toEqual(original);
+  });
+});
+
 describe('updateSelectedNodesData', () => {
   it('formats every selected shape at once', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
@@ -1830,6 +1927,18 @@ describe('updateSelectedNodesData', () => {
 
     store().undo();
     expect(store().nodes.map((n) => n.data.fillStyle)).toEqual(['outline', 'outline']);
+  });
+
+  it.each(['tinted', 'dashed'] as const)('undo restores the stored pair after the %s look', (fillStyle) => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    const before = { ...store().nodes.find((node) => node.id === id)!.data };
+
+    store().updateSelectedNodesData({ fillStyle });
+    expect(store().nodes.find((node) => node.id === id)!.data.fillStyle).toBe(fillStyle);
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toEqual(before);
   });
 
   it('leaves an image out of a fill-style change, as it has no fill to style', () => {
@@ -1982,6 +2091,185 @@ describe('serializeDiagram', () => {
     store().addConnectedShape(a, 'right');
     const saved = JSON.parse(JSON.stringify(serializeDiagram(store().nodes, store().edges)));
     expect(migrateDiagramData(saved)).toEqual(saved);
+  });
+});
+
+describe('diagramPictureChanged', () => {
+  const node = (overrides: Record<string, unknown> = {}) => ({
+    id: 'node-1',
+    type: 'shape',
+    position: { x: 10, y: 20 },
+    width: 180,
+    height: 100,
+    data: { shape: 'rectangle', label: 'Start', fill: '#ffffff', stroke: '#111111' },
+    ...overrides,
+  }) as unknown as ShapeNode;
+
+  const edge = (overrides: Record<string, unknown> = {}) => ({
+    id: 'edge-1',
+    source: 'node-1',
+    target: 'node-2',
+    type: 'connector',
+    sourceHandle: 'right',
+    targetHandle: 'left',
+    zIndex: 0,
+    data: { connectorType: 'straight', stroke: '#111111', strokeStyle: 'solid', label: '' },
+    ...overrides,
+  }) as unknown as ConnectorEdge;
+
+  it('ignores React Flow selection, measurement and dragging state', () => {
+    const nodes = [node()];
+    const edges = [edge()];
+    const transientNodes = [node({
+      selected: true,
+      dragging: true,
+      measured: { width: 220, height: 120 },
+    })];
+    const selectedEdges = [edge({ selected: true })];
+
+    expect(diagramPictureChanged(nodes, edges, transientNodes, selectedEdges)).toBe(false);
+  });
+
+  it('marks label, committed position and fill changes dirty', () => {
+    const nodes = [node()];
+    const edges: ConnectorEdge[] = [];
+
+    expect(diagramPictureChanged(nodes, edges, [node({ data: { ...nodes[0].data, label: 'Finish' } })], edges)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, [node({ position: { x: 11, y: 20 } })], edges)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, [node({ data: { ...nodes[0].data, fill: '#ff0000' } })], edges)).toBe(true);
+  });
+
+  it('marks voting start, reveal and clear as picture changes with stable nodes and edges', () => {
+    const nodes = [node({
+      data: { shape: 'rectangle', label: 'Start', fill: '#ffffff', stroke: '#111111', votes: { voter: 1 } },
+    })];
+    const edges: ConnectorEdge[] = [];
+    const started = { active: true, revealed: false, dotsPerPerson: 3, startedById: 'voter' };
+    const revealed = { ...started, active: false, revealed: true };
+
+    expect(diagramPictureChanged(nodes, edges, nodes, edges, null, started)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, nodes, edges, started, revealed)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, nodes, edges, revealed, null)).toBe(true);
+
+    const tracker = createDiagramPictureChangeTracker();
+    expect(tracker.update(nodes, edges, nodes, edges, true, null, started)).toBe(false);
+    expect(tracker.checkPending(nodes, edges, started)).toBe(true);
+  });
+
+  it('marks edge addition and removal dirty', () => {
+    const nodes: ShapeNode[] = [];
+    const edges: ConnectorEdge[] = [];
+    const withEdge = [edge()];
+
+    expect(diagramPictureChanged(nodes, edges, nodes, withEdge)).toBe(true);
+    expect(diagramPictureChanged(nodes, withEdge, nodes, edges)).toBe(true);
+  });
+
+  it('skips unchanged array references and reuses each reference’s serialized key', () => {
+    let positionReads = 0;
+    const countedNode = {
+      id: 'counted',
+      type: 'shape',
+      get position() {
+        positionReads += 1;
+        return { x: 0, y: 0 };
+      },
+      width: 100,
+      height: 60,
+      data: { shape: 'rectangle', label: 'Counted', fill: '#ffffff', stroke: '#111111' },
+    } as unknown as ShapeNode;
+    const nodes = [countedNode];
+    const changed = [node({
+      id: 'counted',
+      data: { shape: 'rectangle', label: 'Changed', fill: '#ffffff', stroke: '#111111' },
+    })];
+    const edges: ConnectorEdge[] = [];
+
+    expect(diagramPictureChanged(nodes, edges, changed, edges)).toBe(true);
+    const readsAfterFirstCompare = positionReads;
+    expect(readsAfterFirstCompare).toBe(1);
+
+    expect(diagramPictureChanged(nodes, edges, changed, edges)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, nodes, edges)).toBe(false);
+    expect(positionReads).toBe(readsAfterFirstCompare);
+
+    let sourceReads = 0;
+    const countedEdge = {
+      id: 'counted-edge',
+      get source() {
+        sourceReads += 1;
+        return 'node-1';
+      },
+      target: 'node-2',
+      type: 'connector',
+      data: {},
+    } as unknown as ConnectorEdge;
+    const edgeList = [countedEdge];
+    const changedEdgeList = [edge({ id: 'counted-edge', data: { label: 'changed' } })];
+    expect(diagramPictureChanged(nodes, edgeList, nodes, changedEdgeList)).toBe(true);
+    expect(sourceReads).toBe(1);
+    expect(diagramPictureChanged(nodes, edgeList, nodes, changedEdgeList)).toBe(true);
+    expect(sourceReads).toBe(1);
+  });
+
+  it('does not serialize nodes during transient frames and checks once at an explicit checkpoint', () => {
+    const nodes = [node()];
+    const edges: ConnectorEdge[] = [];
+    const transientNodes = [node({ position: { x: 11, y: 20 } })];
+    const committedNodes = [node({ position: { x: 12, y: 20 } })];
+    const tracker = createDiagramPictureChangeTracker();
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    tracker.update(nodes, edges, transientNodes, edges, true);
+    const transientSerializationCount = stringify.mock.calls.length;
+    tracker.update(transientNodes, edges, committedNodes, edges, false);
+    const preCheckpointSerializationCount = stringify.mock.calls.length - transientSerializationCount;
+    const changed = tracker.checkPending(committedNodes, edges);
+    const checkpointSerializationCount = stringify.mock.calls.length - transientSerializationCount;
+    stringify.mockRestore();
+
+    expect(transientSerializationCount).toBe(0);
+    expect(preCheckpointSerializationCount).toBe(0);
+    expect(changed).toBe(true);
+    expect(checkpointSerializationCount).toBe(2);
+  });
+
+  it('leaves pending transient work untouched by an unrelated store notification', () => {
+    const nodes = [node()];
+    const edges: ConnectorEdge[] = [];
+    const transientNodes = [node({ position: { x: 11, y: 20 } })];
+    const tracker = createDiagramPictureChangeTracker();
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    tracker.update(nodes, edges, transientNodes, edges, true);
+    const unrelatedChange = tracker.update(transientNodes, edges, transientNodes, edges, false);
+    const notificationSerializationCount = stringify.mock.calls.length;
+    const stillPending = tracker.hasPending();
+    stringify.mockRestore();
+
+    expect(unrelatedChange).toBe(false);
+    expect(notificationSerializationCount).toBe(0);
+    expect(stillPending).toBe(true);
+  });
+
+  it('serializes only the changed node in a 500-node comparison', () => {
+    const nodes = Array.from({ length: 500 }, (_, index) => node({
+      id: `node-${index}`,
+      position: { x: index * 12, y: index * 7 },
+      data: { shape: 'rectangle', label: `Node ${index}`, fill: '#ffffff', stroke: '#111111' },
+    }));
+    const edges: ConnectorEdge[] = [];
+    const changed = nodes.map((current, index) => index === 0
+      ? node({ ...current, data: { ...current.data, label: 'Updated' } })
+      : current);
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    const isDirty = diagramPictureChanged(nodes, edges, changed, edges);
+    const serializedNodeCount = stringify.mock.calls.length;
+    stringify.mockRestore();
+
+    expect(isDirty).toBe(true);
+    expect(serializedNodeCount).toBe(2);
   });
 });
 
@@ -2983,6 +3271,7 @@ describe('layoutSelected', () => {
 describe('pasteAsStickies', () => {
   const origin = { x: 200, y: 120 };
   const stickies = () => store().nodes.filter((n) => n.data.shape === 'sticky');
+  const yellow = PALETTE.find((swatch) => swatch.id === 'yellow')!;
 
   it('makes one selected note per line, at the sticky note\'s own size and colour', () => {
     const ids = store().pasteAsStickies('- milk\n- eggs\n- bread', origin);
@@ -2995,7 +3284,7 @@ describe('pasteAsStickies', () => {
         width: 160,
         height: 160,
         selected: true,
-        data: { shape: 'sticky', fill: '#FBF3D0', stroke: '#E9B10A' },
+        data: { shape: 'sticky', fill: yellow.sticky, stroke: yellow.stroke },
       });
     }
     expect(stickies().map((n) => n.data.label)).toEqual(['milk', 'eggs', 'bread']);

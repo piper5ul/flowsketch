@@ -6,17 +6,19 @@ import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useCollabStore } from '../store/useCollabStore';
-import { useDiagramStore } from '../store/useDiagramStore';
+import { createDiagramPictureChangeTracker, useDiagramStore } from '../store/useDiagramStore';
 import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
 import { thumbnailSubsetIds } from '../lib/boardThumbnail';
+import { listenForCanvasPointerActivity } from '../lib/canvasPointerActivity';
 import { renderDiagramPng } from '../lib/exportImage';
 import { backfillBase64Images, findBase64ImageNodes } from '../lib/imageBackfill';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
 import { toastError } from '../store/useToastStore';
 
 const AUTOSAVE_DELAY_MS = 2000;
+const THUMBNAIL_TRANSIENT_QUIET_MS = 500;
 
 export function CanvasPage() {
   const { id } = useParams<{ id: string }>();
@@ -61,6 +63,16 @@ export function CanvasPage() {
   const viewerId = session?.user.id ?? null;
   /** The diagram whose image backfill has already been started on this page. */
   const backfilled = useRef<string | null>(null);
+  const flushBoardRef = useRef<() => Promise<boolean>>(async () => true);
+  const flushTitleRef = useRef<() => Promise<boolean>>(async () => true);
+
+  const beforeSignOut = useCallback(async () => {
+    const boardSaved = bound
+      ? await useDiagramStore.getState().saveDiagram() === 'saved'
+      : await flushBoardRef.current();
+    if (!boardSaved) return false;
+    return flushTitleRef.current();
+  }, [bound]);
 
   // A 401 elsewhere in the app means "go and sign in"; here it means "the edits
   // on screen have nowhere to go yet", and navigating would be what loses them.
@@ -205,7 +217,12 @@ export function CanvasPage() {
     // store it as A's thumbnail. Both ends of the capture check the store still
     // holds this diagram.
     const isCurrent = () => useDiagramStore.getState().diagramId === id;
+    let pointerDown = false;
+    let lastTransientAt = Number.NEGATIVE_INFINITY;
+    let pendingPictureCheckTimer: ReturnType<typeof setTimeout> | null = null;
+    const pictureChanges = createDiagramPictureChangeTracker();
     const thumbnails = createThumbnailScheduler({
+      isBusy: () => pointerDown || Date.now() - lastTransientAt < THUMBNAIL_TRANSIENT_QUIET_MS,
       render: () => {
         if (!isCurrent()) return Promise.resolve(null);
         // A custom thumbnail names shapes, and a shape can be deleted while its
@@ -213,7 +230,11 @@ export function CanvasPage() {
         // What is left of it is what gets drawn; nothing left means the whole
         // board again, which is a better card than none. The stale ids stay put
         // (see `setThumbnailNodeIds`): the shape may come back.
-        const { thumbnailNodeIds, nodes } = useDiagramStore.getState();
+        const { thumbnailNodeIds, nodes, edges, voting } = useDiagramStore.getState();
+        // The quiet checkpoint usually resolves this. If another dirty update
+        // already queued a capture while a gesture was active, resolve it here
+        // against the live picture state before rasterizing.
+        pictureChanges.checkPending(nodes, edges, voting);
         const nodeIds = thumbnailSubsetIds(thumbnailNodeIds, nodes);
         return renderDiagramPng({
           pixelRatio: 1,
@@ -233,28 +254,91 @@ export function CanvasPage() {
       },
     });
 
-    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
-      // Neither a retitle nor a pan changes the picture, so only shape edits —
-      // and a change of *which* shapes the card is drawn from — mark the
-      // thumbnail stale.
-      if (state.thumbnailNodeIds !== prev.thumbnailNodeIds) {
-        // Captured at once rather than within the interval: this one is a
-        // command the user just ran, and a card that goes on showing the old
-        // picture for another half a minute reads as a menu item that did
-        // nothing. `markDirty` first, because `flush` only captures what is
-        // pending. Safe inside a subscription — the capture preserves the
-        // selection, so it writes nothing back to this store.
-        thumbnails.markDirty();
-        void thumbnails.flush();
+    const schedulePendingPictureCheck = () => {
+      if (pendingPictureCheckTimer !== null) clearTimeout(pendingPictureCheckTimer);
+      if (!pictureChanges.hasPending()) {
+        pendingPictureCheckTimer = null;
         return;
       }
-      if (state.nodes !== prev.nodes || state.edges !== prev.edges) thumbnails.markDirty();
+      const quietWait = Math.max(0, lastTransientAt + THUMBNAIL_TRANSIENT_QUIET_MS - Date.now());
+      pendingPictureCheckTimer = setTimeout(() => {
+        pendingPictureCheckTimer = null;
+        if (pointerDown || Date.now() - lastTransientAt < THUMBNAIL_TRANSIENT_QUIET_MS) {
+          schedulePendingPictureCheck();
+          return;
+        }
+        const { nodes, edges, voting } = useDiagramStore.getState();
+        if (pictureChanges.checkPending(nodes, edges, voting)) thumbnails.markDirty();
+      }, Math.max(quietWait, pointerDown ? 100 : 0));
+    };
+
+    const onPointerDown = () => {
+      pointerDown = true;
+      thumbnails.notifyInput();
+    };
+    const onPointerEnd = () => {
+      pointerDown = false;
+      thumbnails.notifyInput();
+      schedulePendingPictureCheck();
+    };
+    const onBlur = () => {
+      pointerDown = false;
+      thumbnails.notifyInput();
+      schedulePendingPictureCheck();
+    };
+    const onWheel = () => thumbnails.notifyInput('wheel');
+    const onKeyDown = () => thumbnails.notifyInput('keyboard');
+
+    const removePointerActivityListeners = listenForCanvasPointerActivity(
+      window,
+      onPointerDown,
+      onPointerEnd,
+    );
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('wheel', onWheel);
+    window.addEventListener('keydown', onKeyDown);
+
+    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
+      const transientChanged = state.transientSeq !== prev.transientSeq;
+      if (transientChanged) lastTransientAt = Date.now();
+      const alreadyPendingPictureCheck = pictureChanges.hasPending();
+      const pictureChanged = pictureChanges.update(
+        prev.nodes,
+        prev.edges,
+        state.nodes,
+        state.edges,
+        transientChanged,
+        prev.voting,
+        state.voting,
+      );
+      if (transientChanged) schedulePendingPictureCheck();
+      else if (!pictureChanges.hasPending() && pendingPictureCheckTimer !== null) {
+        clearTimeout(pendingPictureCheckTimer);
+        pendingPictureCheckTimer = null;
+      }
+      // Neither a retitle nor a pan changes the picture. Shape edits, visible
+      // voting changes, and a change of *which* shapes the card draws do.
+      if (state.thumbnailNodeIds !== prev.thumbnailNodeIds) {
+        // Bypass the interval for this explicit command, but let the scheduler
+        // wait until the canvas is idle and input has gone quiet.
+        thumbnails.markDirty({ urgent: true });
+        return;
+      }
+      if (transientChanged && !alreadyPendingPictureCheck) return;
+      if (!transientChanged && pictureChanged) {
+        thumbnails.markDirty();
+      }
     });
 
     void runImageBackfill(id);
 
     return () => {
       unsubscribe();
+      if (pendingPictureCheckTimer !== null) clearTimeout(pendingPictureCheckTimer);
+      removePointerActivityListeners();
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKeyDown);
       // Best-effort: the capture reads the live canvas, so it only produces a
       // thumbnail while the viewport is still mounted. `renderDiagramPng`
       // returns null once it is gone, which the scheduler treats as "nothing
@@ -272,9 +356,11 @@ export function CanvasPage() {
   useEffect(() => {
     if (loading || loadError || !id || readOnly || bound) return;
 
+    let latestOutcome: string | null = null;
     const autosaver = createAutosaver({
       save: async () => {
         const outcome = await useDiagramStore.getState().saveDiagram();
+        latestOutcome = outcome;
         // Neither a conflict nor an expired session is transient: another
         // attempt would be refused in exactly the same way, so the autosaver
         // stands down and the banner (or the re-auth dialog) takes over. It is
@@ -296,6 +382,14 @@ export function CanvasPage() {
         if (state === 'retrying' || state === 'error') useDiagramStore.setState({ saveStatus: state });
       },
     });
+
+    const flushPendingBoard = async () => {
+      if (!autosaver.isPending()) return true;
+      latestOutcome = null;
+      await autosaver.flush();
+      return latestOutcome === 'saved' && !autosaver.isPending();
+    };
+    flushBoardRef.current = flushPendingBoard;
 
     const unsubscribe = useDiagramStore.subscribe((state, prev) => {
       // A pan is a change worth saving on its own — the viewport is stored with
@@ -328,6 +422,7 @@ export function CanvasPage() {
     return () => {
       window.removeEventListener('pagehide', onPageHide);
       unsubscribe();
+      if (flushBoardRef.current === flushPendingBoard) flushBoardRef.current = async () => true;
       // Navigating away inside the debounce window must not drop the edit —
       // and a diagram that binds while a save is pending flushes it here, which
       // is what carries the last unsynced JSON edit into the document's world.
@@ -341,26 +436,54 @@ export function CanvasPage() {
   // sends a metadata-only PUT.
   useEffect(() => {
     if (loading || loadError || !id || readOnly) return;
-    let prevTitle = useDiagramStore.getState().title;
+    let latestTitle = useDiagramStore.getState().title;
+    let pending = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let inFlight: Promise<boolean> | null = null;
+
+    const flushPendingTitle = async (): Promise<boolean> => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (inFlight && !(await inFlight)) return false;
+      if (!pending) return true;
+
+      pending = false;
+      const title = latestTitle;
+      const request = api.saveDiagram(id, { title })
+        .then((result) => {
+          if (result?.updatedAt) useDiagramStore.getState().noteSaved(result.updatedAt);
+          return true;
+        })
+        .catch(() => {
+          pending = true;
+          return false;
+        });
+      inFlight = request;
+      const saved = await request;
+      if (inFlight === request) inFlight = null;
+      if (!saved) return false;
+      return pending ? flushPendingTitle() : true;
+    };
+    flushTitleRef.current = flushPendingTitle;
 
     const unsubscribe = useDiagramStore.subscribe((state) => {
-      if (state.title === prevTitle) return;
-      prevTitle = state.title;
+      if (state.title === latestTitle) return;
+      latestTitle = state.title;
+      pending = true;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
+        timer = null;
         if (useDiagramStore.getState().diagramId !== id) return;
-        void api.saveDiagram(id, { title: useDiagramStore.getState().title });
+        void flushPendingTitle();
       }, 1000);
     });
 
     return () => {
       unsubscribe();
       if (timer) clearTimeout(timer);
-      // Flush a pending title save on unmount.
-      if (useDiagramStore.getState().title !== prevTitle && useDiagramStore.getState().diagramId === id) {
-        void api.saveDiagram(id, { title: useDiagramStore.getState().title });
-      }
+      if (flushTitleRef.current === flushPendingTitle) flushTitleRef.current = async () => true;
+      // Leave a pending database-column update on the wire before the page goes.
+      if (pending || inFlight) void flushPendingTitle();
     };
   }, [loading, loadError, id, readOnly]);
 
@@ -394,7 +517,7 @@ export function CanvasPage() {
     <TooltipProvider>
       <ReactFlowProvider>
         <div className="h-screen w-screen overflow-hidden">
-          <Canvas />
+          <Canvas beforeSignOut={beforeSignOut} />
           {(saveStatus === 'unauthorized' || authFailed) && (
             // `session` is the one that just expired: better-auth keeps the
             // last response it read, so the address is usually still there to
