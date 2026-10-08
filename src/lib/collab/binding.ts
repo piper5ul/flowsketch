@@ -65,6 +65,8 @@ import { sanitizeDefaults, type BoardDefaults } from '../defaultStyle';
 import { sanitizeThumbnailIds } from '../boardThumbnail';
 import { sanitizeVotingSession } from '../voting';
 import { sanitizeTimer } from '../timer';
+import { normalizeTable } from '../table';
+import type { TableData } from '../../types';
 import { sanitizeConnectorData, sanitizeShapeData } from '../colorSafety';
 
 /**
@@ -350,9 +352,10 @@ export function docNodesOntoStore(
   return normalizeParentage(
     serialized.map((node) => {
       const previous = byId.get(node.id);
+      const data = sanitizeShapeData(node.data, node.type);
       const next = {
         ...node,
-        data: sanitizeShapeData(node.data, node.type),
+        data: node.type === 'table' && data.table ? { ...data, table: normalizeTable(data.table as TableData) } : data,
       } as unknown as ShapeNode;
       if (!previous) return next;
       return {

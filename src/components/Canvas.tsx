@@ -36,6 +36,7 @@ import {
 } from '../lib/ink';
 import { useImageInsert } from '../lib/useImageInsert';
 import { parseMermaidFlowchart, parseMermaidSequence } from '../lib/mermaid';
+import { parseTableHtml } from '../lib/tableHtml';
 import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_ROW_HEIGHT,
@@ -1043,18 +1044,19 @@ export function Canvas({
       }
 
       const text = data.getData('text/plain');
-      if (!text) return;
-      if (parseMermaidSequence(text)) {
-        e.preventDefault();
-        useDiagramStore.getState().pasteSequence(text, dropPoint());
-        return;
+      if (text) {
+        if (parseMermaidSequence(text)) {
+          e.preventDefault();
+          useDiagramStore.getState().pasteSequence(text, dropPoint());
+          return;
+        }
+        if (parseMermaidFlowchart(text)) {
+          e.preventDefault();
+          void useDiagramStore.getState().pasteMermaid(text, dropPoint());
+          return;
+        }
       }
-      if (parseMermaidFlowchart(text)) {
-        e.preventDefault();
-        void useDiagramStore.getState().pasteMermaid(text, dropPoint());
-        return;
-      }
-      const table = parseTableText(text);
+      const table = parseTableHtml(data.getData('text/html'), text) ?? (text ? parseTableText(text) : null);
       if (!table) return;
       e.preventDefault();
       useDiagramStore.getState().addTable(dropPoint(), table);

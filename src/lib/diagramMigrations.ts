@@ -56,7 +56,9 @@
  * so there is nothing an older spelling could be misread as. Like `defaults` it
  * is squared up rather than migrated — `normalizeTable`, applied in
  * `loadDiagram`, where a ragged grid out of the free-form JSON column would
- * otherwise reach the canvas.
+ * otherwise reach the canvas. Per-cell `styles` are optional too: absent means
+ * plain cells, and `normalizeTable` narrows them when a newer browser writes
+ * them into the free-form JSON column.
  *
  * **`ShapeData.wire` is the same case once more, and then some**: only a node
  * of type `wire` carries one, and a diagram written before wireframes existed
@@ -83,6 +85,7 @@ import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } fro
 import type { ArrowStyle, StrokeWidth } from '../types.js';
 import { computeMarkers } from './edgeMarkers.js';
 import { DEFAULT_EDGE_STROKE } from './defaults.js';
+import { normalizeTable } from './table.js';
 import { sanitizeDefaults } from './defaultStyle.js';
 import { sanitizeThumbnailIds } from './boardThumbnail.js';
 import { sanitizeVotingSession } from './voting.js';
@@ -104,6 +107,15 @@ function isNonEmptyString(value: unknown): value is string {
 
 function recordsOf(value: unknown): Bag[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function normalizeTableNode(node: Bag): Bag {
+  if (node.type !== 'table') return node;
+  const data = isRecord(node.data) ? node.data : {};
+  return {
+    ...node,
+    data: { ...data, table: normalizeTable(data.table) },
+  };
 }
 
 function sanitizeNodeColours(node: Bag): Bag {
@@ -273,7 +285,7 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const migrated: DiagramData = {
     ...data,
     version: CURRENT_DIAGRAM_VERSION,
-    nodes: recordsOf(data.nodes).map(sanitizeNodeColours) as unknown as SerializedNode[],
+    nodes: recordsOf(data.nodes).map((node) => normalizeTableNode(sanitizeNodeColours(node))) as unknown as SerializedNode[],
     // Whatever version it came in at: see `withCurrentMarkers`.
     edges: recordsOf(data.edges).map(sanitizeEdgeColours).map(withCurrentMarkers) as unknown as SerializedEdge[],
   };

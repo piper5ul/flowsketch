@@ -5,6 +5,7 @@ import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
 import { canQuickAddFrom, isFrameNode, isGroupNode } from '../lib/nodeKinds';
 import { slidesOf } from '../lib/presentation';
+import { parseTableHtml } from '../lib/tableHtml';
 import { parseTableText } from '../lib/table';
 import { subtreeIds } from '../lib/nodeTree';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf, pickShapeStyle } from '../lib/defaultStyle';
@@ -110,9 +111,31 @@ async function pasteMermaid(ctx: CommandContext) {
 /** "Paste as table": a Markdown pipe table, a TSV or a CSV, as one table node. */
 async function pasteAsTable(ctx: CommandContext) {
   const origin = ctx.dropPoint();
-  const text = await clipboardText();
-  if (text === null) return;
-  const table = parseTableText(text);
+  let html = '';
+  let text = '';
+  try {
+    const clipboard = navigator.clipboard;
+    if (typeof clipboard.read === 'function') {
+      const items = await clipboard.read();
+      for (const item of items) {
+        if (item.types.includes('text/html') && !html) {
+          html = await (await item.getType('text/html')).text();
+        }
+        if (item.types.includes('text/plain') && !text) {
+          text = await (await item.getType('text/plain')).text();
+        }
+      }
+    }
+  } catch {
+    // `read()` is not supported consistently; `readText()` below is the
+    // existing permission and error path for browsers that cannot use it.
+  }
+  let table = parseTableHtml(html, text) ?? parseTableText(text);
+  if (!table && !text) {
+    const fallback = await clipboardText();
+    if (fallback === null) return;
+    table = parseTableText(fallback);
+  }
   if (!table) {
     toastError("That isn't a table");
     return;

@@ -620,6 +620,57 @@ describe('voting and the timer', () => {
 });
 
 describe('doc -> store', () => {
+  it('narrows table cell styles from a collaborator before they reach the store', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+
+    const peer = new Y.Doc();
+    pushDiagramToDoc(
+      peer,
+      {
+        version: 3,
+        nodes: [{
+          id: 'remote-table',
+          type: 'table',
+          position: { x: 0, y: 0 },
+          width: 240,
+          height: 36,
+          data: {
+            label: '',
+            shape: 'rectangle',
+            fill: '#FFFFFF',
+            stroke: '#000000',
+            table: {
+              header: false,
+              columns: [{ width: 120 }, { width: 120 }],
+              rows: [{
+                cells: ['safe', 'hostile'],
+                styles: [
+                  { fill: '#112233', bold: true },
+                  {
+                    fill: 'url(javascript:alert(1))',
+                    color: 12,
+                    align: 3,
+                    bold: 'yes',
+                    italic: false,
+                  },
+                ],
+              }],
+            },
+          },
+        }],
+        edges: [],
+      },
+      'peer',
+    );
+    Y.applyUpdate(doc, Y.encodeStateAsUpdate(peer));
+
+    expect(store().nodes[0].data.table?.rows[0].styles).toEqual([
+      { fill: '#112233', bold: true },
+      { italic: false },
+    ]);
+  });
+
   it('renders a collaborator’s edit onto the canvas', () => {
     const doc = new Y.Doc();
     bind(doc);

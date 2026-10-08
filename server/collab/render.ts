@@ -18,7 +18,7 @@
  * apply it or the document would hold v0 content stamped as v3.
  */
 import type * as Y from 'yjs';
-import type { DiagramData } from '../../shared/types.js';
+import type { DiagramData, SerializedNode } from '../../shared/types.js';
 import {
   defaultsOf,
   edgesOf,
@@ -34,7 +34,18 @@ import { sanitizeDefaults } from '../../src/lib/defaultStyle.js';
 import { sanitizeThumbnailIds } from '../../src/lib/boardThumbnail.js';
 import { sanitizeVotingSession } from '../../src/lib/voting.js';
 import { sanitizeTimer } from '../../src/lib/timer.js';
+import { normalizeTable } from '../../src/lib/table.js';
 import { sanitizeConnectorData, sanitizeShapeData } from '../../src/lib/colorSafety.js';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function normalizeTableNode(node: SerializedNode): SerializedNode {
+  if (node.type !== 'table') return node;
+  const data = isRecord(node.data) ? node.data : {};
+  return { ...node, data: { ...data, table: normalizeTable(data.table) } };
+}
 
 /**
  * The diagram a document is currently holding, as the JSON snapshot.
@@ -64,7 +75,7 @@ export function docToDiagramData(doc: Y.Doc): DiagramData {
   const timer = sanitizeTimer(timerOf(doc));
   return {
     version: CURRENT_DIAGRAM_VERSION,
-    nodes: nodesOf(doc).map((node) => ({
+    nodes: nodesOf(doc).map((node) => normalizeTableNode({
       ...node,
       data: sanitizeShapeData(node.data, node.type),
     })),

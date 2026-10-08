@@ -155,6 +155,53 @@ describe('docToDiagramData', () => {
     expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['a']);
   });
 
+  it('normalizes hostile table cell styles before returning a snapshot', () => {
+    const doc = new Y.Doc();
+    nodeEntries(doc).set('table', {
+      order: 0,
+      value: {
+        id: 'table',
+        type: 'table',
+        position: { x: 0, y: 0 },
+        data: {
+          table: {
+            header: false,
+            columns: [{ width: 140 }],
+            rows: [{ cells: ['unsafe'], styles: [{ fill: 'url(https://attacker.invalid/payload)', color: '#123456' }] }],
+          },
+        },
+      } as never,
+    });
+
+    const snapshot = docToDiagramData(doc);
+    expect(snapshot.nodes[0]!.data.table).toMatchObject({
+      rows: [{ cells: ['unsafe'], styles: [{ color: '#123456' }] }],
+    });
+    expect(JSON.stringify(snapshot.nodes[0]!.data.table)).not.toContain('url(');
+  });
+
+  it('supplies a normalized blank table when a document table has no usable payload', () => {
+    const doc = new Y.Doc();
+    const nodes = nodeEntries(doc);
+    nodes.set('missing', {
+      order: 0,
+      value: { id: 'missing', type: 'table', position: { x: 0, y: 0 }, data: {} } as never,
+    });
+    nodes.set('invalid', {
+      order: 1,
+      value: { id: 'invalid', type: 'table', position: { x: 0, y: 0 }, data: { table: 'invalid' } } as never,
+    });
+
+    const snapshot = docToDiagramData(doc);
+    for (const node of snapshot.nodes) {
+      expect(node.data.table).toMatchObject({
+        header: false,
+        columns: [{ width: 140 }],
+        rows: [{ cells: [''] }],
+      });
+    }
+  });
+
   it('ignores a viewport the document holds in a shape React Flow could not use', () => {
     const doc = new Y.Doc();
     docMeta(doc).set(VIEWPORT_KEY, { x: 1, y: 2 });

@@ -97,6 +97,49 @@ describe('migrateDiagramData', () => {
     expect(migrated.edges).toEqual([]);
   });
 
+  it('normalizes hostile cell styles on table nodes', () => {
+    const migrated = migrateDiagramData({
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [{
+        id: 't1',
+        type: 'table',
+        position: { x: 0, y: 0 },
+        data: {
+          table: {
+            header: false,
+            columns: [{ width: 140 }],
+            rows: [{ cells: ['unsafe'], styles: [{ fill: 'url(https://attacker.invalid/payload)', color: '#123456' }] }],
+          },
+        },
+      }],
+      edges: [],
+    });
+
+    expect(migrated.nodes[0]!.data.table).toMatchObject({
+      rows: [{ cells: ['unsafe'], styles: [{ color: '#123456' }] }],
+    });
+    expect(JSON.stringify(migrated.nodes[0]!.data.table)).not.toContain('url(');
+  });
+
+  it('supplies a normalized blank table when a table node has no usable table payload', () => {
+    const migrated = migrateDiagramData({
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [
+        { id: 'missing', type: 'table', position: { x: 0, y: 0 }, data: {} },
+        { id: 'invalid', type: 'table', position: { x: 0, y: 0 }, data: { table: 'invalid' } },
+      ],
+      edges: [],
+    });
+
+    for (const node of migrated.nodes) {
+      expect(node.data.table).toMatchObject({
+        header: false,
+        columns: [{ width: 140 }],
+        rows: [{ cells: [''] }],
+      });
+    }
+  });
+
   describe('v1 -> v2: arrowhead booleans become styles', () => {
     /** A v1 edge, with `data` overridden by `patch`. */
     function v1Edge(patch: Record<string, unknown>) {

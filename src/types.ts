@@ -165,10 +165,19 @@ export type { MindMapNodeData, WireData };
 export interface TableData {
   /** One per column, left to right. `width` is in board pixels. */
   columns: { width: number }[];
-  /** One per row, top to bottom, each with one string per column. */
-  rows: { cells: string[] }[];
+  /** One per row, top to bottom, each with one string per column and optional parallel styles. */
+  rows: { cells: string[]; styles?: (TableCellStyle | null)[] }[];
   /** Whether the first row is drawn as a header. */
   header: boolean;
+}
+
+/** Optional visual formatting for one table cell. */
+export interface TableCellStyle {
+  bold?: boolean;
+  italic?: boolean;
+  fill?: string;
+  color?: string;
+  align?: 'left' | 'center' | 'right';
 }
 
 /**
