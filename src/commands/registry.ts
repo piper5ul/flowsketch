@@ -126,6 +126,20 @@ export function formatShortcut(
   return platform === 'mac' ? parts.join('') : parts.join('+');
 }
 
+/** The modifier and key chips shown beside a command in the overflow menu. */
+export function shortcutChips(
+  shortcut: Keybinding | Keybinding[] | undefined,
+  platform: Platform = detectPlatform(),
+): string[] {
+  const binding = Array.isArray(shortcut) ? shortcut[0] : shortcut;
+  if (!binding) return [];
+  const modifiers = platform === 'mac' ? MAC_MODIFIERS : OTHER_MODIFIERS;
+  return [
+    ...modifiers.filter(([flag]) => binding[flag]).map(([, glyph]) => glyph),
+    keyLabel(binding.key, platform),
+  ];
+}
+
 /**
  * How a command is spelled out in the UI. Aliases for the same keystroke are
  * shown together (`S` / `N`), but a binding that only adds a modifier — the ⌘

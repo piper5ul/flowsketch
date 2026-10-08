@@ -20,7 +20,7 @@ import type { Direction, ShapeKind, Tool } from '../types';
 import { createRegistry } from './registry';
 import type { Command, CommandContext, DiagramState, Keybinding } from './types';
 
-export { bindingsOf, formatShortcut, shortcutLabels, detectPlatform } from './registry';
+export { bindingsOf, formatShortcut, shortcutLabels, shortcutChips, detectPlatform } from './registry';
 
 const ZOOM_MS = 150;
 const FIT_MS = 300;
@@ -298,6 +298,19 @@ export const commandDeclarations: Command[] = [
     // nobody can see. It is on `READ_ONLY_COMMAND_IDS` because commenting is
     // a viewer's right, not an edit of the diagram.
     run: (ctx) => ctx.ui.startComment?.(),
+  },
+  {
+    id: 'comment.addToSelection',
+    title: 'Add comment',
+    group: 'comments',
+    when: (ctx) => {
+      const nodes = selectedNodes(ctx.store.getState());
+      return nodes.length === 1 && ctx.ui?.startCommentOn !== undefined;
+    },
+    run: (ctx) => {
+      const [node] = selectedNodes(ctx.store.getState());
+      if (node) ctx.ui?.startCommentOn?.({ nodeId: node.id });
+    },
   },
 
   // ---- history -----------------------------------------------------------
@@ -716,6 +729,7 @@ export const commandDeclarations: Command[] = [
     group: 'arrange',
     shortcut: { key: 'l', meta: true, shift: true },
     contextMenu: 'node',
+    checked: (ctx) => ctx.store.getState().nodes.some((node) => node.selected && node.data.locked),
     run: (ctx) => ctx.store.getState().toggleLock(),
   },
   {
@@ -920,6 +934,7 @@ export const commandDeclarations: Command[] = [
   // written here the way they are printed on the key.
   ...alignCommands(),
   ...distributeCommands(),
+  ...matchSizeCommands(),
   ...layoutCommands(),
   ...quickAddCommands(),
 
@@ -978,6 +993,7 @@ export const commandDeclarations: Command[] = [
     id: 'view.toggleGridSnap',
     title: 'Snap to grid',
     group: 'view',
+    checked: () => useViewPreferences.getState().gridSnap,
     run: () => useViewPreferences.getState().toggleGridSnap(),
   },
   {
@@ -1005,6 +1021,7 @@ const READ_ONLY_COMMAND_IDS = new Set<string>([
   // Reading *and* writing a comment are a viewer's right — see
   // `server/comments.ts` — so this survives the read-only gate.
   'comment.add',
+  'comment.addToSelection',
   'tool.pan',
   'select.all',
   'edit.escape',
@@ -1122,6 +1139,24 @@ function distributeCommands(): Command[] {
     // The outermost two never move, so there is nothing to spread below three.
     when: (ctx) => selectedNodes(ctx.store.getState()).length >= 3,
     run: (ctx) => ctx.store.getState().distributeSelected(axis),
+  }));
+}
+
+/** Match selected shapes' widths, heights or both, as the Arrange menu does. */
+function matchSizeCommands(): Command[] {
+  const dimensions = [
+    ['width', 'Match width'],
+    ['height', 'Match height'],
+    ['both', 'Match width and height'],
+  ] as const;
+
+  return dimensions.map(([dimension, title]) => ({
+    id: `arrange.match${dimension === 'both' ? 'Size' : dimension[0].toUpperCase() + dimension.slice(1)}`,
+    title,
+    group: 'arrange',
+    contextMenu: 'node',
+    when: (ctx) => selectedNodes(ctx.store.getState()).length >= 2,
+    run: (ctx) => ctx.store.getState().matchSizeSelected(dimension),
   }));
 }
 

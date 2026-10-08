@@ -44,6 +44,26 @@ interface ChromePopoverProps {
   children: ReactNode;
 }
 
+export function Separator() {
+  return <span aria-hidden="true" className="chrome-sep" />;
+}
+
+export function Segmented({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={clsx('chrome-track', className)}>
+      {children}
+    </div>
+  );
+}
+
 /** The measured dark popover shell shared by toolbar pickers and controls. */
 export function ChromePopover({
   label,
@@ -68,6 +88,9 @@ export function ChromePopover({
             const content = event.currentTarget as HTMLElement;
             content.querySelector<HTMLButtonElement>('[role="group"] button[tabindex="0"]')?.focus();
           }
+        }}
+        onCloseAutoFocus={(event) => {
+          if (keepEditorFocus) event.preventDefault();
         }}
         onMouseDown={
           keepEditorFocus

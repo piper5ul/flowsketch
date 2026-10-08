@@ -75,6 +75,7 @@
   color: #fff;
   cursor: pointer;
 }
+.chrome-btn > svg { width: 20px; height: 20px; stroke-width: 1.75; }
 .chrome-btn:hover { background: var(--color-chrome-hover); }
 .chrome-btn:disabled { opacity: .3; pointer-events: none; }
 .chrome-btn[aria-pressed="true"], .chrome-btn[data-active] { background: var(--color-chrome-selected); }
@@ -100,6 +101,26 @@
 .chrome-track > .chrome-btn { width: 32px; border-radius: 0; }
 .chrome-track > .chrome-btn:first-child { border-radius: 6px 0 0 6px; }
 .chrome-track > .chrome-btn:last-child { border-radius: 0 6px 6px 0; }
+.overflow-submenu[data-side="right"]::before,
+.overflow-submenu[data-side="left"]::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 100%;
+}
+.overflow-submenu[data-side="right"]::before { left: -8px; }
+.overflow-submenu[data-side="left"]::before { right: -8px; }
+.overflow-subtrigger::before,
+.overflow-subtrigger::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 14px;
+  height: 100%;
+}
+.overflow-subtrigger::before { left: -14px; }
+.overflow-subtrigger::after { right: -14px; }
 .chrome-pop {
   background: var(--color-chrome);
   border-radius: var(--radius-chrome);

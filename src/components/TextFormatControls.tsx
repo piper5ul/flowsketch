@@ -1,211 +1,227 @@
+import { useState } from 'react';
+import * as Popover from '@radix-ui/react-popover';
 import {
-  Minus,
-  Plus,
-  Bold,
-  Italic,
-  Underline,
-  Strikethrough,
-  AlignLeft,
   AlignCenter,
+  AlignLeft,
   AlignRight,
-  AlignVerticalJustifyStart,
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
+  AlignVerticalJustifyStart,
+  Bold,
+  Italic,
+  Link2,
+  Minus,
+  Plus,
+  Strikethrough,
+  Underline,
 } from 'lucide-react';
 import clsx from 'clsx';
-import { Tooltip } from './Tooltip';
-import { ColorPicker } from './toolbar/ColorPicker';
-import { PALETTE } from '../lib/palette';
-import { FONT_SIZE_MAX, FONT_SIZE_MIN, nextFontSize, resolveFontSize } from '../lib/text';
-import type { FontSize, TextAlign, VerticalAlign } from '../types';
+import { ColorGrid } from './toolbar/ColorGrid';
+import { ChromePopover, Segmented, Separator, ToolButton } from './toolbar/chrome';
+import { FONT_SIZE_PRESETS, fontSizeLabel, nextFontSize, resolveFontSize } from '../lib/text';
+import type { TextFormatValue } from '../lib/text';
+import { isHex6, PALETTE } from '../lib/palette';
+import { consumeSuppressBlur } from '../store/useDiagramStore';
+import type { FontSize } from '../types';
 
-const FONT_SIZES: FontSize[] = ['small', 'medium', 'large'];
-const FONT_SIZE_LABEL: Record<FontSize, string> = { small: 'S', medium: 'M', large: 'L' };
+export type { TextFormatValue } from '../lib/text';
 
-const BUTTON_CLASS =
-  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-30';
-const ACTIVE_CLASS = 'bg-accent-500 text-white hover:bg-accent-500';
-
-/** The formatting the controls display. Callers map it onto whatever they edit. */
-export interface TextFormatValue {
-  /** Pixels on a shape; one of the three names on a connector's label. */
-  fontSize: FontSize | number;
-  bold: boolean;
-  italic: boolean;
-  underline: boolean;
-  strikethrough: boolean;
-  /** Absent when the label takes its colour from the fill it sits on. */
-  textColor?: string;
-  textAlign: TextAlign;
-  verticalAlign: VerticalAlign;
-}
+const CONNECTOR_SIZES: FontSize[] = ['small', 'medium', 'large'];
+const CONNECTOR_LABEL: Record<FontSize, string> = { small: 'S', medium: 'M', large: 'L' };
 
 interface TextFormatControlsProps {
   value: TextFormatValue;
   onChange: (patch: Partial<TextFormatValue>) => void;
-  /**
-   * What is being formatted. A connector's label sits on the path rather than
-   * in a box, so it has nothing to align inside — and it keeps its formatting
-   * under its own `label*` keys, which carry size, bold and italic only.
-   */
-  target?: 'shape' | 'connectorLabel';
-  /** Preserve a live label editor while interacting with a portalled picker. */
-  keepEditorFocus?: boolean;
+  target: 'shape' | 'connectorLabel';
+  keepEditorFocus: boolean;
+  link: { active: boolean; onOpen: () => void } | null;
 }
 
-/**
- * The text formatting buttons themselves — no state, no store, no positioning.
- * Both bars that offer formatting render this: the one that appears while a
- * single label is being edited, and the selection toolbar, which applies the
- * same patch to everything selected. Keeping the markup in one place is what
- * stops the two from drifting apart.
- */
-export function TextFormatControls({
+function SizeControl({
   value,
+  target,
+  keepEditorFocus,
   onChange,
-  target = 'shape',
-  keepEditorFocus = false,
-}: TextFormatControlsProps) {
-  const isShape = target === 'shape';
-
-  // A shape's label is sized in pixels; a connector's still wears one of the
-  // three names, so its stepper walks that list instead of the scale.
-  const presetIndex = FONT_SIZES.indexOf(value.fontSize as FontSize);
-  const sizePx = resolveFontSize(value.fontSize);
-
-  const stepSize = (direction: -1 | 1) => {
-    if (isShape) {
-      onChange({ fontSize: nextFontSize(value.fontSize, direction) });
-      return;
-    }
-    const next = Math.max(0, Math.min(FONT_SIZES.length - 1, presetIndex + direction));
-    onChange({ fontSize: FONT_SIZES[next] });
+}: Pick<TextFormatControlsProps, 'target' | 'keepEditorFocus' | 'onChange'> & { value: TextFormatValue }) {
+  const [open, setOpen] = useState(false);
+  const shape = target === 'shape';
+  const px = resolveFontSize(value.fontSize);
+  const connectorIndex = CONNECTOR_SIZES.indexOf(value.fontSize as FontSize);
+  const sizeName = shape ? fontSizeLabel(px) : CONNECTOR_LABEL[value.fontSize as FontSize];
+  const decrease = () => {
+    if (shape) onChange({ fontSize: nextFontSize(value.fontSize, -1) });
+    else onChange({ fontSize: CONNECTOR_SIZES[Math.max(0, connectorIndex - 1)] });
   };
-
-  const atMin = isShape ? sizePx <= FONT_SIZE_MIN : presetIndex === 0;
-  const atMax = isShape ? sizePx >= FONT_SIZE_MAX : presetIndex === FONT_SIZES.length - 1;
+  const increase = () => {
+    if (shape) onChange({ fontSize: nextFontSize(value.fontSize, 1) });
+    else onChange({ fontSize: CONNECTOR_SIZES[Math.min(CONNECTOR_SIZES.length - 1, connectorIndex + 1)] });
+  };
+  const atMin = shape ? px <= 10 : connectorIndex <= 0;
+  const atMax = shape ? px >= 48 : connectorIndex >= CONNECTOR_SIZES.length - 1;
 
   return (
-    <>
-      <Tooltip label="Decrease size" side="top">
-        <button
-          aria-label="Decrease size"
-          onClick={() => stepSize(-1)}
-          disabled={atMin}
-          className={BUTTON_CLASS}
-        >
-          <Minus size={14} />
-        </button>
-      </Tooltip>
-      <span className="w-6 text-center text-xs font-semibold tabular-nums text-white/80">
-        {isShape ? sizePx : FONT_SIZE_LABEL[value.fontSize as FontSize]}
-      </span>
-      <Tooltip label="Increase size" side="top">
-        <button
-          aria-label="Increase size"
-          onClick={() => stepSize(1)}
-          disabled={atMax}
-          className={BUTTON_CLASS}
-        >
-          <Plus size={14} />
-        </button>
-      </Tooltip>
+    <Segmented label="Text size">
+      <ToolButton label="Decrease size" disabled={atMin} onClick={decrease}>
+        <Minus size={14} />
+      </ToolButton>
+      <Popover.Root open={open} onOpenChange={setOpen}>
+        <Popover.Trigger asChild>
+          <ToolButton label="Text size" popover active={open} className="text-xs font-semibold tabular-nums">
+            {sizeName}
+          </ToolButton>
+        </Popover.Trigger>
+        <ChromePopover label="Text size" side="top" sideOffset={9} keepEditorFocus={keepEditorFocus} width={120}>
+          <div role="group" aria-label="Text size presets" className="flex flex-col gap-0.5">
+            {shape ? FONT_SIZE_PRESETS.map(([label, size]) => (
+              <Popover.Close asChild key={label}>
+                <button
+                  type="button"
+                  aria-label={label}
+                  aria-pressed={px === size}
+                  onClick={() => onChange({ fontSize: size })}
+                  className="flex h-7 items-center justify-between rounded-md px-2 text-left text-[13px] text-white/90 transition hover:bg-[var(--color-chrome-hover)] aria-pressed:bg-[var(--color-chrome-selected)]"
+                >
+                  <span>{label}</span><span className="text-xs text-[var(--color-chrome-text-muted)]">{size}px</span>
+                </button>
+              </Popover.Close>
+            )) : CONNECTOR_SIZES.map((size) => (
+              <Popover.Close asChild key={size}>
+                <button
+                  type="button"
+                  aria-label={CONNECTOR_LABEL[size]}
+                  aria-pressed={value.fontSize === size}
+                  onClick={() => onChange({ fontSize: size })}
+                  className="flex h-7 items-center justify-between rounded-md px-2 text-left text-[13px] text-white/90 transition hover:bg-[var(--color-chrome-hover)] aria-pressed:bg-[var(--color-chrome-selected)]"
+                >
+                  <span>{CONNECTOR_LABEL[size]}</span><span className="text-xs text-[var(--color-chrome-text-muted)]">{resolveFontSize(size)}px</span>
+                </button>
+              </Popover.Close>
+            ))}
+          </div>
+        </ChromePopover>
+      </Popover.Root>
+      <ToolButton label="Increase size" disabled={atMax} onClick={increase}>
+        <Plus size={14} />
+      </ToolButton>
+    </Segmented>
+  );
+}
 
-      <div className="mx-0.5 h-6 w-px bg-white/10" />
-
-      <Tooltip label="Bold" side="top">
-        <button
-          onClick={() => onChange({ bold: !value.bold })}
-          className={clsx(BUTTON_CLASS, value.bold && ACTIVE_CLASS)}
-        >
-          <Bold size={15} />
-        </button>
-      </Tooltip>
-      <Tooltip label="Italic" side="top">
-        <button
-          onClick={() => onChange({ italic: !value.italic })}
-          className={clsx(BUTTON_CLASS, value.italic && ACTIVE_CLASS)}
-        >
-          <Italic size={15} />
-        </button>
-      </Tooltip>
-
-      {/* A connector's label carries size, bold and italic and nothing else. */}
-      {isShape && (
-        <>
-          <Tooltip label="Underline" side="top">
-            <button
-              aria-label="Underline"
-              onClick={() => onChange({ underline: !value.underline })}
-              className={clsx(BUTTON_CLASS, value.underline && ACTIVE_CLASS)}
-            >
-              <Underline size={15} />
-            </button>
-          </Tooltip>
-          <Tooltip label="Strikethrough" side="top">
-            <button
-              aria-label="Strikethrough"
-              onClick={() => onChange({ strikethrough: !value.strikethrough })}
-              className={clsx(BUTTON_CLASS, value.strikethrough && ACTIVE_CLASS)}
-            >
-              <Strikethrough size={15} />
-            </button>
-          </Tooltip>
-          <ColorPicker
-            target="text"
-            activeId={
-              PALETTE.find((swatch) => swatch.fill.toUpperCase() === value.textColor?.toUpperCase())?.id ?? null
-            }
-            triggerColour={value.textColor ?? null}
-            onPick={(swatch) => onChange({ textColor: swatch.fill })}
-            onCustom={(hex) => onChange({ textColor: hex })}
-            keepEditorFocus={keepEditorFocus}
-            extra={
+function MoreTextStyles({
+  value,
+  onChange,
+  keepEditorFocus,
+}: Pick<TextFormatControlsProps, 'value' | 'onChange' | 'keepEditorFocus'>) {
+  const [open, setOpen] = useState(false);
+  const [colorName, setColorName] = useState<string | null>(null);
+  const activeId = PALETTE.find((swatch) => swatch.fill.toUpperCase() === value.textColor?.toUpperCase())?.id ?? null;
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <ToolButton label="More text styles" popover active={open}>
+          <span aria-hidden="true" className="text-base leading-none">⋮</span>
+        </ToolButton>
+      </Popover.Trigger>
+      <ChromePopover label="More text styles" side="top" sideOffset={9} keepEditorFocus={keepEditorFocus} width={140}>
+        {colorName !== null && <span className="swatch-name" aria-hidden="true">{colorName}</span>}
+        <div className="flex flex-col gap-1">
+          {([
+            ['Underline', Underline, value.underline, () => onChange({ underline: !value.underline })],
+            ['Strikethrough', Strikethrough, value.strikethrough, () => onChange({ strikethrough: !value.strikethrough })],
+          ] as const).map(([label, Icon, active, run]) => (
+            <Popover.Close asChild key={label}>
               <button
                 type="button"
-                aria-label="Auto"
-                aria-pressed={value.textColor === undefined}
-                className={clsx(
-                  'h-7 w-28 rounded-md text-[11px] font-semibold text-white/70 transition hover:bg-white/10 hover:text-white',
-                  value.textColor === undefined && ACTIVE_CLASS,
-                )}
-                onClick={() => onChange({ textColor: undefined })}
+                aria-label={label}
+                aria-pressed={active}
+                onClick={run}
+                className="flex h-7 items-center gap-2 rounded-md px-2 text-left text-[13px] text-white/90 transition hover:bg-[var(--color-chrome-hover)] aria-pressed:bg-[var(--color-chrome-selected)]"
               >
-                Auto
+                <Icon size={14} />{label}
               </button>
-            }
+            </Popover.Close>
+          ))}
+          <div className="px-1 pt-1 text-[11px] font-medium text-[var(--color-chrome-text-muted)]">Text colour</div>
+          <ColorGrid
+            label="Colors"
+            swatches={PALETTE}
+            activeId={activeId}
+            customValue={isHex6(value.textColor ?? '') ? value.textColor : undefined}
+            onPick={(swatch) => {
+              onChange({ textColor: swatch.fill });
+              setOpen(false);
+            }}
+            onCustom={(hex) => onChange({ textColor: hex.toUpperCase() })}
+            onHoverName={setColorName}
           />
-        </>
-      )}
+          <Popover.Close asChild>
+            <button
+              type="button"
+              aria-label="Auto"
+              aria-pressed={value.textColor === undefined}
+              onClick={() => onChange({ textColor: undefined })}
+              className={clsx('h-7 w-28 self-center rounded-md text-[11px] font-semibold text-white/80 transition hover:bg-[var(--color-chrome-hover)] aria-pressed:bg-[var(--color-chrome-selected)]')}
+            >Auto</button>
+          </Popover.Close>
+        </div>
+      </ChromePopover>
+    </Popover.Root>
+  );
+}
 
+/** The text-mode controls shared by shape labels and connector labels. */
+export function TextFormatControls({ value, onChange, target, keepEditorFocus, link }: TextFormatControlsProps) {
+  const isShape = target === 'shape';
+  return (
+    <>
+      <SizeControl value={value} target={target} keepEditorFocus={keepEditorFocus} onChange={onChange} />
+      <Separator />
+      <Segmented label="Text style">
+        <ToolButton label="Bold" active={value.bold} onClick={() => onChange({ bold: !value.bold })}>
+          <Bold size={15} />
+        </ToolButton>
+        <ToolButton label="Italic" active={value.italic} onClick={() => onChange({ italic: !value.italic })}>
+          <Italic size={15} />
+        </ToolButton>
+        {isShape && <MoreTextStyles value={value} onChange={onChange} keepEditorFocus={keepEditorFocus} />}
+      </Segmented>
+      {(link || isShape) && <Separator />}
+      {link && (
+        <ToolButton
+          label="Link"
+          active={link.active}
+          onMouseDown={(event) => {
+            if (!keepEditorFocus) return;
+            event.stopPropagation();
+            event.preventDefault();
+            consumeSuppressBlur();
+          }}
+          onClick={link.onOpen}
+        >
+          <Link2 size={15} />
+        </ToolButton>
+      )}
       {isShape && (
         <>
-          <div className="mx-0.5 h-6 w-px bg-white/10" />
-          {([['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight]] as const).map(
-            ([align, Icon]) => (
-              <Tooltip key={align} label={align[0].toUpperCase() + align.slice(1)} side="top">
-                <button
-                  onClick={() => onChange({ textAlign: align })}
-                  className={clsx(BUTTON_CLASS, value.textAlign === align && ACTIVE_CLASS)}
-                >
-                  <Icon size={15} />
-                </button>
-              </Tooltip>
-            ),
-          )}
-          <div className="mx-0.5 h-6 w-px bg-white/10" />
-          {([['top', AlignVerticalJustifyStart], ['middle', AlignVerticalJustifyCenter], ['bottom', AlignVerticalJustifyEnd]] as const).map(
-            ([align, Icon]) => (
-              <Tooltip key={align} label={align[0].toUpperCase() + align.slice(1)} side="top">
-                <button
-                  onClick={() => onChange({ verticalAlign: align })}
-                  className={clsx(BUTTON_CLASS, value.verticalAlign === align && ACTIVE_CLASS)}
-                >
-                  <Icon size={15} />
-                </button>
-              </Tooltip>
-            ),
-          )}
+          {link && <Separator />}
+          <Segmented label="Horizontal align">
+            {([
+              ['Left', AlignLeft, 'left'], ['Center', AlignCenter, 'center'], ['Right', AlignRight, 'right'],
+            ] as const).map(([label, Icon, align]) => (
+              <ToolButton key={align} label={label} active={value.textAlign === align} onClick={() => onChange({ textAlign: align })}>
+                <Icon size={15} />
+              </ToolButton>
+            ))}
+          </Segmented>
+          <Segmented label="Vertical align">
+            {([
+              ['Top', AlignVerticalJustifyStart, 'top'], ['Middle', AlignVerticalJustifyCenter, 'middle'], ['Bottom', AlignVerticalJustifyEnd, 'bottom'],
+            ] as const).map(([label, Icon, align]) => (
+              <ToolButton key={align} label={label} active={value.verticalAlign === align} onClick={() => onChange({ verticalAlign: align })}>
+                <Icon size={15} />
+              </ToolButton>
+            ))}
+          </Segmented>
         </>
       )}
     </>

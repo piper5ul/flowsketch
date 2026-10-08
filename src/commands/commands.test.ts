@@ -524,3 +524,61 @@ describe('the comment command', () => {
     expect(() => command.run({ ui: {} } as unknown as CommandContext)).not.toThrow();
   });
 });
+
+describe('toolbar overflow commands', () => {
+  function selectedNodes(count: number) {
+    return Array.from({ length: count }, (_, index) => ({ id: `n${index}`, selected: true }));
+  }
+
+  function context(nodes: { id: string; selected: boolean }[], options: {
+    readOnly?: boolean;
+    startCommentOn?: (anchor: { nodeId: string }) => void;
+    matchSizeSelected?: (dimension: 'width' | 'height' | 'both') => void;
+  } = {}): CommandContext {
+    return {
+      store: {
+        getState: () => ({ readOnly: options.readOnly ?? false, nodes, edges: [], matchSizeSelected: options.matchSizeSelected }),
+      },
+      ui: { startCommentOn: options.startCommentOn },
+    } as unknown as CommandContext;
+  }
+
+  it('offers Add comment for one selected node when the host can start a comment, including read-only', () => {
+    const command = registry.find('comment.addToSelection')!;
+    const startCommentOn = vi.fn();
+    const one = context(selectedNodes(1), { readOnly: true, startCommentOn });
+
+    expect(command).toBeDefined();
+    expect(command.contextMenu).toBeUndefined();
+    expect(command.when!(one)).toBe(true);
+    expect(command.when!(context(selectedNodes(1)))).toBe(false);
+    expect(command.when!(context(selectedNodes(2), { startCommentOn }))).toBe(false);
+    command.run(one);
+    expect(startCommentOn).toHaveBeenCalledWith({ nodeId: 'n0' });
+  });
+
+  it('registers matching-size commands for two or more nodes', () => {
+    const calls: string[] = [];
+    const two = context(selectedNodes(2), {
+      matchSizeSelected: (dimension) => calls.push(dimension),
+    });
+    const one = context(selectedNodes(1));
+
+    for (const [id, title, dimension] of [
+      ['arrange.matchWidth', 'Match width', 'width'],
+      ['arrange.matchHeight', 'Match height', 'height'],
+      ['arrange.matchSize', 'Match width and height', 'both'],
+    ] as const) {
+      const command = registry.find(id)!;
+      expect(command).toBeDefined();
+      expect(command.title).toBe(title);
+      expect(command.shortcut).toBeUndefined();
+      expect(command.contextMenu).toBe('node');
+      expect(command.when!(two)).toBe(true);
+      expect(command.when!(one)).toBe(false);
+      command.run(two);
+      expect(calls.at(-1)).toBe(dimension);
+    }
+    expect(offered('arrange.matchWidth', context(selectedNodes(2), { readOnly: true }))).toBe(false);
+  });
+});

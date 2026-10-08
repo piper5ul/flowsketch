@@ -1,4 +1,5 @@
 import type { ClipboardPayload, useDiagramStore } from '../store/useDiagramStore';
+import type { CommentAnchor } from '../store/useCommentStore';
 import type { ShapeData } from '../types';
 
 /**
@@ -38,6 +39,8 @@ export interface Command<Ctx = CommandContext> {
   shortcut?: Keybinding | Keybinding[];
   /** Gate on the current state. A command whose `when` is false never matches and is never offered. */
   when?: (ctx: Ctx) => boolean;
+  /** Optional checked state for overflow checkbox rows. Ignored by other command surfaces. */
+  checked?: (ctx: Ctx) => boolean;
   run: (ctx: Ctx) => void;
   /** Kept out of the shortcut cheat sheet. */
   hidden?: boolean;
@@ -120,5 +123,7 @@ export interface CommandContext {
      * request that was always going to be refused.
      */
     startComment?: () => void;
+    /** Starts a comment anchored to a selected node from the selection toolbar. */
+    startCommentOn?: (anchor: CommentAnchor) => void;
   };
 }

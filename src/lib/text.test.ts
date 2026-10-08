@@ -3,9 +3,13 @@ import {
   DEFAULT_FONT_SIZE,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  FONT_SIZE_PRESETS,
   FONT_SIZE_STEP,
+  fontSizeLabel,
   nextFontSize,
   resolveFontSize,
+  textFormatValueOf,
+  toConnectorLabelPatch,
 } from './text';
 
 describe('resolveFontSize', () => {
@@ -58,5 +62,75 @@ describe('nextFontSize', () => {
     // leave every size after it off by one.
     expect(nextFontSize(15, 1)).toBe(16);
     expect(nextFontSize(15, -1)).toBe(14);
+  });
+});
+
+describe('toolbar text formatting helpers', () => {
+  it('lists the six shape size presets and labels only exact matches', () => {
+    expect(FONT_SIZE_PRESETS).toEqual([
+      ['XS', 10], ['S', 12], ['M', 14], ['L', 18], ['XL', 24], ['XXL', 32],
+    ]);
+    expect(fontSizeLabel(14)).toBe('M');
+    expect(fontSizeLabel(16)).toBe('16');
+  });
+
+  it('derives shape and connector text values with their existing defaults', () => {
+    expect(textFormatValueOf({ data: { shape: 'text' } })).toEqual({
+      fontSize: DEFAULT_FONT_SIZE,
+      bold: false,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      textColor: undefined,
+      textAlign: 'left',
+      verticalAlign: 'middle',
+    });
+    expect(textFormatValueOf({ source: 'a', target: 'b', data: undefined })).toEqual({
+      fontSize: 'medium',
+      bold: false,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      textColor: undefined,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+    });
+  });
+
+  it('preserves shape values and maps connector label values to label fields', () => {
+    expect(textFormatValueOf({
+      data: {
+        shape: 'rectangle',
+        fontSize: 22,
+        bold: true,
+        italic: true,
+        underline: true,
+        strikethrough: true,
+        textColor: '#123456',
+        textAlign: 'right',
+        verticalAlign: 'bottom',
+      },
+    })).toMatchObject({
+      fontSize: 22,
+      bold: true,
+      italic: true,
+      underline: true,
+      strikethrough: true,
+      textColor: '#123456',
+      textAlign: 'right',
+      verticalAlign: 'bottom',
+    });
+
+    expect(toConnectorLabelPatch({
+      fontSize: 'large',
+      bold: true,
+      italic: false,
+      underline: true,
+      strikethrough: true,
+      textColor: '#123456',
+      textAlign: 'right',
+      verticalAlign: 'bottom',
+    })).toEqual({ labelFontSize: 'large', labelBold: true, labelItalic: false });
+    expect(toConnectorLabelPatch({ fontSize: 18, bold: true })).toEqual({ labelBold: true });
   });
 });

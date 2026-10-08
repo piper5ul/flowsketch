@@ -4,12 +4,90 @@
  * simply the numbers they were always drawn at, which is what lets a diagram
  * saved with `'large'` open at 18px without a migration step.
  */
-import type { FontSize } from '../types';
+import type { ConnectorData, FontSize, ShapeData, TextAlign, VerticalAlign } from '../types';
 
 export const FONT_SIZE_MIN = 10;
 export const FONT_SIZE_MAX = 48;
 export const FONT_SIZE_STEP = 2;
 export const DEFAULT_FONT_SIZE = 14;
+
+/** Shape font-size labels and their pixel sizes, as shown in text mode. */
+export const FONT_SIZE_PRESETS = [
+  ['XS', 10],
+  ['S', 12],
+  ['M', 14],
+  ['L', 18],
+  ['XL', 24],
+  ['XXL', 32],
+] as const;
+
+export function fontSizeLabel(px: number): string {
+  return FONT_SIZE_PRESETS.find(([, size]) => size === px)?.[0] ?? String(px);
+}
+
+/** Formatting shown by the shared shape and connector text controls. */
+export interface TextFormatValue {
+  fontSize: FontSize | number;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  textColor?: string;
+  textAlign: TextAlign;
+  verticalAlign: VerticalAlign;
+}
+
+type ShapeTextEntity = {
+  data: Pick<ShapeData, 'shape'> & Partial<Pick<
+    ShapeData,
+    'fontSize' | 'bold' | 'italic' | 'underline' | 'strikethrough' | 'textColor' | 'textAlign' | 'verticalAlign'
+  >>;
+  source?: never;
+};
+
+type ConnectorTextEntity = {
+  source: string;
+  target: string;
+  data?: Pick<ConnectorData, 'labelFontSize' | 'labelBold' | 'labelItalic'>;
+};
+
+/** Read the current label format with the same defaults as the text controls. */
+export function textFormatValueOf(entity: ShapeTextEntity | ConnectorTextEntity): TextFormatValue {
+  if (typeof entity.source === 'string') {
+    const data = entity.data;
+    return {
+      fontSize: data?.labelFontSize ?? 'medium',
+      bold: data?.labelBold ?? false,
+      italic: data?.labelItalic ?? false,
+      underline: false,
+      strikethrough: false,
+      textColor: undefined,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+    };
+  }
+
+  const data = entity.data;
+  return {
+    fontSize: data.fontSize ?? DEFAULT_FONT_SIZE,
+    bold: data.bold ?? false,
+    italic: data.italic ?? false,
+    underline: data.underline ?? false,
+    strikethrough: data.strikethrough ?? false,
+    textColor: data.textColor,
+    textAlign: data.textAlign ?? (data.shape === 'text' ? 'left' : 'center'),
+    verticalAlign: data.verticalAlign ?? 'middle',
+  };
+}
+
+/** Translate shared text-control patches onto a connector's label fields. */
+export function toConnectorLabelPatch(patch: Partial<TextFormatValue>): Partial<ConnectorData> {
+  const out: Partial<ConnectorData> = {};
+  if (typeof patch.fontSize === 'string') out.labelFontSize = patch.fontSize;
+  if (patch.bold !== undefined) out.labelBold = patch.bold;
+  if (patch.italic !== undefined) out.labelItalic = patch.italic;
+  return out;
+}
 
 /** The pixel each of the old preset names stood for. */
 const PRESET_PX: Record<FontSize, number> = { small: 12, medium: 14, large: 18 };

@@ -284,8 +284,9 @@ test('the selection toolbar aligns, distributes and bolds a multi-selection', as
     return measured.sort((a, b) => a.x - b.x);
   }
 
-  await page.getByRole('button', { name: 'Arrange' }).click();
-  await page.getByRole('button', { name: 'Align top' }).click();
+  const moreActions = page.getByRole('button', { name: 'More actions' });
+  await moreActions.click();
+  await selectOverflowAlignAction(page, 'Align top');
 
   await expect
     .poll(async () => {
@@ -294,7 +295,8 @@ test('the selection toolbar aligns, distributes and bolds a multi-selection', as
     })
     .toBeLessThanOrEqual(1);
 
-  await page.getByRole('button', { name: 'Distribute horizontally' }).click();
+  await moreActions.click();
+  await selectOverflowAlignAction(page, 'Distribute horizontally');
 
   await expect
     .poll(async () => {
@@ -303,18 +305,30 @@ test('the selection toolbar aligns, distributes and bolds a multi-selection', as
     })
     .toBeLessThanOrEqual(1);
 
-  // Close the popover by toggling its trigger — Escape would reach the canvas.
-  await page.getByRole('button', { name: 'Arrange' }).click();
-
   // Text formatting lives behind the toolbar's Text button now, and still
   // applies to every selected node. The bar is named because the rail carries
   // a "Text" button of its own — the text *tool*.
-  await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Text' }).click();
-  await page.getByRole('dialog', { name: 'Text' }).getByRole('button', { name: 'Bold' }).click();
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+  await toolbar.getByRole('button', { name: 'Text' }).click();
+  await toolbar.getByRole('button', { name: 'Bold' }).click();
   for (let i = 0; i < 3; i++) {
     await expect(page.locator('.react-flow__node [contenteditable]').nth(i)).toHaveCSS('font-weight', '700');
   }
 });
+
+async function selectOverflowAlignAction(page: Page, action: string) {
+  const trigger = page.getByRole('menuitem', { name: 'Align', exact: true });
+  await trigger.hover();
+  const item = page.getByRole('menuitem', { name: action, exact: true });
+  const triggerBox = (await trigger.boundingBox())!;
+  const itemBox = (await item.boundingBox())!;
+  // Let the browser send pointer moves through the trigger's transparent edge
+  // bridge so Radix keeps a left-opening submenu open as the pointer crosses.
+  await page.mouse.move(triggerBox.x + 1, triggerBox.y + triggerBox.height / 2, { steps: 5 });
+  await page.mouse.move(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2, { steps: 16 });
+  await expect(item).toBeVisible();
+  await page.mouse.click(itemBox.x + itemBox.width / 2, itemBox.y + itemBox.height / 2);
+}
 
 test('the dashboard lists a created diagram and can open it again', async ({ page }) => {
   await signUp(page);
@@ -865,7 +879,7 @@ test('the colour palette hides for an image-only selection and comes back for a 
   // An image has no fill or stroke of its own, so selecting one alone offers
   // no colours — but the rest of the toolbar is still there.
   await image.click();
-  await expect(page.getByRole('button', { name: 'Delete' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'More actions' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Color' })).toHaveCount(0);
 
   // Add the shape to the selection and the palette returns: it has something
@@ -888,7 +902,7 @@ test('a shape can be swapped from the toolbar and a new kind drawn from the rail
   // The floating toolbar's Shape button redraws what is already there. The
   // rail carries the same labels, so the popover has to be the scope.
   await rect.click();
-  await page.getByRole('button', { name: 'Shape', exact: true }).click();
+  await page.getByRole('button', { name: 'Change shape', exact: true }).click();
   const picker = page.getByRole('dialog', { name: 'Shape picker' });
   await picker.getByRole('button', { name: 'Star' }).click();
 
@@ -984,6 +998,7 @@ test('the format bar underlines a label being edited', async ({ page }) => {
 
   await node.dblclick();
   await page.keyboard.type('Hi');
+  await page.getByRole('button', { name: 'More text styles' }).click();
   await page.getByRole('button', { name: 'Underline' }).click();
   await page.keyboard.press('Escape');
 
@@ -991,7 +1006,7 @@ test('the format bar underlines a label being edited', async ({ page }) => {
   await expect(node.locator('[contenteditable]')).toHaveCSS('text-decoration-line', 'underline');
 });
 
-test('opening Text colour keeps the live label editor focused', async ({ page }) => {
+test('More text styles keeps the live label editor focused and shows its colour grid directly', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);
 
@@ -1004,8 +1019,12 @@ test('opening Text colour keeps the live label editor focused', async ({ page })
   await node.dblclick();
   const editor = node.locator('[contenteditable="true"]');
   await expect(editor).toBeFocused();
-  await page.getByRole('button', { name: 'Text colour' }).click();
-  await expect(page.getByRole('group', { name: 'Colors' })).toBeVisible();
+  await page.getByRole('button', { name: 'More text styles' }).click();
+  const popover = page.getByRole('dialog', { name: 'More text styles' });
+  await expect(popover.getByRole('group', { name: 'Colors' })).toBeVisible();
+  await expect(popover.getByText('Text colour', { exact: true })).toBeVisible();
+  await expect(popover.getByRole('button', { name: 'Auto' })).toBeVisible();
+  await expect(popover.getByRole('button', { name: 'Text colour' })).toHaveCount(0);
   await expect(editor).toBeFocused();
 });
 
@@ -2126,7 +2145,8 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await expect(shapeBox(first)).toHaveCSS('background-color', 'rgb(212, 231, 247)');
 
   await toolbar.getByRole('button', { name: 'Style', exact: true }).click();
-  await page.getByRole('button', { name: 'Save as default style' }).click();
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Save as default style' }).click();
   await expect(page.getByText('Saved as default for shapes on this board')).toBeVisible();
 
   // A second rectangle, drawn from the rail: same outline, same blue, and a
@@ -2417,24 +2437,22 @@ test('Lay out vertically redraws a connected selection as a column', async ({ pa
 
   await page.keyboard.press('Escape');
   await page.keyboard.press('Meta+a');
-  await page.locator('[data-node-type="shape"]').first().click({ button: 'right' });
-  await page.getByRole('menuitem', { name: 'Lay out vertically' }).click();
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await selectOverflowAlignAction(page, 'Lay out vertically');
 
-  // The layout engine is fetched on first use, so the assertion polls rather
-  // than reading the boxes once. Fit-to-view brings the new column into frame
-  // and scales it uniformly, which leaves every comparison below meaningful.
+  // The layout engine is fetched on first use, so wait for both flow order and
+  // the final centered placement before reading the boxes.
   const box = async (nodeId: string) => (await page.locator(`[data-id="${nodeId}"]`).first().boundingBox())!;
+  const centre = (n: { x: number; width: number }) => n.x + n.width / 2;
   await expect
     .poll(async () => {
-      await page.keyboard.press('1');
       const [a, b, c] = [await box('a'), await box('b'), await box('c')];
-      return a.y < b.y && b.y < c.y;
-    }, { message: 'the chain should end up in flow order down the page' })
+      return a.y < b.y && b.y < c.y && Math.abs(centre(a) - centre(b)) < 4 && Math.abs(centre(b) - centre(c)) < 4;
+    }, { message: 'the chain should end up centered in flow order down the page' })
     .toBe(true);
 
   const [a, b, c] = [await box('a'), await box('b'), await box('c')];
   // A chain comes out centred on one line, whatever the boxes' widths.
-  const centre = (n: { x: number; width: number }) => n.x + n.width / 2;
   expect(Math.abs(centre(a) - centre(b))).toBeLessThan(4);
   expect(Math.abs(centre(b) - centre(c))).toBeLessThan(4);
   // Laid out, not stacked: each shape clears the one above it.

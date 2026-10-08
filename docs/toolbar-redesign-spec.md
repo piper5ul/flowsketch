@@ -552,4 +552,4 @@ Visual check before merge: screenshots of shape / multi / table / wire / ink / f
 ## 8. Open questions for the product owner
 
 1. ~~Transparent semantics~~: settled live, see D3 and the `transparent` paragraph (a toggle; Fill clears it; turning it on from Fill moves to Outline).
-2. **Delete leaves the bar.** Whimsical's shape bar has no trash button, so Delete moves into the overflow menu (⌫ still works). Say if you want a visible Delete kept at the end of the bar.
+2. ~~Delete leaves the bar.~~ **Settled live on 2026-10-08:** Delete moves into the overflow menu, with its shortcut chip; ⌫ still deletes. The bar has no trash button.
