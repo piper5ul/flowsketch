@@ -1,58 +1,103 @@
 import { describe, expect, it } from 'vitest';
-import { COLS, DEFAULT_SWATCH, PALETTE, isDarkFill, mix } from './palette';
+import { DEFAULT_EDGE_STROKE } from './defaults';
+import {
+  DEFAULT_SWATCH,
+  GRID_COLUMNS,
+  PALETTE,
+  STICKY_TINT,
+  isDarkFill,
+  isHex6,
+  matchSwatch,
+  mix,
+  swatchFromHex,
+  swatchPair,
+} from './palette';
+
+const expected = [
+  ['white', 'White', '#FFFFFF', '#CBD5E1'],
+  ['smoke', 'Smoke', '#C4CFDA', '#C4CFDA'],
+  ['gray', 'Gray', '#788896', '#788896'],
+  ['slate', 'Slate', '#4D5D6C', '#4D5D6C'],
+  ['blue', 'Blue', '#2987D7', '#2987D7'],
+  ['indigo', 'Indigo', '#655BF3', '#655BF3'],
+  ['purple', 'Purple', '#730FC3', '#730FC3'],
+  ['pink', 'Pink', '#BE36D3', '#BE36D3'],
+  ['mint', 'Mint', '#26AFA0', '#26AFA0'],
+  ['green', 'Green', '#007A6F', '#007A6F'],
+  ['brown', 'Brown', '#897A5F', '#897A5F'],
+  ['crimson', 'Crimson', '#A46767', '#A46767'],
+  ['red', 'Red', '#D5475B', '#D5475B'],
+  ['orange', 'Orange', '#E8843C', '#E8843C'],
+  ['yellow', 'Yellow', '#F0C54F', '#F0C54F'],
+] as const;
 
 describe('PALETTE', () => {
-  it('is a full grid with unique ids and valid hex colors', () => {
-    expect(PALETTE.length % COLS).toBe(0);
-    const ids = new Set(PALETTE.map((s) => s.id));
-    expect(ids.size).toBe(PALETTE.length);
-    for (const s of PALETTE) {
-      expect(s.fill).toMatch(/^#[0-9A-F]{6}$/i);
-      expect(s.stroke).toMatch(/^#[0-9A-F]{6}$/i);
+  it('uses the 15 named colours in grid order with unique ids and four columns', () => {
+    expect(GRID_COLUMNS).toBe(4);
+    expect(PALETTE).toHaveLength(15);
+    expect(PALETTE.map(({ id }) => id)).toEqual(expected.map(([id]) => id));
+    expect(PALETTE.map(({ name }) => name)).toEqual(expected.map(([, name]) => name));
+    expect(new Set(PALETTE.map(({ id }) => id)).size).toBe(15);
+  });
+
+  it('keeps the exact fill and stroke pair for every swatch', () => {
+    for (const [index, [id, name, fill, stroke]] of expected.entries()) {
+      expect(PALETTE[index]).toMatchObject({ id, name, fill, stroke });
     }
   });
 
-  it('is twelve columns — a neutral and Whimsical’s eleven hues — in four tiers', () => {
-    expect(COLS).toBe(12);
-    expect(PALETTE).toHaveLength(48);
-    // The hue itself sits in tier 3, so a board here matches one there.
-    expect(PALETTE.find((s) => s.id === 'indigo-3')?.fill).toBe('#6558F5');
-    expect(PALETTE.find((s) => s.id === 'yellow-3')?.fill).toBe('#F7C325');
-  });
-
-  it('reads light to dark down every column, so the same tier means the same weight everywhere', () => {
-    const column = (name: string) => [1, 2, 3, 4].map((t) => PALETTE.find((s) => s.id === `${name}-${t}`)!.fill);
-    const lum = (hex: string) => {
-      const [r, g, b] = [0, 2, 4].map((i) => parseInt(hex.slice(1 + i, 3 + i), 16));
-      return 0.299 * r + 0.587 * g + 0.114 * b;
-    };
-    for (const name of ['blue', 'yellow', 'brown']) {
-      const l = column(name).map(lum);
-      expect(l[0]).toBeGreaterThan(l[1]);
-      expect(l[1]).toBeGreaterThan(l[2]);
-      expect(l[2]).toBeGreaterThan(l[3]);
+  it('precomputes each sticky fill by mixing its fill towards white', () => {
+    for (const swatch of PALETTE) {
+      expect(swatch.sticky).toBe(mix(swatch.fill, '#FFFFFF', STICKY_TINT));
     }
+    expect(PALETTE[0].sticky).toBe('#FFFFFF');
   });
 
-  it('defaults to white, so a new shape is paper and takes dark text', () => {
-    expect(PALETTE).toContain(DEFAULT_SWATCH);
-    expect(DEFAULT_SWATCH.id).toBe('white');
-    expect(DEFAULT_SWATCH.fill).toBe('#FFFFFF');
-    expect(isDarkFill(DEFAULT_SWATCH.fill)).toBe(false);
+  it('defaults to White and keeps Gray aligned with the connector default', () => {
+    expect(DEFAULT_SWATCH).toBe(PALETTE[0]);
+    expect(DEFAULT_SWATCH).toMatchObject({ id: 'white', fill: '#FFFFFF', stroke: '#CBD5E1' });
+    expect(PALETTE.find(({ id }) => id === 'gray')?.stroke).toBe(DEFAULT_EDGE_STROKE);
   });
 
-  it('keeps pastel tiers light and the deep tier dark, so auto-contrast is predictable per row', () => {
-    // Tier 3 is deliberately not asserted: those fills straddle the threshold
-    // and isDarkFill decides per swatch (yellow-3 stays dark-text, blue-3 goes white).
-    for (const s of PALETTE) {
-      const tier = Number(s.id.split('-')[1]);
-      if (tier <= 2) expect(isDarkFill(s.fill), `${s.id} (${s.fill}) should be light`).toBe(false);
-      if (tier === 4) expect(isDarkFill(s.fill), `${s.id} (${s.fill}) should be dark`).toBe(true);
-    }
+  it('derives custom swatches in uppercase and pairs sticky colours', () => {
+    expect(swatchFromHex('#12abef')).toEqual({
+      id: 'custom',
+      name: '#12ABEF',
+      fill: '#12ABEF',
+      stroke: '#12ABEF',
+      sticky: mix('#12ABEF', '#FFFFFF', 0.75),
+    });
+    expect(swatchPair(PALETTE[4], 'shape')).toEqual({ fill: '#2987D7', stroke: '#2987D7' });
+    expect(swatchPair(PALETTE[4], 'sticky')).toEqual({ fill: '#CAE1F5', stroke: '#2987D7' });
+  });
+
+  it('matches shape, sticky and edge colours exactly without regard to case', () => {
+    const blue = PALETTE.find(({ id }) => id === 'blue')!;
+    expect(matchSwatch({ fill: '#2987d7', stroke: '#2987D7' }, 'shape')).toBe(blue);
+    expect(matchSwatch({ fill: '#cae1f5', stroke: '#2987d7' }, 'sticky')).toBe(blue);
+    expect(matchSwatch({ stroke: '#788896' }, 'edge')).toBe(PALETTE.find(({ id }) => id === 'gray'));
+  });
+
+  it('leaves old and mixed colour pairs without an active swatch', () => {
+    expect(matchSwatch({ fill: '#2C88D9', stroke: '#236DAE' }, 'shape')).toBeNull();
+    expect(matchSwatch({ fill: '#FFFFFF', stroke: '#E8843C' }, 'shape')).toBeNull();
+  });
+
+  it('accepts only six digit hexadecimal colours', () => {
+    expect(isHex6('#a1B2c3')).toBe(true);
+    expect(isHex6('#fff')).toBe(false);
+    expect(isHex6('transparent')).toBe(false);
   });
 });
 
 describe('isDarkFill', () => {
+  it('uses white text for the specified dark swatches', () => {
+    const whiteText = ['slate', 'blue', 'indigo', 'purple', 'pink', 'green', 'brown', 'crimson', 'red'];
+    for (const swatch of PALETTE) {
+      expect(isDarkFill(swatch.fill), swatch.name).toBe(whiteText.includes(swatch.id));
+    }
+  });
+
   it('treats transparent and malformed values as light', () => {
     expect(isDarkFill('transparent')).toBe(false);
     expect(isDarkFill('')).toBe(false);
@@ -68,7 +113,7 @@ describe('isDarkFill', () => {
 describe('mix', () => {
   it('moves a colour towards another by a fraction, and keeps the ends', () => {
     expect(mix('#000000', '#FFFFFF', 0.5)).toBe('#808080');
-    expect(mix('#2C88D9', '#FFFFFF', 0)).toBe('#2C88D9');
-    expect(mix('#2C88D9', '#FFFFFF', 1)).toBe('#FFFFFF');
+    expect(mix('#2987D7', '#FFFFFF', 0)).toBe('#2987D7');
+    expect(mix('#2987D7', '#FFFFFF', 1)).toBe('#FFFFFF');
   });
 });

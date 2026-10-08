@@ -121,8 +121,10 @@ export interface InkData {
 
 export interface SwatchColor {
   id: string;
+  name: string;
   fill: string;
   stroke: string;
+  sticky: string;
 }
 
 /**
@@ -135,11 +137,11 @@ export type TextAlign = 'left' | 'center' | 'right';
 export type VerticalAlign = 'top' | 'middle' | 'bottom';
 
 /**
- * Which of a shape's two colours is drawn. `filled` paints the fill and no
- * outline; `outline` paints white and draws the stroke around it. Absent means
- * `filled` — see `src/lib/shapeStyle.ts`, which is where the choice is resolved.
+ * Which fill look a shape uses. Absent means `filled`; `outline` remains the
+ * legacy white-inside spelling, while new Outline uses `tinted` and Dash uses
+ * `dashed` — see `src/lib/shapeStyle.ts`.
  */
-export type FillStyle = 'filled' | 'outline';
+export type FillStyle = 'filled' | 'outline' | 'tinted' | 'dashed';
 
 // `.js` on purpose: the server compiles this file under `nodenext`, where an
 // extensionless relative import is not a legal specifier — see the note on
@@ -210,6 +212,8 @@ export interface ShapeData {
    * rewrites the pair, so the toggle is lossless.
    */
   fillStyle?: FillStyle;
+  /** The Transparent toggle; absent/false leaves the inside painted by its look. */
+  transparent?: boolean;
   /**
    * The label's size in pixels. Diagrams saved before the scale existed hold
    * one of the three preset names instead; `resolveFontSize` reads both, which

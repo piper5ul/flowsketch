@@ -1061,6 +1061,15 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
       // The sheet is modal: it takes Escape itself and swallows the rest.
       if (shortcutsOpen) return;
       if (isTypingTarget(e.target)) {
+        // The color picker is a form control, so keep the normal typing-target
+        // guard for every shortcut except diagram history navigation.
+        if (e.target instanceof HTMLInputElement && e.target.type === 'color') {
+          const command = registry.matchEvent(e, commandContext);
+          if (command?.id !== 'history.undo' && command?.id !== 'history.redo') return;
+          e.preventDefault();
+          command.run(commandContext);
+          return;
+        }
         // …with one exception. **A mind map is typed, not clicked**: Tab and
         // Enter make the next node while the label is still open, so a
         // `mindmap.*` command — and nothing else — reaches the registry from
@@ -1276,7 +1285,7 @@ export function Canvas({ topBar = true }: { topBar?: boolean } = {}) {
           <TextFormatBar />
         </>
       )}
-      {!presenting && <BottomBar onRunCommand={runCommand} />}
+      {!presenting && <BottomBar onRunCommand={runCommand} showTheme={!topBar} />}
       {/* Rendered whether or not the board can be edited: ⌘F is a way of
           reading a diagram, and the public share page mounts this too. */}
       {!presenting && <SearchBar belowTopBar={topBar} />}

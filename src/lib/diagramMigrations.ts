@@ -13,8 +13,12 @@
  * Not every new field is a version. `ShapeData.fillStyle` is optional and an
  * absent one reads as `'filled'` (`resolveFillStyle` in `src/lib/shapeStyle.ts`),
  * so every diagram written before it existed is already correct and there is no
- * step here for it — a field is only worth a version when the *old* spelling
- * would be misread without one. `DiagramData.defaults` (the board's "save as
+ * step here for it. Its new values `'tinted'` and `'dashed'` need no step either:
+ * older rows do not hold them, and `'outline'` keeps its old meaning.
+ * `ShapeData.transparent` is optional and absent means false, as existing
+ * diagrams already intend. A field is only worth a version when the *old*
+ * spelling would be misread without one.
+ * `DiagramData.defaults` (the board's "save as
  * default style") is the same case: absent means "no board defaults" and the
  * built-in ones apply, which is what every diagram written before it already
  * wants. It is *narrowed* rather than migrated — see `sanitizeDefaults`. So is

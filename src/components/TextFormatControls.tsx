@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Minus,
   Plus,
@@ -6,7 +5,6 @@ import {
   Italic,
   Underline,
   Strikethrough,
-  Baseline,
   AlignLeft,
   AlignCenter,
   AlignRight,
@@ -14,12 +12,11 @@ import {
   AlignVerticalJustifyCenter,
   AlignVerticalJustifyEnd,
 } from 'lucide-react';
-import * as Popover from '@radix-ui/react-popover';
 import clsx from 'clsx';
 import { Tooltip } from './Tooltip';
+import { ColorPicker } from './toolbar/ColorPicker';
 import { PALETTE } from '../lib/palette';
 import { FONT_SIZE_MAX, FONT_SIZE_MIN, nextFontSize, resolveFontSize } from '../lib/text';
-import { suppressNextBlurCommit } from '../store/useDiagramStore';
 import type { FontSize, TextAlign, VerticalAlign } from '../types';
 
 const FONT_SIZES: FontSize[] = ['small', 'medium', 'large'];
@@ -28,17 +25,6 @@ const FONT_SIZE_LABEL: Record<FontSize, string> = { small: 'S', medium: 'M', lar
 const BUTTON_CLASS =
   'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-30';
 const ACTIVE_CLASS = 'bg-accent-500 text-white hover:bg-accent-500';
-
-/**
- * What a label can be coloured. The eight deep fills from the palette's last
- * tier read on a light shape, and black and white cover the two a diagram
- * reaches for most; "Auto" hands the choice back to the fill's contrast.
- */
-const TEXT_COLORS: string[] = [
-  ...PALETTE.filter((swatch) => swatch.id.endsWith('-4')).map((swatch) => swatch.fill),
-  '#000000',
-  '#FFFFFF',
-];
 
 /** The formatting the controls display. Callers map it onto whatever they edit. */
 export interface TextFormatValue {
@@ -63,81 +49,8 @@ interface TextFormatControlsProps {
    * under its own `label*` keys, which carry size, bold and italic only.
    */
   target?: 'shape' | 'connectorLabel';
-}
-
-/** The swatch row behind the "Text colour" button. */
-function TextColorPicker({
-  value,
-  onChange,
-}: {
-  value: string | undefined;
-  onChange: (color: string | undefined) => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Tooltip label="Text colour" side="top">
-        <Popover.Trigger asChild>
-          <button aria-label="Text colour" className={clsx(BUTTON_CLASS, 'relative')}>
-            <Baseline size={15} />
-            <span
-              className="absolute bottom-1 h-[3px] w-4 rounded-full"
-              style={{ background: value ?? 'currentColor' }}
-            />
-          </button>
-        </Popover.Trigger>
-      </Tooltip>
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          sideOffset={10}
-          aria-label="Text colour"
-          // The bar this sits in can be open over a label that is being edited,
-          // and the popover is portalled outside it — so it has to hold the
-          // editor's focus the same way the bar itself does, or picking a
-          // colour would blur the text and close the thing being coloured.
-          onMouseDown={(e) => {
-            e.preventDefault();
-            suppressNextBlurCommit();
-          }}
-          className="panel-in z-50 flex items-center gap-1 rounded-xl bg-ink-950 p-1.5 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
-        >
-          <button
-            aria-label="Auto"
-            title="Auto"
-            onClick={() => {
-              onChange(undefined);
-              setOpen(false);
-            }}
-            className={clsx(
-              'flex h-6 items-center rounded-md px-2 text-[11px] font-semibold text-white/70 transition hover:bg-white/10 hover:text-white',
-              value === undefined && ACTIVE_CLASS,
-            )}
-          >
-            Auto
-          </button>
-          {TEXT_COLORS.map((color) => (
-            <button
-              key={color}
-              aria-label={color}
-              title={color}
-              onClick={() => {
-                onChange(color);
-                setOpen(false);
-              }}
-              style={{ background: color }}
-              className={clsx(
-                'h-6 w-6 rounded-md border border-white/20 transition hover:scale-110',
-                value === color && 'ring-2 ring-accent-500 ring-offset-1 ring-offset-ink-950',
-              )}
-            />
-          ))}
-          <Popover.Arrow className="fill-ink-950" />
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
-  );
+  /** Preserve a live label editor while interacting with a portalled picker. */
+  keepEditorFocus?: boolean;
 }
 
 /**
@@ -147,7 +60,12 @@ function TextColorPicker({
  * same patch to everything selected. Keeping the markup in one place is what
  * stops the two from drifting apart.
  */
-export function TextFormatControls({ value, onChange, target = 'shape' }: TextFormatControlsProps) {
+export function TextFormatControls({
+  value,
+  onChange,
+  target = 'shape',
+  keepEditorFocus = false,
+}: TextFormatControlsProps) {
   const isShape = target === 'shape';
 
   // A shape's label is sized in pixels; a connector's still wears one of the
@@ -233,9 +151,29 @@ export function TextFormatControls({ value, onChange, target = 'shape' }: TextFo
               <Strikethrough size={15} />
             </button>
           </Tooltip>
-          <TextColorPicker
-            value={value.textColor}
-            onChange={(textColor) => onChange({ textColor })}
+          <ColorPicker
+            target="text"
+            activeId={
+              PALETTE.find((swatch) => swatch.fill.toUpperCase() === value.textColor?.toUpperCase())?.id ?? null
+            }
+            triggerColour={value.textColor ?? null}
+            onPick={(swatch) => onChange({ textColor: swatch.fill })}
+            onCustom={(hex) => onChange({ textColor: hex })}
+            keepEditorFocus={keepEditorFocus}
+            extra={
+              <button
+                type="button"
+                aria-label="Auto"
+                aria-pressed={value.textColor === undefined}
+                className={clsx(
+                  'h-7 w-28 rounded-md text-[11px] font-semibold text-white/70 transition hover:bg-white/10 hover:text-white',
+                  value.textColor === undefined && ACTIVE_CLASS,
+                )}
+                onClick={() => onChange({ textColor: undefined })}
+              >
+                Auto
+              </button>
+            }
           />
         </>
       )}

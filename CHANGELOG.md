@@ -3,6 +3,27 @@
 FlowSketch is deployed continuously from `main`; releases are cut by date when a
 body of work lands. Newest first.
 
+## 2026.10.08 — Palette, fill looks and theme control
+
+The colour picker now has fifteen named colours and a custom hex choice. Fill,
+Outline, Dash and Transparent give shapes a separate look control: old white
+Outline data keeps rendering as before, while new Outline and Dash use an 80%
+white tint. Transparent combines with Outline and Dash; turning it on from Fill
+selects Outline, and choosing Fill clears it.
+Sticky notes keep their lighter fill, and connectors use the selected swatch
+colour.
+
+The account menu now holds the System / Light / Dark choice on the dashboard and
+in the canvas TopBar. The public share page keeps its theme cycler. No diagram
+migration or version bump was needed; an older open tab reads new `tinted` and
+`dashed` values as Fill until it reloads.
+
+### Tests
+
+- Palette pairs, fill rendering, picker navigation, colour history, defaults,
+  collaborative serialization, server rendering, style commands and the colour,
+  fill-look and theme browser flows.
+
 ## 2026.09.24 — Connectors that behave like Whimsical's
 
 The connector was studied side by side with Whimsical's — drawing, dragging

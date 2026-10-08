@@ -19,6 +19,7 @@ import { renderDiagramPng, renderDiagramSvg } from '../lib/exportImage';
 import { buildDiagramExport, diagramFileName } from '../lib/diagramFile';
 import { api } from '../lib/api';
 import { toastError } from '../store/useToastStore';
+import { AccountMenu } from './AccountMenu';
 
 export function TopBar() {
   const navigate = useNavigate();
@@ -113,6 +114,7 @@ export function TopBar() {
         <VoteButton />
         <TimerButton />
         <ExportMenu />
+        <AccountMenu />
       </div>
     </div>
     <ConflictBanner />

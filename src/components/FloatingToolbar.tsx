@@ -18,6 +18,7 @@ import {
   Tag,
   Type,
   X,
+  EyeOff,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import clsx from 'clsx';
@@ -26,14 +27,14 @@ import { toastInfo } from '../store/useToastStore';
 import { formatShortcut, registry } from '../commands/commands';
 import { canAutoLayout } from '../lib/autoLayout';
 import { DEFAULT_STYLE_KIND_LABELS, kindOf } from '../lib/defaultStyle';
-import { ColorPalette } from './ColorPalette';
+import { ColorPicker } from './toolbar/ColorPicker';
 import { ArrangeMenu } from './ArrangeMenu';
 import { FilterSelectionMenu } from './FilterSelectionMenu';
 import { TextFormatControls } from './TextFormatControls';
 import type { TextFormatValue } from './TextFormatControls';
 import { Tooltip } from './Tooltip';
-import { DEFAULT_SWATCH } from '../lib/palette';
-import { resolveFillStyle } from '../lib/shapeStyle';
+import { matchSwatch, swatchFromHex } from '../lib/palette';
+import { resolveFillLook } from '../lib/shapeStyle';
 import {
   CONNECTOR_STROKE_PX,
   DEFAULT_EDGE_STROKE,
@@ -59,7 +60,6 @@ import { SHAPE_ICONS, SHAPE_LABELS, SWAPPABLE_SHAPE_KINDS } from '../lib/shapeIc
 import type {
   ArrowStyle,
   ConnectorKind,
-  FillStyle,
   ShapeData,
   ShapeKind,
   StrokeStyle,
@@ -218,7 +218,7 @@ function ArrowEndIcon({ style, side }: { style: ArrowStyle; side: 'start' | 'end
 }
 
 /** A filled square and an outlined one: the two ways a shape can be painted. */
-function FillStyleIcon({ variant }: { variant: FillStyle }) {
+function FillStyleIcon({ variant }: { variant: 'fill' | 'outline' | 'dash' }) {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16">
       <rect
@@ -227,9 +227,10 @@ function FillStyleIcon({ variant }: { variant: FillStyle }) {
         width="10.5"
         height="10.5"
         rx="2.5"
-        fill={variant === 'filled' ? 'currentColor' : 'none'}
+        fill={variant === 'fill' ? 'currentColor' : 'none'}
         stroke="currentColor"
         strokeWidth="1.5"
+        strokeDasharray={variant === 'dash' ? '2 2' : undefined}
       />
     </svg>
   );
@@ -637,10 +638,11 @@ export function FloatingToolbar() {
   // the bar sits over the very board the end is being dropped on.
   const connectorDragging = useDiagramStore((s) => s.connectorDragging);
   const edges = useDiagramStore((s) => s.edges);
-  const updateSelectedNodesStyle = useDiagramStore((s) => s.updateSelectedNodesStyle);
+  const updateSelectedNodesColour = useDiagramStore((s) => s.updateSelectedNodesColour);
   const updateSelectedEdgesStyle = useDiagramStore((s) => s.updateSelectedEdgesStyle);
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const updateSelectedNodesData = useDiagramStore((s) => s.updateSelectedNodesData);
+  const toggleSelectedNodesTransparent = useDiagramStore((s) => s.toggleSelectedNodesTransparent);
   const updateSelectedNodesDataTransient = useDiagramStore((s) => s.updateSelectedNodesDataTransient);
   const beginInteraction = useDiagramStore((s) => s.beginInteraction);
   const setSelectedShapeKind = useDiagramStore((s) => s.setSelectedShapeKind);
@@ -672,7 +674,7 @@ export function FloatingToolbar() {
   const selectedNodes = useMemo(() => nodes.filter((n) => n.selected), [nodes]);
   const selectedEdges = useMemo(() => edges.filter((e) => e.selected), [edges]);
   // An image carries no label, fill or stroke of its own — `updateSelectedNodesData`
-  // and `updateSelectedNodesStyle` both skip it. So a selection of nothing but
+  // and `updateSelectedNodesColour` both skip it. So a selection of nothing but
   // images gets neither the text controls nor the colour palette; one that also
   // holds a real shape gets both, and they apply to that shape.
   // A container paints itself from the theme rather than from a fill and a
@@ -790,9 +792,32 @@ export function FloatingToolbar() {
   const screenY = Math.max(60, rawScreenY);
 
   const isEdgeMode = selectedNodes.length === 0 && selectedEdges.length > 0;
-  const activeStroke = isEdgeMode
-    ? selectedEdges[0]?.data?.stroke ?? DEFAULT_EDGE_STROKE
-    : styleableNodes[0]?.data?.stroke ?? DEFAULT_SWATCH.stroke;
+  const edgeMatches = selectedEdges.map((edge) =>
+    matchSwatch({ stroke: edge.data?.stroke ?? DEFAULT_EDGE_STROKE }, 'edge'),
+  );
+  const nodeMatches = colourableNodes.map((node) =>
+    matchSwatch(
+      { fill: node.data.fill, stroke: node.data.stroke },
+      node.data.shape === 'sticky' ? 'sticky' : 'shape',
+    ),
+  );
+  const colorMatches = isEdgeMode ? edgeMatches : nodeMatches;
+  const firstColorMatch = colorMatches[0] ?? null;
+  const activeColorId =
+    firstColorMatch && colorMatches.every((swatch) => swatch?.id === firstColorMatch.id)
+      ? firstColorMatch.id
+      : null;
+  const triggerColours = isEdgeMode
+    ? selectedEdges.map((edge) => edge.data?.stroke ?? DEFAULT_EDGE_STROKE)
+    : colourableNodes.map(
+        (node, index) =>
+          nodeMatches[index]?.fill ?? (node.data.shape === 'sticky' ? node.data.stroke : node.data.fill),
+      );
+  const triggerColour =
+    triggerColours.length > 0 &&
+    triggerColours.every((colour) => colour.toUpperCase() === triggerColours[0].toUpperCase())
+      ? triggerColours[0]
+      : null;
   const connectorType = selectedEdges[0]?.data?.connectorType ?? 'elbow';
   const strokeStyle = selectedEdges[0]?.data?.strokeStyle ?? 'solid';
   const strokeWidth = selectedEdges[0]?.data?.strokeWidth ?? DEFAULT_STROKE_WIDTH;
@@ -803,11 +828,13 @@ export function FloatingToolbar() {
   // Which of the two paint styles the selection wears, or `null` when it is
   // holding both — neither button is lit then, and pressing one settles it.
   const firstStyleable = styleableNodes[0];
-  const fillStyle: FillStyle | null =
+  const fillLook =
     firstStyleable &&
-    styleableNodes.every((n) => resolveFillStyle(n.data) === resolveFillStyle(firstStyleable.data))
-      ? resolveFillStyle(firstStyleable.data)
+    styleableNodes.every((n) => resolveFillLook(n.data) === resolveFillLook(firstStyleable.data))
+      ? resolveFillLook(firstStyleable.data)
       : null;
+  const allTransparent =
+    styleableNodes.length > 0 && styleableNodes.every((node) => node.data.transparent === true);
   const locked = selectedNodes.some((n) => n.data.locked);
   // One shape, and one this build can copy a style off — the same question the
   // `style.saveDefault` command's `when` asks, so the bar never offers a button
@@ -860,14 +887,20 @@ export function FloatingToolbar() {
         )}
 
         {(isEdgeMode || colourableNodes.length > 0) && (
-          <ColorPalette
-            activeStroke={activeStroke}
-            onSelect={(swatch) => {
+          <ColorPicker
+            target={isEdgeMode ? 'edge' : 'shape'}
+            activeId={activeColorId}
+            triggerColour={triggerColour}
+            onPick={(swatch) => {
               if (isEdgeMode) {
                 updateSelectedEdgesStyle({ stroke: swatch.stroke });
               } else {
-                updateSelectedNodesStyle({ fill: swatch.fill, stroke: swatch.stroke });
+                updateSelectedNodesColour(swatch);
               }
+            }}
+            onCustom={(hex) => {
+              if (isEdgeMode) updateSelectedEdgesStyle({ stroke: hex });
+              else updateSelectedNodesColour(swatchFromHex(hex));
             }}
           />
         )}
@@ -876,23 +909,43 @@ export function FloatingToolbar() {
 
         {tableNode && <TableControls nodeId={tableNode.id} table={tableNode.data.table!} />}
 
-        {/* Which of the two colours the swatch above carries is drawn. Two
-            buttons rather than one toggle: the pair says what the choice *is*
-            without the user having to press it to find out. */}
+        {/* Fill, Outline and Dash are the first axis; Transparent can combine
+            with the latter two. */}
         {styleableNodes.length > 0 && (
           <>
             <div className="mx-0.5 h-5 w-px bg-white/10" />
-            {(['filled', 'outline'] as FillStyle[]).map((style) => (
-              <Tooltip key={style} label={style === 'filled' ? 'Filled' : 'Outline'} side="top">
+            {([
+              ['fill', 'Fill', 'filled'],
+              ['outline', 'Outline', 'tinted'],
+              ['dash', 'Dash', 'dashed'],
+            ] as const).map(([look, label, fillStyle]) => (
+              <Tooltip key={look} label={label} side="top">
                 <button
-                  aria-label={style === 'filled' ? 'Filled' : 'Outline'}
-                  onClick={() => updateSelectedNodesData({ fillStyle: style })}
-                  className={clsx(BUTTON_CLASS, fillStyle === style && ACTIVE_BUTTON_CLASS)}
+                  aria-label={label}
+                  aria-pressed={fillLook === look}
+                  onClick={() =>
+                    updateSelectedNodesData(
+                      look === 'fill'
+                        ? { fillStyle: 'filled', transparent: false }
+                        : { fillStyle },
+                    )
+                  }
+                  className={clsx(BUTTON_CLASS, fillLook === look && ACTIVE_BUTTON_CLASS)}
                 >
-                  <FillStyleIcon variant={style} />
+                  <FillStyleIcon variant={look} />
                 </button>
               </Tooltip>
             ))}
+            <Tooltip label="Transparent" side="top">
+              <button
+                aria-label="Transparent"
+                aria-pressed={allTransparent}
+                onClick={toggleSelectedNodesTransparent}
+                className={clsx(BUTTON_CLASS, allTransparent && ACTIVE_BUTTON_CLASS)}
+              >
+                <EyeOff size={16} />
+              </button>
+            </Tooltip>
           </>
         )}
 

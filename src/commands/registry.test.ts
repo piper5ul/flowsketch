@@ -227,9 +227,12 @@ describe('the align and distribute shortcuts', () => {
    * A context holding `n` selected nodes. The align/distribute gates only read
    * the selection, so the rest of the real context is never reached.
    */
-  function withSelection(n: number): CommandContext {
+  function withSelection(n: number, styleClipboardValue: Record<string, unknown> | null = null): CommandContext {
     const nodes = Array.from({ length: n }, (_, i) => ({ id: `n${i}`, selected: true }));
-    return { store: { getState: () => ({ nodes, edges: [] }) } } as unknown as CommandContext;
+    return {
+      store: { getState: () => ({ nodes, edges: [] }) },
+      styleClipboard: { get: () => styleClipboardValue, set: () => {} },
+    } as unknown as CommandContext;
   }
 
   /**
@@ -305,7 +308,7 @@ describe('the align and distribute shortcuts', () => {
   it('leaves the ⌘⌥ style shortcuts alone', () => {
     // Distribute carries ⇧ precisely so it cannot shadow paste-style, which
     // this registry cannot tell apart from a ⌃⌥V press.
-    expect(registry.matchEvent(key('◊', { meta: true, alt: true, code: 'KeyV' }), withSelection(3))?.id)
+    expect(registry.matchEvent(key('◊', { meta: true, alt: true, code: 'KeyV' }), withSelection(3, { fill: '#FF0000' }))?.id)
       .toBe('style.paste');
     expect(registry.matchEvent(key('ç', { meta: true, alt: true, code: 'KeyC' }), withSelection(3))?.id)
       .toBe('style.copy');

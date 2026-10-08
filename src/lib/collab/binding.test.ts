@@ -98,6 +98,16 @@ describe('store -> doc', () => {
     expect(docToDiagramData(doc)).toEqual(snapshot());
   });
 
+  it('round-trips the dashed transparent fill look through the document', () => {
+    const doc = new Y.Doc();
+    bind(doc);
+    const id = store().addShape('rectangle', { x: 10, y: 20 });
+
+    store().updateNodeData(id, { fillStyle: 'dashed', transparent: true });
+
+    expect(docToDiagramData(doc).nodes[0].data).toMatchObject({ fillStyle: 'dashed', transparent: true });
+  });
+
   it('keeps z-order, which a Y.Map has no way of expressing on its own', () => {
     const doc = new Y.Doc();
     bind(doc);

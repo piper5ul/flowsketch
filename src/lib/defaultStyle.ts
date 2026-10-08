@@ -44,8 +44,9 @@ export const DEFAULT_STYLE_KIND_LABELS: Record<DefaultStyleKind, string> = {
 };
 
 /**
- * The style keys a shape's default keeps: the fill and outline, which of the
- * two is painted, and the whole of the label's typography. Deliberately not
+ * The style keys a shape's default keeps: the fill and outline, which look is
+ * painted, whether the inside is transparent, and the whole of the label's
+ * typography. Deliberately not
  * `shape` (a default says how a thing looks, never what it is), not `label`,
  * `link`, `locked`, `imageSrc` or `uploading`, and not width or height —
  * Whimsical's own default style is not a size either.
@@ -54,6 +55,7 @@ export const SHAPE_STYLE_KEYS = [
   'fill',
   'stroke',
   'fillStyle',
+  'transparent',
   'fontSize',
   'bold',
   'italic',

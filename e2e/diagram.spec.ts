@@ -910,11 +910,12 @@ test('a new shape is a borderless white card, and Outline hands it its stroke ba
   // and that it is drawn in the swatch's stroke.
   await expect(box).not.toHaveCSS('border-top-width', '0px');
   await expect(box).toHaveCSS('border-top-color', 'rgb(203, 213, 225)');
+  await expect(box).toHaveCSS('background-color', 'rgb(255, 255, 255)');
   // The border does the separating now, so the shadow stands down.
   await expect(box).toHaveCSS('box-shadow', 'none');
 
   await node.click();
-  await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Filled' }).click();
+  await page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Fill', exact: true }).click();
   await pane.click({ position: { x: 1000, y: 600 } });
   await expect(box).toHaveCSS('border-top-width', '0px');
 });
@@ -936,6 +937,24 @@ test('the format bar underlines a label being edited', async ({ page }) => {
 
   await expect(node).toContainText('Hi');
   await expect(node.locator('[contenteditable]')).toHaveCSS('text-decoration-line', 'underline');
+});
+
+test('opening Text colour keeps the live label editor focused', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+
+  await node.dblclick();
+  const editor = node.locator('[contenteditable="true"]');
+  await expect(editor).toBeFocused();
+  await page.getByRole('button', { name: 'Text colour' }).click();
+  await expect(page.getByRole('group', { name: 'Colors' })).toBeVisible();
+  await expect(editor).toBeFocused();
 });
 
 /**
@@ -1334,6 +1353,9 @@ test('a public link opens the diagram read-only, and revoking it kills the URL',
   await expect(visitorPage.getByText('View only')).toBeVisible();
   // Read-only means the drawing tools are not there at all, not merely inert.
   await expect(visitorPage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
+  // The theme cycler remains available on the public share page.
+  await expect(visitorPage).toHaveURL(/\/s\/[^/]+$/);
+  await expect(visitorPage.getByRole('button', { name: 'Switch to light theme' })).toBeVisible();
 
   // Turning the link off leaves the old URL pointing at nothing.
   await dialog.getByRole('button', { name: 'Turn off' }).click();
@@ -1547,12 +1569,26 @@ test('dark mode follows the system, can be pinned, and never repaints the diagra
   // the token through React Flow's own custom property.
   await expect(page.locator('.react-flow__background-pattern.dots')).toHaveCSS('fill', DARK_CANVAS_DOT);
 
-  // system → light → dark. The tooltip on each press names where it goes next.
-  await page.getByRole('button', { name: 'Switch to light theme' }).click();
+  // The account menu exposes all three preferences and reflects the active one.
+  await page.getByRole('button', { name: 'Account' }).click();
+  const account = page.getByRole('dialog', { name: 'Account' });
+  const theme = account.getByRole('radiogroup', { name: 'Theme' });
+  const systemRadio = theme.getByRole('radio', { name: 'System' });
+  const lightRadio = theme.getByRole('radio', { name: 'Light' });
+  const darkRadio = theme.getByRole('radio', { name: 'Dark' });
+  await expect(systemRadio).toHaveAttribute('aria-checked', 'true');
+  await expect(lightRadio).toHaveAttribute('aria-checked', 'false');
+  await expect(darkRadio).toHaveAttribute('aria-checked', 'false');
+
+  await lightRadio.click();
+  await expect(systemRadio).toHaveAttribute('aria-checked', 'false');
+  await expect(lightRadio).toHaveAttribute('aria-checked', 'true');
   await expect(html).toHaveAttribute('data-theme', 'light');
   await expect(body).toHaveCSS('background-color', LIGHT_CANVAS);
 
-  await page.getByRole('button', { name: 'Switch to dark theme' }).click();
+  await darkRadio.click();
+  await expect(lightRadio).toHaveAttribute('aria-checked', 'false');
+  await expect(darkRadio).toHaveAttribute('aria-checked', 'true');
   await expect(html).toHaveAttribute('data-theme', 'dark');
   await expect(body).toHaveCSS('background-color', DARK_CANVAS);
 
@@ -2032,11 +2068,10 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   // Style it: painted as an outline, in a deep blue swatch.
   await toolbar.getByRole('button', { name: 'Outline' }).click();
   await toolbar.getByRole('button', { name: 'Color' }).click();
-  await page.getByRole('button', { name: 'blue-3' }).click();
-  // The trigger toggles the palette shut again.
-  await toolbar.getByRole('button', { name: 'Color' }).click();
-  // `blue-3`'s stroke (Whimsical's blue shaded a fifth towards black), which is what an outline shape draws.
-  await expect(shapeBox(first)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
+  await page.getByRole('button', { name: 'Blue', exact: true }).click();
+  // Preset picks close the picker, leaving the Style control ready to open.
+  await expect(shapeBox(first)).toHaveCSS('border-color', 'rgb(41, 135, 215)');
+  await expect(shapeBox(first)).toHaveCSS('background-color', 'rgb(212, 231, 247)');
 
   await toolbar.getByRole('button', { name: 'Style', exact: true }).click();
   await page.getByRole('button', { name: 'Save as default style' }).click();
@@ -2050,8 +2085,8 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await page.keyboard.press('Escape'); // the new shape opened for typing
   const second = page.locator('.react-flow__node').nth(1);
   await expect(second).toBeVisible();
-  await expect(shapeBox(second)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
-  await expect(shapeBox(second)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(shapeBox(second)).toHaveCSS('border-color', 'rgb(41, 135, 215)');
+  await expect(shapeBox(second)).toHaveCSS('background-color', 'rgb(212, 231, 247)');
 
   // And it survives the round trip through the document and its snapshot: a
   // third shape drawn after a reload is still drawn in the board's default.
@@ -2063,7 +2098,32 @@ test('a shape saved as the default style is what the next shape is drawn in', as
   await page.keyboard.press('Escape'); // the new shape opened for typing
   const third = page.locator('.react-flow__node').nth(2);
   await expect(third).toBeVisible();
-  await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(35, 109, 174)');
+  await expect(shapeBox(third)).toHaveCSS('border-color', 'rgb(41, 135, 215)');
+  await expect(shapeBox(third)).toHaveCSS('background-color', 'rgb(212, 231, 247)');
+});
+
+test('the colour name sits above the picker and never covers a swatch', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const node = await drawShapeIn(page, pane, { x: 400, y: 300 });
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+
+  await node.click();
+  await toolbar.getByRole('button', { name: 'Outline' }).click();
+  await toolbar.getByRole('button', { name: 'Color' }).click();
+  const grid = page.getByRole('group', { name: 'Colors' });
+  await grid.getByRole('button', { name: 'Mint', exact: true }).hover();
+
+  const name = page.locator('.swatch-name');
+  await expect(name).toHaveText('Mint');
+  const nameBox = await name.boundingBox();
+  const gridBox = await grid.boundingBox();
+  expect(nameBox).not.toBeNull();
+  expect(gridBox).not.toBeNull();
+  expect(nameBox!.y + nameBox!.height).toBeLessThanOrEqual(gridBox!.y);
+
+  await grid.getByRole('button', { name: 'Blue', exact: true }).click();
+  await expect(shapeBox(node)).toHaveCSS('border-color', 'rgb(41, 135, 215)');
 });
 
 test('K opens the link editor for the selected shape', async ({ page }) => {

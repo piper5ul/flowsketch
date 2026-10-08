@@ -125,6 +125,13 @@ describe('docToDiagramData', () => {
     expect('defaults' in docToDiagramData(without)).toBe(false);
   });
 
+  it('keeps the transparent toggle in shape defaults when rendering a document', () => {
+    const doc = new Y.Doc();
+    seedDocFromDiagramData(doc, diagram({ defaults: { shape: { transparent: true } } }));
+
+    expect(docToDiagramData(doc).defaults).toEqual({ shape: { transparent: true } });
+  });
+
   it('narrows a default the document holds to style keys before writing it out', () => {
     // The document is written by browsers. The snapshot is what every other
     // reader of this diagram sees, so it is narrowed here as it is on a load.
