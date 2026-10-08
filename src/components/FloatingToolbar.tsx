@@ -686,8 +686,8 @@ export function FloatingToolbar() {
   // cast a shadow from.
   // A wireframe component is a fourth: it *does* carry a label, so the
   // typography controls below apply to it — but its ground is the fixed
-  // wireframe palette, so "Filled / Outline", the corner radius and the shadow
-  // have nothing to act on. Hence two lists rather than one.
+  // wireframe palette, so its Fill / Outline / Dash / Transparent controls,
+  // corner radius and shadow have nothing to act on. Hence two lists rather than one.
   const textableNodes = useMemo(
     () =>
       selectedNodes.filter(

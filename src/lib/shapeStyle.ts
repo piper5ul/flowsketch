@@ -58,7 +58,7 @@ export interface ShapePaint {
   dashed: boolean;
 }
 
-function tintedFill(fill: string): string {
+function tintedFill(fill: unknown): string {
   return isHex6(fill) ? mix(fill, '#FFFFFF', TINT_AMOUNT) : OUTLINE_FILL;
 }
 

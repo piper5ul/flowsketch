@@ -69,8 +69,7 @@ describe('addShape', () => {
   it('gives sticky notes and text their own fixed styling', () => {
     const stickyId = store().addShape('sticky', { x: 0, y: 0 });
     const sticky = store().nodes.find((n) => n.id === stickyId)!;
-    const yellow = PALETTE.find((swatch) => swatch.id === 'yellow')!;
-    expect(sticky.data).toMatchObject({ fill: yellow.sticky, stroke: yellow.stroke });
+    expect(sticky.data).toMatchObject({ fill: '#FBF1D3', stroke: '#F0C54F' });
 
     const textId = store().addShape('text', { x: 0, y: 0 });
     const text = store().nodes.find((n) => n.id === textId)!;
@@ -1816,6 +1815,31 @@ describe('toggleSelectedNodesTransparent', () => {
     expect(store().nodes.find((node) => node.id === fill)!.data).toEqual(before.get(fill));
     expect(store().nodes.find((node) => node.id === dash)!.data).toEqual(before.get(dash));
   });
+
+  it('turns Transparent off in one undoable edit and restores it on undo', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    const original = { ...store().nodes.find((node) => node.id === id)!.data };
+
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: false,
+    });
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toMatchObject({
+      fillStyle: 'tinted',
+      transparent: true,
+    });
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toEqual(original);
+  });
 });
 
 describe('updateSelectedNodesData', () => {
@@ -1895,6 +1919,18 @@ describe('updateSelectedNodesData', () => {
 
     store().undo();
     expect(store().nodes.map((n) => n.data.fillStyle)).toEqual(['outline', 'outline']);
+  });
+
+  it.each(['tinted', 'dashed'] as const)('undo restores the stored pair after the %s look', (fillStyle) => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    const before = { ...store().nodes.find((node) => node.id === id)!.data };
+
+    store().updateSelectedNodesData({ fillStyle });
+    expect(store().nodes.find((node) => node.id === id)!.data.fillStyle).toBe(fillStyle);
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === id)!.data).toEqual(before);
   });
 
   it('leaves an image out of a fill-style change, as it has no fill to style', () => {

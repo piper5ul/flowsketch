@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as Y from 'yjs';
 import { docToDiagramData } from '../../../server/collab/render';
 import { edgeEntries, nodeEntries, writeDiagramIntoDoc } from '../../../shared/collabDoc';
+import type { SerializedEdge, SerializedNode } from '../../../shared/types';
 import {
   serializeDiagram,
   setDocumentFlush,
@@ -19,7 +20,14 @@ import {
   useDiagramStore,
 } from '../../store/useDiagramStore';
 import { api } from '../api';
-import { bindDocToStore, pushDiagramToDoc, TRANSIENT_COMMIT_MS, type DocBinding } from './binding';
+import {
+  bindDocToStore,
+  docEdgesOntoStore,
+  docNodesOntoStore,
+  pushDiagramToDoc,
+  TRANSIENT_COMMIT_MS,
+  type DocBinding,
+} from './binding';
 
 // Only `api` itself is a stub — the error classes have to be the real ones, or
 // `saveDiagram`'s `instanceof` checks would never match.
@@ -248,6 +256,50 @@ describe('store -> doc', () => {
     bind(doc, { readOnly: true });
     store().addShape('rectangle', { x: 0, y: 0 });
     expect(nodeEntries(doc).size).toBe(0);
+  });
+});
+
+describe('document pulls narrow element colours and looks', () => {
+  const hostile = [
+    'url(https://attacker.example/pixel)',
+    'expression(alert(1))',
+    42,
+    { value: '#FF0000' },
+    'var(--x)',
+  ];
+
+  it.each(hostile.map((value, index) => [index, value]))(
+    'replaces unsafe node/edge colours and drops unknown look fields (%s)',
+    (_index, value) => {
+      const nodes: SerializedNode[] = [{
+        id: 'n1', type: 'shape', position: { x: 0, y: 0 },
+        data: { shape: 'rectangle', fill: value, stroke: value, textColor: value, fillStyle: 'nope', transparent: 'yes' },
+      }];
+      const edges: SerializedEdge[] = [{
+        id: 'e1', source: 'n1', target: 'n2', data: { stroke: value },
+      }];
+
+      const pulledNodes = docNodesOntoStore(nodes, []);
+      const pulledEdges = docEdgesOntoStore(edges, []);
+      expect(pulledNodes[0].data).toMatchObject({ fill: '#FFFFFF', stroke: '#CBD5E1' });
+      expect(pulledNodes[0].data).not.toHaveProperty('textColor');
+      expect(pulledNodes[0].data).not.toHaveProperty('fillStyle');
+      expect(pulledNodes[0].data).not.toHaveProperty('transparent');
+      expect(pulledEdges[0].data?.stroke).toBe('#788896');
+    },
+  );
+
+  it('preserves old palette colours unchanged as document updates arrive', () => {
+    const nodes: SerializedNode[] = [{
+      id: 'n1', type: 'shape', position: { x: 0, y: 0 },
+      data: { shape: 'rectangle', fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' },
+    }];
+    const edges: SerializedEdge[] = [{ id: 'e1', source: 'n1', target: 'n2', data: { stroke: '#236DAE' } }];
+
+    expect(docNodesOntoStore(nodes, [])[0].data).toMatchObject({
+      fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE',
+    });
+    expect(docEdgesOntoStore(edges, [])[0].data?.stroke).toBe('#236DAE');
   });
 });
 

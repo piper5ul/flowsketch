@@ -4,10 +4,11 @@ import * as Popover from '@radix-ui/react-popover';
 import { LogOut } from 'lucide-react';
 import { signOut, useSession } from '../lib/authClient';
 import { initialsOf } from '../lib/collab/presence';
+import { toastError } from '../store/useToastStore';
 import { ThemeSwitch } from './ThemeSwitch';
 
 /** Account details and app-wide appearance preferences. */
-export function AccountMenu() {
+export function AccountMenu({ beforeSignOut }: { beforeSignOut?: () => Promise<boolean> }) {
   const { data: session } = useSession();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -15,6 +16,18 @@ export function AccountMenu() {
   const email = session?.user?.email || '';
 
   const handleSignOut = async () => {
+    if (beforeSignOut) {
+      let flushed = false;
+      try {
+        flushed = await beforeSignOut();
+      } catch {
+        flushed = false;
+      }
+      if (!flushed) {
+        toastError('Pending changes could not be saved. Try signing out again.');
+        return;
+      }
+    }
     await signOut();
     navigate('/login');
   };

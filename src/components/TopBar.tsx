@@ -21,7 +21,7 @@ import { api } from '../lib/api';
 import { toastError } from '../store/useToastStore';
 import { AccountMenu } from './AccountMenu';
 
-export function TopBar() {
+export function TopBar({ beforeSignOut }: { beforeSignOut?: () => Promise<boolean> }) {
   const navigate = useNavigate();
   const title = useDiagramStore((s) => s.title);
   const setTitle = useDiagramStore((s) => s.setTitle);
@@ -114,7 +114,7 @@ export function TopBar() {
         <VoteButton />
         <TimerButton />
         <ExportMenu />
-        <AccountMenu />
+        <AccountMenu beforeSignOut={beforeSignOut} />
       </div>
     </div>
     <ConflictBanner />

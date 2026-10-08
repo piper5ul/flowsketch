@@ -21,6 +21,7 @@
  * `nodenext` — see the note on `diagramMigrations.ts` in CLAUDE.md.
  */
 import type { ConnectorData, ShapeData } from '../types.js';
+import { sanitizeConnectorStyleValues, sanitizeShapeStyleValues } from './colorSafety.js';
 
 /**
  * The four things a board can hold a default for.
@@ -159,7 +160,10 @@ export function sanitizeDefaults(raw: unknown): BoardDefaults | undefined {
   for (const kind of DEFAULT_STYLE_KINDS) {
     const value = raw[kind];
     if (!isRecord(value)) continue;
-    const style = kind === 'connector' ? pickConnectorStyle(value) : pickShapeStyle(value);
+    const picked = kind === 'connector' ? pickConnectorStyle(value) : pickShapeStyle(value);
+    const style = kind === 'connector'
+      ? sanitizeConnectorStyleValues(picked)
+      : sanitizeShapeStyleValues(picked);
     if (Object.keys(style).length === 0) continue;
     // The cast is the union collapsing: `connector` took the connector branch.
     (out as Record<string, unknown>)[kind] = style;

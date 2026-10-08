@@ -62,10 +62,23 @@ export function ColorGrid({
   const [focusedName, setFocusedName] = useState<string | null>(null);
   const buttons = useRef(new Map<number, HTMLButtonElement>());
   const input = useRef<HTMLInputElement>(null);
+  const customHex = isHex6(customValue ?? '') ? customValue! : '#2987D7';
 
   useEffect(() => {
     setFocusIndex(activeIndex >= 0 ? activeIndex : 0);
   }, [activeIndex]);
+
+  useEffect(() => {
+    const picker = input.current;
+    if (!picker) return;
+    const commit = () => onCustom?.(picker.value);
+    picker.addEventListener('change', commit);
+    return () => picker.removeEventListener('change', commit);
+  }, [onCustom]);
+
+  useEffect(() => {
+    if (input.current && input.current.value !== customHex) input.current.value = customHex;
+  }, [customHex]);
 
   const setButton = (index: number) => (element: HTMLButtonElement | null) => {
     if (element) buttons.current.set(index, element);
@@ -163,8 +176,7 @@ export function ColorGrid({
             tabIndex={-1}
             data-testid="custom-colour-input"
             className="sr-only"
-            value={isHex6(customValue ?? '') ? customValue : '#2987D7'}
-            onChange={(event) => onCustom?.(event.currentTarget.value)}
+            defaultValue={customHex}
           />
         </div>
       )}

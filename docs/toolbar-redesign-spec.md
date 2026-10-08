@@ -205,7 +205,7 @@ interface ColorPickerProps {
 
 - The grid has `role="group" aria-label="Colors"`. Each cell is a `<button>` with `aria-label={swatch.name}` (for example "Blue") and `aria-pressed` for the active one. Buttons are kept (not radios) so that e2e selectors stay `getByRole('button', { name })`.
 - Focus uses a roving `tabIndex`: the active cell (or the first) is 0 and the rest are -1. On open, `onOpenAutoFocus` is prevented and that cell is focused.
-- `ArrowLeft/Right/Up/Down` move within the 4×4 and clamp at the edges (no wrap). `Home`/`End` go to the start or end of the row. `Enter`/`Space` pick (native button). Movement is `gridMove`.
+- Left and right arrows move one cell in row-major order, so ArrowRight×4 goes from White to Blue; up and down keep the column. Movement clamps at the outer edges with no wrap. `Home`/`End` go to the start or end of the row. `Enter`/`Space` pick (native button). Movement is `gridMove`.
 - `Escape`: `Popover.Content onEscapeKeyDown={(e) => e.stopPropagation()}`. It closes the popover and returns focus to the trigger without reaching `Canvas`'s keyboard handler, which would otherwise clear the selection.
 - The existing `Tooltip` component is **not** used per swatch. It is still used on the **Color** trigger (`label="Color"`, `side="top"`). The trigger's tooltip is suppressed while the popover is open (Radix does this when the trigger is `data-state=open`. Verify it, or pass `open={false}` while open).
 

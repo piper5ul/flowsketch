@@ -11,12 +11,22 @@ Outline data keeps rendering as before, while new Outline and Dash use an 80%
 white tint. Transparent combines with Outline and Dash; turning it on from Fill
 selects Outline, and choosing Fill clears it.
 Sticky notes keep their lighter fill, and connectors use the selected swatch
-colour.
+colour. New stickies use a slightly adjusted Yellow pair (`#FBF1D3` fill /
+`#F0C54F` stroke), replacing `#FBF3D0` / `#E9B10A`.
 
 The account menu now holds the System / Light / Dark choice on the dashboard and
 in the canvas TopBar. The public share page keeps its theme cycler. No diagram
 migration or version bump was needed; an older open tab reads new `tinted` and
 `dashed` values as Fill until it reloads.
+
+### Under the hood
+
+- `sanitizeColor` narrows colour strings at the stored diagram, defaults,
+  server snapshot and collaboration pull boundaries.
+- The native colour input commits once on `change`; menu and popover keyboard
+  events stay with their controls instead of reaching the canvas.
+- Sign-out flushes pending board, document and title writes before revoking the
+  session.
 
 ### Tests
 

@@ -12,6 +12,7 @@ interface ToolButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   children: ReactNode;
 }
 
+/** Reserved for PR 2; PR 1 currently uses the shared popover chrome only. */
 export const ToolButton = forwardRef<HTMLButtonElement, ToolButtonProps>(function ToolButton(
   { label, shortcut, active, popover, className, children, type = 'button', ...buttonProps },
   ref,

@@ -162,6 +162,33 @@ describe('sanitizeDefaults', () => {
     });
   });
 
+  it.each([
+    ['URL', 'url(https://attacker.example/pixel)'],
+    ['CSS expression', 'expression(alert(1))'],
+    ['number', 42],
+    ['object', { value: '#FF0000' }],
+    ['custom property', 'var(--x)'],
+  ])('drops a %s from every colour field in defaults', (_label, unsafe) => {
+    expect(
+      sanitizeDefaults({
+        shape: { fill: unsafe, stroke: unsafe, textColor: unsafe, fillStyle: 'bogus', transparent: 'yes' },
+        connector: { stroke: unsafe },
+      }),
+    ).toBeUndefined();
+  });
+
+  it('keeps a legacy palette colour exactly while dropping invalid look values', () => {
+    expect(
+      sanitizeDefaults({
+        shape: { fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE', fillStyle: 'legacy', transparent: 1 },
+        connector: { stroke: '#236DAE' },
+      }),
+    ).toEqual({
+      shape: { fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' },
+      connector: { stroke: '#236DAE' },
+    });
+  });
+
   it('drops a kind that has nothing left, and the whole thing when none has', () => {
     expect(sanitizeDefaults({ shape: { fill: '#FF0000' }, text: { label: 'no' } })).toEqual({
       shape: { fill: '#FF0000' },

@@ -1,19 +1,27 @@
-import type { SwatchColor } from '../types';
+import type { SwatchColor } from '../types.js';
+import { sanitizeColor } from './colorString.js';
+export { sanitizeColor } from './colorString.js';
+
+function hexChannels(value: unknown): [number, number, number] | null {
+  const colour = sanitizeColor(value);
+  if (!colour || !colour.startsWith('#')) return null;
+  let hex = colour.slice(1);
+  if (hex.length === 3) hex = [...hex].map((digit) => digit + digit).join('');
+  return [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16)) as [number, number, number];
+}
 
 /** `hex` moved `amount` (0–1) of the way to `towards`, as upper-case hex. */
-export function mix(hex: string, towards: string, amount: number): string {
-  const channels = (value: string) => {
-    const h = value.replace('#', '');
-    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-  };
-  const a = channels(hex);
-  const b = channels(towards);
+export function mix(hex: unknown, towards: unknown, amount: number): string {
+  const a = hexChannels(hex);
+  const b = hexChannels(towards);
+  if (!a || !b || !Number.isFinite(amount)) return '#FFFFFF';
   const c = a.map((v, i) => Math.round(v + (b[i] - v) * amount));
   return `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
 }
 
 const WHITE = '#FFFFFF';
 
+/** How much lighter Outline and Dash interiors are than their stored fill. */
 export const TINT_AMOUNT = 0.8;
 export const STICKY_TINT = 0.75;
 
@@ -44,9 +52,8 @@ export const PALETTE: readonly SwatchColor[] = SWATCHES.map((swatch) => ({
 export const GRID_COLUMNS = 4;
 export const DEFAULT_SWATCH: SwatchColor = PALETTE[0];
 
-/** How much lighter Outline and Dash interiors are than their stored fill. */
-export function isHex6(value: string): boolean {
-  return /^#[0-9a-f]{6}$/i.test(value);
+export function isHex6(value: unknown): boolean {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
 }
 
 export function swatchFromHex(hex: string): SwatchColor {
@@ -69,14 +76,15 @@ export function swatchPair(swatch: SwatchColor, target: 'shape' | 'sticky'): { f
   };
 }
 
-function sameColour(a: string | undefined, b: string): boolean {
-  return a !== undefined && a.toUpperCase() === b.toUpperCase();
+function sameColour(a: unknown, b: string): boolean {
+  return typeof a === 'string' && a.toUpperCase() === b.toUpperCase();
 }
 
 export function matchSwatch(
-  colour: { fill?: string; stroke?: string },
+  colour: { fill?: unknown; stroke?: unknown } | null | undefined,
   target: ColourTarget,
 ): SwatchColor | null {
+  if (!colour || typeof colour !== 'object') return null;
   return PALETTE.find((swatch) => {
     if (target === 'edge') return sameColour(colour.stroke, swatch.stroke);
     const fill = target === 'sticky' ? swatch.sticky : swatch.fill;
@@ -88,13 +96,26 @@ export function matchSwatch(
  * Returns true if the fill is dark enough to warrant white text.
  * Uses the existing weighted RGB threshold to keep current contrast behaviour.
  */
-export function isDarkFill(fill: string): boolean {
-  if (!fill || fill === 'transparent') return false;
-  const hex = fill.replace('#', '');
-  if (hex.length < 6) return false;
-  const r = parseInt(hex.slice(0, 2), 16) / 255;
-  const g = parseInt(hex.slice(2, 4), 16) / 255;
-  const b = parseInt(hex.slice(4, 6), 16) / 255;
+export function isDarkFill(fill: unknown): boolean {
+  const colour = sanitizeColor(fill);
+  if (!colour || colour.toLowerCase() === 'transparent') return false;
+  const channels = hexChannels(colour) ?? rgbFunctionChannels(colour);
+  if (!channels) return false;
+  const [red, green, blue] = channels;
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
   const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
   return luminance < 0.5;
+}
+
+function rgbFunctionChannels(colour: string): [number, number, number] | null {
+  if (!colour.toLowerCase().startsWith('rgb')) return null;
+  const body = colour.slice(colour.indexOf('(') + 1, -1).replace('/', ' ');
+  const values = body.split(/[\s,]+/).filter(Boolean);
+  if (values.length < 3) return null;
+  return values.slice(0, 3).map((channel) => {
+    const numeric = Number.parseFloat(channel);
+    return Math.max(0, Math.min(255, channel.endsWith('%') ? numeric * 2.55 : numeric));
+  }) as [number, number, number];
 }

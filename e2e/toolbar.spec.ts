@@ -70,18 +70,96 @@ test('the colour picker has a keyboard-accessible 4 by 4 grid and Escape keeps t
   await expect(node).toHaveClass(/selected/);
 });
 
-test('a custom colour applies once, has no active preset, and one undo restores White', async ({ page }) => {
+test('a custom colour commits only on change as one undo step', async ({ page }) => {
+  await signUp(page);
+  const diagramId = await page.evaluate(async () => {
+    const response = await fetch('/api/diagrams', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Custom colour',
+        data: {
+          version: 3,
+          nodes: [{
+            id: 'baseline',
+            type: 'shape',
+            position: { x: 300, y: 220 },
+            width: 180,
+            height: 80,
+            data: { label: 'Baseline', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+          }],
+          edges: [],
+        },
+      }),
+    });
+    if (!response.ok) throw new Error(`Could not create baseline diagram: ${response.status}`);
+    return ((await response.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${diagramId}`);
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.click();
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+  const undo = page.getByRole('button', { name: 'Undo' });
+  await expect(undo).toBeDisabled();
+
+  await toolbar.getByRole('button', { name: 'Color' }).click();
+  const grid = page.getByRole('group', { name: 'Colors' });
+  const customInput = page.locator('[data-testid="custom-colour-input"]');
+  await customInput.evaluate((element) => {
+    const input = element as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(input, '#123456');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(undo).toBeDisabled();
+
+  await customInput.evaluate((input) => input.dispatchEvent(new Event('change', { bubbles: true })));
+  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await expect(undo).toBeEnabled();
+  await expect(grid.locator('button[aria-pressed="true"]')).toHaveCount(0);
+
+  // A focused colour input belongs to its popover; ⌘Z there must not reach the
+  // canvas history handler. Close it before testing the one committed edit.
+  await customInput.evaluate((input) => (input as HTMLElement).focus());
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(18, 52, 86)');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  await expect(undo).toBeDisabled();
+});
+
+test('Space picks the focused swatch without panning the canvas', async ({ page }) => {
   await signUp(page);
   const { node, toolbar } = await drawRectangle(page);
 
   await toolbar.getByRole('button', { name: 'Color' }).click();
   const grid = page.getByRole('group', { name: 'Colors' });
-  await page.locator('[data-testid="custom-colour-input"]').fill('#123456');
-  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(18, 52, 86)');
-  await expect(grid.locator('button[aria-pressed="true"]')).toHaveCount(0);
+  const blue = grid.getByRole('button', { name: 'Blue', exact: true });
+  for (let i = 0; i < 4; i += 1) await page.keyboard.press('ArrowRight');
+  await expect(blue).toBeFocused();
+  await page.keyboard.press('Space');
+  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(41, 135, 215)');
+});
 
-  await page.keyboard.press('ControlOrMeta+z');
-  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+test('the theme switch ArrowRight does not nudge the selected shape', async ({ page }) => {
+  await signUp(page);
+  const { node } = await drawRectangle(page);
+  const before = await node.evaluate((element) => element.style.transform);
+
+  await page.getByRole('button', { name: 'Account' }).click();
+  const theme = page.getByRole('radiogroup', { name: 'Theme' });
+  const system = theme.getByRole('radio', { name: 'System' });
+  const light = theme.getByRole('radio', { name: 'Light' });
+  await system.focus();
+  await page.keyboard.press('ArrowRight');
+
+  await expect(light).toHaveAttribute('aria-checked', 'true');
+  const after = await node.evaluate((element) => element.style.transform);
+  expect(after).toBe(before);
 });
 
 test('Dash combines with Transparent, Fill clears it, and Transparent from Fill selects Outline', async ({ page }) => {

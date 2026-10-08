@@ -97,6 +97,58 @@ test('a new user can create a diagram, add a labeled shape, and see it survive a
   await expect(page.locator('.react-flow__node', { hasText: 'Hello from e2e' })).toBeVisible();
 });
 
+test('sign out flushes pending offline board and title saves before revoking the session', async ({ page }) => {
+  const saves: { kind: 'diagram' | 'sign-out'; payload?: { title?: string; data?: { nodes?: { data?: { label?: string } }[] } } }[] = [];
+  await page.routeWebSocket(/\/collab/, (socket) => { void socket.close(); });
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === 'PUT' && /^\/api\/diagrams\/[^/]+$/.test(path)) {
+      try {
+        saves.push({ kind: 'diagram', payload: request.postDataJSON() });
+      } catch {
+        // A non-JSON metadata request is irrelevant to this ordering check.
+      }
+    }
+    if (path.endsWith('/api/auth/sign-out')) saves.push({ kind: 'sign-out' });
+  });
+
+  const email = await signUp(page);
+  const pane = await newDiagram(page);
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 640, y: 400 } });
+  await page.keyboard.type('Pending offline edit');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.react-flow__node')).toContainText('Pending offline edit');
+
+  // Change the title last so both debounces are pending when sign-out starts.
+  await page.getByRole('textbox', { name: 'Diagram title' }).fill('Pending title');
+  await page.getByRole('button', { name: 'Account' }).click();
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page).toHaveURL(/\/login$/);
+
+  const signOutIndex = saves.findIndex((entry) => entry.kind === 'sign-out');
+  const boardIndex = saves.findIndex((entry) =>
+    entry.kind === 'diagram' && entry.payload?.title === 'Pending title' &&
+    entry.payload.data?.nodes?.some((node) => node.data?.label === 'Pending offline edit'),
+  );
+  const titleIndex = saves.findIndex((entry) =>
+    entry.kind === 'diagram' && entry.payload?.title === 'Pending title' && !entry.payload.data,
+  );
+  expect(signOutIndex).toBeGreaterThanOrEqual(0);
+  expect(boardIndex).toBeGreaterThanOrEqual(0);
+  expect(titleIndex).toBeGreaterThanOrEqual(0);
+  expect(boardIndex).toBeLessThan(signOutIndex);
+  expect(titleIndex).toBeLessThan(signOutIndex);
+
+  await page.getByLabel('Email').fill(email);
+  await page.getByLabel('Password').fill('correct-horse-battery');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page.getByRole('heading', { name: 'My Diagrams' })).toBeVisible();
+  await expect(page.getByText('Pending title', { exact: true })).toBeVisible();
+  await page.getByText('Pending title', { exact: true }).click();
+  await expect(page.locator('.react-flow__node', { hasText: 'Pending offline edit' })).toBeVisible();
+});
+
 /**
  * Draws a rectangle and quick-adds a neighbour to its right, leaving exactly
  * two shapes joined by one horizontal connector.
@@ -496,7 +548,7 @@ test('a pasted image is uploaded and referenced by URL, not embedded as base64',
   await expect(image).toHaveCount(1);
   // The image the server stored is what actually renders, not a data URL.
   await expect(image).toHaveJSProperty('complete', true);
-  expect(await image.evaluate((el) => el.naturalWidth)).toBe(64);
+  expect(await image.evaluate((el) => (el as HTMLImageElement).naturalWidth)).toBe(64);
 
   await expectSynced(page);
   await page.reload();

@@ -8,7 +8,7 @@
  * testable without React Flow, a DOM, or a store.
  */
 import { getBezierPath, getStraightPath, Position } from '@xyflow/react';
-import type { ConnectorKind, Direction } from '../types';
+import type { ConnectorKind, Direction } from '../types.js';
 
 export interface Point {
   x: number;

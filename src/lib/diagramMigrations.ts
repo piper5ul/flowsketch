@@ -87,6 +87,7 @@ import { sanitizeDefaults } from './defaultStyle.js';
 import { sanitizeThumbnailIds } from './boardThumbnail.js';
 import { sanitizeVotingSession } from './voting.js';
 import { sanitizeTimer } from './timer.js';
+import { sanitizeConnectorData, sanitizeShapeData } from './colorSafety.js';
 
 /** The version this build writes. Bump it when the shape of a diagram changes. */
 export const CURRENT_DIAGRAM_VERSION = 3;
@@ -103,6 +104,17 @@ function isNonEmptyString(value: unknown): value is string {
 
 function recordsOf(value: unknown): Bag[] {
   return Array.isArray(value) ? value.filter(isRecord) : [];
+}
+
+function sanitizeNodeColours(node: Bag): Bag {
+  return {
+    ...node,
+    data: sanitizeShapeData(node.data, typeof node.type === 'string' ? node.type : undefined),
+  };
+}
+
+function sanitizeEdgeColours(edge: Bag): Bag {
+  return { ...edge, data: sanitizeConnectorData(edge.data) };
 }
 
 /**
@@ -261,9 +273,9 @@ export function migrateDiagramData(raw: unknown): DiagramData {
   const migrated: DiagramData = {
     ...data,
     version: CURRENT_DIAGRAM_VERSION,
-    nodes: recordsOf(data.nodes) as unknown as SerializedNode[],
+    nodes: recordsOf(data.nodes).map(sanitizeNodeColours) as unknown as SerializedNode[],
     // Whatever version it came in at: see `withCurrentMarkers`.
-    edges: recordsOf(data.edges).map(withCurrentMarkers) as unknown as SerializedEdge[],
+    edges: recordsOf(data.edges).map(sanitizeEdgeColours).map(withCurrentMarkers) as unknown as SerializedEdge[],
   };
 
   const viewport = viewportOf(data.viewport);

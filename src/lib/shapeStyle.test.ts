@@ -123,6 +123,11 @@ describe('shapePaint', () => {
     expect(shapePaint({ ...data, fillStyle: 'filled' }).fill).toBe('#DBEAFE');
   });
 
+  it('falls back safely when a tinted fill is not a string', () => {
+    const paint = shapePaint(shape({ fill: 42 as unknown as string, fillStyle: 'tinted' }));
+    expect(paint.fill).toBe(OUTLINE_FILL);
+  });
+
   it('keeps floating arrow anchors invisible whatever paint fields say', () => {
     const anchor = shape({ fill: 'transparent', stroke: 'transparent', fillStyle: 'dashed', transparent: true });
     expect(shapePaint(anchor)).toEqual({ fill: 'transparent', stroke: null, dashed: false });

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from './diagramMigrations';
+import { DEFAULT_EDGE_STROKE } from './defaults';
+import { DEFAULT_SWATCH } from './palette';
 
 /** A v0 payload: no `version`, no `type` fields, no markers — what old rows hold. */
 const v0 = {
@@ -245,6 +247,53 @@ describe('migrateDiagramData', () => {
   it('throws a descriptive error for a diagram from a newer version', () => {
     expect(() => migrateDiagramData({ version: CURRENT_DIAGRAM_VERSION + 1, nodes: [], edges: [] }))
       .toThrow(/newer version/i);
+  });
+});
+
+describe('stored element colour and look narrowing', () => {
+  const hostile = [
+    'url(https://attacker.example/pixel)',
+    'expression(alert(1))',
+    42,
+    { value: '#FF0000' },
+    'var(--x)',
+  ];
+
+  it.each(hostile.map((value, index) => [index, value]))(
+    'replaces untrusted node and connector colours and drops invalid looks (%s)',
+    (_index, value) => {
+      const migrated = migrateDiagramData({
+        version: CURRENT_DIAGRAM_VERSION,
+        nodes: [{
+          id: 'n1', type: 'shape', position: { x: 0, y: 0 },
+          data: { shape: 'rectangle', fill: value, stroke: value, textColor: value, fillStyle: 'unknown', transparent: 'yes' },
+        }],
+        edges: [{ id: 'e1', source: 'n1', target: 'n2', data: { stroke: value } }],
+      });
+
+      expect(migrated.nodes[0].data).toMatchObject({
+        fill: DEFAULT_SWATCH.fill,
+        stroke: DEFAULT_SWATCH.stroke,
+      });
+      expect(migrated.nodes[0].data).not.toHaveProperty('textColor');
+      expect(migrated.nodes[0].data).not.toHaveProperty('fillStyle');
+      expect(migrated.nodes[0].data).not.toHaveProperty('transparent');
+      expect(migrated.edges[0]!.data!.stroke).toBe(DEFAULT_EDGE_STROKE);
+    },
+  );
+
+  it('preserves the old 48-palette hex spelling in nodes and connectors', () => {
+    const migrated = migrateDiagramData({
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [{
+        id: 'n1', type: 'shape', position: { x: 0, y: 0 },
+        data: { shape: 'rectangle', fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' },
+      }],
+      edges: [{ id: 'e1', source: 'n1', target: 'n2', data: { stroke: '#236DAE' } }],
+    });
+
+    expect(migrated.nodes[0].data).toMatchObject({ fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' });
+    expect(migrated.edges[0]!.data!.stroke).toBe('#236DAE');
   });
 });
 
