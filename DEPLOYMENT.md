@@ -190,7 +190,7 @@ The public instance at `flowsketch.vedalogy.com` (renamed from `whimsical.vedalo
 |---|---|
 | Container | Proxmox LXC **235** (`whimsy`) at `192.168.68.251`, on host `192.168.68.240` (`ssh localpve`, then `pct exec 235 -- …`) |
 | App | `/opt/whimsy`, `whimsy.service`, Node 22 |
-| Database | shared PostgreSQL at `192.168.68.242:5432` |
+| Database | `whimsy` on the localpve development PostgreSQL at `192.168.68.242:5432` (CT 210). Development and e2e use `whimsy_dev` on the same server; nothing but the live app may use `whimsy` |
 | Tunnel | **runs on the maintainer's Mac** (`~/.cloudflared/config.yml`, shared with ~25 other hostnames) with `flowsketch.vedalogy.com → http://192.168.68.251:3001`, and the same rule for the old `whimsical.vedalogy.com` so the app can redirect it |
 | Nginx | installed on the container with the stock config; unused |
 

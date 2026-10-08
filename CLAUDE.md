@@ -9,7 +9,7 @@ Whimsical-style diagramming app. Sharing (public read-only links, per-user invit
 - `npm test` / `npm run test:watch` — Vitest (no DB needed)
 - `npm run test:e2e` — Playwright; reuses a running dev server locally, starts its own in CI
 - `npm run build` — `tsc -b && vite build`; `npm run build:server` compiles the API to `dist-server/`
-- `docker compose up -d` — Postgres + MailDev for local dev
+- **Dev database and mail live on localpve, not in Docker on the Mac.** `.env` points at `whimsy_dev` on the localpve Postgres (`192.168.68.242`, CT 210) and at the localpve MailDev (`192.168.68.246:1025`, inbox on `:1080`); `~/infra-docs/LOCALPVE_DOCUMENTATION.md` has both. **`whimsy` on the same server is the live site's database — never point dev, tests or a worktree's `.env` at it**: until 2026-10-08 they did, and left 5,931 test accounts in production. Prisma's *migration* engine cannot reach the LAN from macOS (Local Network permission), so run `prisma migrate deploy` for `whimsy_dev` from CT 235 or through `ssh -L 15432:192.168.68.242:5432 localpve`; the app's own `pg` driver connects fine. `docker compose up -d` (Postgres + MailDev) is the setup for contributors without localpve and is not used here.
 - Install with `npm install --legacy-peer-deps` (npm 10.9 arborist bug with vitest's peer set)
 
 ## Architecture (read this instead of re-reading the files)
