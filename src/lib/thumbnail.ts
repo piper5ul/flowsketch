@@ -26,8 +26,10 @@ const BUSY_RECHECK_MS = 100;
 
 /** Quiet period after keyboard input before another canvas render. */
 const KEYBOARD_QUIET_MS = 2_000;
+/** Quiet period after wheel input before another canvas render. */
+const WHEEL_QUIET_MS = 400;
 
-export type ThumbnailInputKind = 'keyboard' | 'other';
+export type ThumbnailInputKind = 'keyboard' | 'wheel' | 'other';
 
 export interface ThumbnailIdleScheduler {
   /** Queue work for an idle turn. */
@@ -82,6 +84,8 @@ export interface ThumbnailSchedulerOptions {
   isBusy?: () => boolean;
   /** Delay after the most recent keyboard input before rendering. */
   keyboardQuietMs?: number;
+  /** Delay after the most recent wheel input before rendering. */
+  wheelQuietMs?: number;
   /** Injectable idle queue, useful for deterministic scheduling and tests. */
   idleScheduler?: ThumbnailIdleScheduler;
 }
@@ -93,6 +97,7 @@ export function createThumbnailScheduler({
   now = () => Date.now(),
   isBusy = () => false,
   keyboardQuietMs = KEYBOARD_QUIET_MS,
+  wheelQuietMs = WHEEL_QUIET_MS,
   idleScheduler = defaultIdleScheduler,
 }: ThumbnailSchedulerOptions): ThumbnailScheduler {
   let dirty = false;
@@ -102,9 +107,11 @@ export function createThumbnailScheduler({
   let idleGeneration = 0;
   let busyTimer: ReturnType<typeof setTimeout> | null = null;
   let keyboardTimer: ReturnType<typeof setTimeout> | null = null;
+  let wheelTimer: ReturnType<typeof setTimeout> | null = null;
   let intervalTimer: ReturnType<typeof setTimeout> | null = null;
   let lastCaptureAt = Number.NEGATIVE_INFINITY;
   let lastKeyboardInputAt = Number.NEGATIVE_INFINITY;
+  let lastWheelInputAt = Number.NEGATIVE_INFINITY;
 
   function cancelIdle(): void {
     idleGeneration += 1;
@@ -126,6 +133,10 @@ export function createThumbnailScheduler({
     if (keyboardTimer !== null) {
       clearTimeout(keyboardTimer);
       keyboardTimer = null;
+    }
+    if (wheelTimer !== null) {
+      clearTimeout(wheelTimer);
+      wheelTimer = null;
     }
     if (intervalTimer !== null) {
       clearTimeout(intervalTimer);
@@ -152,7 +163,7 @@ export function createThumbnailScheduler({
   }
 
   function schedule(): void {
-    if (!dirty || idlePending || busyTimer !== null || keyboardTimer !== null || intervalTimer !== null) return;
+    if (!dirty || idlePending || busyTimer !== null || keyboardTimer !== null || wheelTimer !== null || intervalTimer !== null) return;
 
     if (isBusy()) {
       busyTimer = setTimeout(() => {
@@ -168,6 +179,15 @@ export function createThumbnailScheduler({
         keyboardTimer = null;
         schedule();
       }, keyboardWaitMs);
+      return;
+    }
+
+    const wheelWaitMs = Math.max(0, lastWheelInputAt + wheelQuietMs - now());
+    if (wheelWaitMs > 0) {
+      wheelTimer = setTimeout(() => {
+        wheelTimer = null;
+        schedule();
+      }, wheelWaitMs);
       return;
     }
 
@@ -196,6 +216,10 @@ export function createThumbnailScheduler({
         return;
       }
       if (lastKeyboardInputAt + keyboardQuietMs > now()) {
+        schedule();
+        return;
+      }
+      if (lastWheelInputAt + wheelQuietMs > now()) {
         schedule();
         return;
       }
@@ -229,6 +253,12 @@ export function createThumbnailScheduler({
         if (keyboardTimer !== null) {
           clearTimeout(keyboardTimer);
           keyboardTimer = null;
+        }
+      } else if (kind === 'wheel') {
+        lastWheelInputAt = now();
+        if (wheelTimer !== null) {
+          clearTimeout(wheelTimer);
+          wheelTimer = null;
         }
       }
       if (!dirty) return;

@@ -179,6 +179,34 @@ describe('createThumbnailScheduler', () => {
     expect(render).toHaveBeenCalledTimes(2);
   });
 
+  it('waits for wheel quiet and resets the 400 ms window on each event', async () => {
+    const idleScheduler = controlledIdleScheduler();
+    const render = vi.fn().mockResolvedValue(PNG);
+    const save = vi.fn().mockResolvedValue(undefined);
+    const scheduler = createThumbnailScheduler({
+      render,
+      save,
+      minIntervalMs: INTERVAL,
+      idleScheduler,
+    });
+
+    scheduler.markDirty();
+    scheduler.notifyInput('wheel');
+    await vi.advanceTimersByTimeAsync(250);
+    scheduler.notifyInput('wheel');
+
+    await vi.advanceTimersByTimeAsync(399);
+    expect(idleScheduler.request).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(idleScheduler.request).toHaveBeenCalledTimes(2);
+    expect(render).not.toHaveBeenCalled();
+    idleScheduler.callbacks[1].callback();
+    await Promise.resolve();
+    expect(render).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the rate limit when idle scheduling is injected', async () => {
     const idleScheduler = controlledIdleScheduler();
     const render = vi.fn().mockResolvedValue(PNG);

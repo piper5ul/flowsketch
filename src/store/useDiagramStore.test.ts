@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   computeMarkers,
+  createDiagramPictureChangeTracker,
   diagramPictureChanged,
   serializeDiagram,
   useDiagramStore,
@@ -2037,6 +2038,23 @@ describe('diagramPictureChanged', () => {
     expect(diagramPictureChanged(nodes, edges, [node({ data: { ...nodes[0].data, fill: '#ff0000' } })], edges)).toBe(true);
   });
 
+  it('marks voting start, reveal and clear as picture changes with stable nodes and edges', () => {
+    const nodes = [node({
+      data: { shape: 'rectangle', label: 'Start', fill: '#ffffff', stroke: '#111111', votes: { voter: 1 } },
+    })];
+    const edges: ConnectorEdge[] = [];
+    const started = { active: true, revealed: false, dotsPerPerson: 3, startedById: 'voter' };
+    const revealed = { ...started, active: false, revealed: true };
+
+    expect(diagramPictureChanged(nodes, edges, nodes, edges, null, started)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, nodes, edges, started, revealed)).toBe(true);
+    expect(diagramPictureChanged(nodes, edges, nodes, edges, revealed, null)).toBe(true);
+
+    const tracker = createDiagramPictureChangeTracker();
+    expect(tracker.update(nodes, edges, nodes, edges, true, null, started)).toBe(false);
+    expect(tracker.checkPending(nodes, edges, started)).toBe(true);
+  });
+
   it('marks edge addition and removal dirty', () => {
     const nodes: ShapeNode[] = [];
     const edges: ConnectorEdge[] = [];
@@ -2060,7 +2078,10 @@ describe('diagramPictureChanged', () => {
       data: { shape: 'rectangle', label: 'Counted', fill: '#ffffff', stroke: '#111111' },
     } as unknown as ShapeNode;
     const nodes = [countedNode];
-    const changed = [node({ id: 'changed' })];
+    const changed = [node({
+      id: 'counted',
+      data: { shape: 'rectangle', label: 'Changed', fill: '#ffffff', stroke: '#111111' },
+    })];
     const edges: ConnectorEdge[] = [];
 
     expect(diagramPictureChanged(nodes, edges, changed, edges)).toBe(true);
@@ -2083,35 +2104,71 @@ describe('diagramPictureChanged', () => {
       data: {},
     } as unknown as ConnectorEdge;
     const edgeList = [countedEdge];
-    const changedEdgeList = [edge({ id: 'changed-edge' })];
+    const changedEdgeList = [edge({ id: 'counted-edge', data: { label: 'changed' } })];
     expect(diagramPictureChanged(nodes, edgeList, nodes, changedEdgeList)).toBe(true);
     expect(sourceReads).toBe(1);
     expect(diagramPictureChanged(nodes, edgeList, nodes, changedEdgeList)).toBe(true);
     expect(sourceReads).toBe(1);
   });
 
-  it('measures checks on a 500-node diagram', () => {
+  it('does not serialize nodes during transient frames and checks once at an explicit checkpoint', () => {
+    const nodes = [node()];
+    const edges: ConnectorEdge[] = [];
+    const transientNodes = [node({ position: { x: 11, y: 20 } })];
+    const committedNodes = [node({ position: { x: 12, y: 20 } })];
+    const tracker = createDiagramPictureChangeTracker();
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    tracker.update(nodes, edges, transientNodes, edges, true);
+    const transientSerializationCount = stringify.mock.calls.length;
+    tracker.update(transientNodes, edges, committedNodes, edges, false);
+    const preCheckpointSerializationCount = stringify.mock.calls.length - transientSerializationCount;
+    const changed = tracker.checkPending(committedNodes, edges);
+    const checkpointSerializationCount = stringify.mock.calls.length - transientSerializationCount;
+    stringify.mockRestore();
+
+    expect(transientSerializationCount).toBe(0);
+    expect(preCheckpointSerializationCount).toBe(0);
+    expect(changed).toBe(true);
+    expect(checkpointSerializationCount).toBe(2);
+  });
+
+  it('leaves pending transient work untouched by an unrelated store notification', () => {
+    const nodes = [node()];
+    const edges: ConnectorEdge[] = [];
+    const transientNodes = [node({ position: { x: 11, y: 20 } })];
+    const tracker = createDiagramPictureChangeTracker();
+    const stringify = vi.spyOn(JSON, 'stringify');
+
+    tracker.update(nodes, edges, transientNodes, edges, true);
+    const unrelatedChange = tracker.update(transientNodes, edges, transientNodes, edges, false);
+    const notificationSerializationCount = stringify.mock.calls.length;
+    const stillPending = tracker.hasPending();
+    stringify.mockRestore();
+
+    expect(unrelatedChange).toBe(false);
+    expect(notificationSerializationCount).toBe(0);
+    expect(stillPending).toBe(true);
+  });
+
+  it('serializes only the changed node in a 500-node comparison', () => {
     const nodes = Array.from({ length: 500 }, (_, index) => node({
       id: `node-${index}`,
       position: { x: index * 12, y: index * 7 },
       data: { shape: 'rectangle', label: `Node ${index}`, fill: '#ffffff', stroke: '#111111' },
     }));
     const edges: ConnectorEdge[] = [];
-    const samples = 25;
-    const variants = Array.from({ length: samples }, (_, sample) => nodes.map((current, index) => index === 0
-      ? node({ ...current, data: { ...current.data, label: `Updated ${sample}` } })
-      : current));
-    const started = performance.now();
-    let dirtyCount = 0;
+    const changed = nodes.map((current, index) => index === 0
+      ? node({ ...current, data: { ...current.data, label: 'Updated' } })
+      : current);
+    const stringify = vi.spyOn(JSON, 'stringify');
 
-    for (const changed of variants) {
-      if (diagramPictureChanged(nodes, edges, changed, edges)) dirtyCount += 1;
-    }
+    const isDirty = diagramPictureChanged(nodes, edges, changed, edges);
+    const serializedNodeCount = stringify.mock.calls.length;
+    stringify.mockRestore();
 
-    const millisecondsPerCheck = (performance.now() - started) / samples;
-    console.info(`diagramPictureChanged: 500 nodes, ${millisecondsPerCheck.toFixed(3)} ms/check (25 fresh arrays)`);
-    expect(dirtyCount).toBe(samples);
-    expect(millisecondsPerCheck).toBeGreaterThanOrEqual(0);
+    expect(isDirty).toBe(true);
+    expect(serializedNodeCount).toBe(2);
   });
 });
 
