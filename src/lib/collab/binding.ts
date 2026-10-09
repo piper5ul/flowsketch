@@ -817,29 +817,13 @@ export function bindDocToStore(
       if (gestureOpen) return;
       undoManager.stopCapturing();
     },
-    cancelInteraction: () => {
+    flushInteraction: () => {
       if (!gestureOpen) return;
       const wasHeld = transientTimer !== null;
       cancelTransient();
+      if (wasHeld) push(store.getState());
       gestureOpen = false;
       setPendingWrite(false);
-
-      if (wasHeld) {
-        // A transient still in the trailing window never reached Yjs. Restore
-        // the store from the document so no delayed write can follow restore,
-        // and leave any existing undo item untouched.
-        const state = store.getState();
-        const nodes = docNodesOntoStore(nodesOf(doc), state.nodes)
-          .map((node) => node.dragging ? { ...node, dragging: false } : node);
-        const edges = docEdgesOntoStore(edgesOf(doc), state.edges);
-        const opened = deriveMindMapHidden(nodes, edges);
-        applyingRemote = true;
-        try {
-          store.setState({ nodes: opened.nodes, edges: opened.edges });
-        } finally {
-          applyingRemote = false;
-        }
-      }
 
       // The next local edit gets a fresh entry even if the last transient had
       // already reached the document before restore preparation ran.

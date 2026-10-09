@@ -884,6 +884,8 @@ export function Canvas({
       const finish = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', finish);
         window.removeEventListener('keydown', onKey);
         cancelGestureRef.current = null;
         gestureRef.current = null;
@@ -968,6 +970,8 @@ export function Canvas({
       cancelGestureRef.current = finish;
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', finish);
       window.addEventListener('keydown', onKey);
     },
     [tool, readOnly, screenToFlowPosition, addNodes, addEdges, createFreeEndConnector, setTool, setEditingEdgeId],

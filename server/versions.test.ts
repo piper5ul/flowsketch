@@ -9,6 +9,8 @@ import type { AuthUser } from './types.js';
 import { serveForFile } from './testServer.js';
 import { setLiveDiagramReader } from './collab/live.js';
 import { seedDocFromDiagramData } from './collab/render.js';
+import { imageIdsInDiagram } from './imageRefs.js';
+import { MAX_ELEMENTS } from './validation.js';
 import { migrateDiagramData } from '../src/lib/diagramMigrations.js';
 
 // Retention can now delete image files (a snapshot may have been the last thing
@@ -115,6 +117,18 @@ function boardWithImage(imageId: string) {
   };
 }
 
+function boardWithImages(...imageIds: string[]) {
+  return {
+    nodes: imageIds.map((imageId, index) => ({
+      id: `n${index + 1}`,
+      type: 'shape',
+      position: { x: index * 10, y: 0 },
+      data: { imageSrc: `/api/images/${imageId}` },
+    })),
+    edges: [],
+  };
+}
+
 /** The stored Yjs state for one diagram document. */
 function documentState(data: unknown): Uint8Array {
   const document = new Y.Doc();
@@ -156,6 +170,7 @@ beforeEach(() => {
   vi.resetAllMocks();
   authState.user = testUser;
   prismaMock.diagram.update.mockResolvedValue({ id: 'd1', updatedAt: new Date(1) });
+  prismaMock.diagram.findUnique.mockResolvedValue({ userId: 'u1', members: [] });
   prismaMock.diagramVersion.create.mockResolvedValue(versionRow());
   // Every write that carries `data` syncs the `DiagramImage` index; the mock
   // just runs the statements it batches.
@@ -560,10 +575,11 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
   beforeEach(() => {
     setLiveDiagramReader(null);
     prismaMock.diagram.findFirst.mockResolvedValue(ownedRow({ data: AFTER, title: 'Now' }));
+    // Even a historical title is irrelevant to content-only restore.
     prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: BEFORE, title: 'Then' });
     prismaMock.diagram.update.mockResolvedValue({
       id: 'd1',
-      title: 'Then',
+      title: 'Now',
       data: BEFORE,
       updatedAt: new Date('2026-09-06T13:00:00.000Z'),
     });
@@ -572,6 +588,11 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
   it('keeps the row-based restore when no collaborative document exists', async () => {
     const res = await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
 
+    expect(prismaMock.diagramVersion.findFirst).toHaveBeenCalledWith({
+      where: { id: 'v1', diagramId: 'd1' },
+      select: { data: true },
+    });
+
     expect(prismaMock.diagramVersion.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { diagramId: 'd1', data: AFTER, title: 'Now', createdById: 'u1', label: RESTORE_SNAPSHOT_LABEL },
@@ -579,7 +600,7 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     );
     expect(prismaMock.diagram.update).toHaveBeenCalledWith({
       where: { id: 'd1' },
-      data: { data: BEFORE, title: 'Then' },
+      data: { data: BEFORE },
       select: { id: true, title: true, data: true, updatedAt: true },
     });
     // The safety copy is written *before* the row is overwritten, so a restore
@@ -591,7 +612,7 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     // 409 on its next autosave.
     expect(res.body).toEqual({
       id: 'd1',
-      title: 'Then',
+      title: 'Now',
       data: BEFORE,
       updatedAt: '2026-09-06T13:00:00.000Z',
     });
@@ -610,7 +631,7 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
     expect(prismaMock.diagramDoc.upsert).not.toHaveBeenCalled();
-    expect(res.body).toEqual({ title: 'Then', data: migrateDiagramData(BEFORE), applyAsEdit: true });
+    expect(res.body).toEqual({ data: migrateDiagramData(BEFORE), applyAsEdit: true });
   });
 
   it('does not snapshot a stored document before a bound client applies the restore', async () => {
@@ -662,6 +683,86 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(prismaMock.diagramDoc.upsert).not.toHaveBeenCalled();
   });
 
+  it(`rejects a client safety copy with more than ${MAX_ELEMENTS} nodes before writing a version`, async () => {
+    const oversized = board(Array.from({ length: MAX_ELEMENTS + 1 }, (_, index) => `n${index}`));
+
+    await request(server)
+      .post('/api/diagrams/d1/versions/v1/restore')
+      .send({ before: { title: 'Before', data: oversized } })
+      .expect(400);
+
+    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
+  });
+
+  it('keeps images in the version being restored while pruning for the safety copy', async () => {
+    process.env.MAX_VERSIONS = '2';
+    const restoredImage = 'restored-image';
+    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: boardWithImage(restoredImage) });
+    // At the two-version limit, the selected (oldest) version is the only
+    // history reference to this image. The just-written safety copy pushes it
+    // out of retention before the client has restored it and synced the index.
+    prismaMock.diagramVersion.findMany.mockResolvedValueOnce([
+      { id: 'selected-oldest', data: boardWithImage(restoredImage) },
+    ]).mockResolvedValue([]);
+    prismaMock.diagramVersion.deleteMany.mockResolvedValue({ count: 1 });
+    prismaMock.diagramImage.findMany.mockResolvedValue([]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: restoredImage, mime: 'image/png' }]);
+
+    fs.mkdirSync(path.join(uploadDir, 'u1'), { recursive: true });
+    const restoredImageFile = imagePath('u1', restoredImage, 'png');
+    fs.writeFileSync(restoredImageFile, 'x');
+
+    await request(server)
+      .post('/api/diagrams/d1/versions/selected-oldest/restore')
+      .send({ before: { title: 'Now', data: AFTER } })
+      .expect(201);
+
+    expect(prismaMock.diagramVersion.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ['selected-oldest'] } },
+    });
+    expect(prismaMock.image.deleteMany).not.toHaveBeenCalled();
+    expect(fs.existsSync(restoredImageFile)).toBe(true);
+  });
+
+  it('drops a forged foreign image from the client safety copy while keeping reachable images', async () => {
+    const postedBefore = boardWithImages('already-indexed', 'in-history', 'owner-upload', 'forged-foreign');
+    prismaMock.diagramImage.findMany.mockResolvedValue([{ imageId: 'already-indexed' }]);
+    prismaMock.diagramVersion.findMany
+      .mockResolvedValueOnce([{ data: boardWithImage('in-history') }])
+      .mockResolvedValue([]);
+    prismaMock.image.findMany.mockResolvedValue([{ id: 'owner-upload' }]);
+
+    await request(server)
+      .post('/api/diagrams/d1/versions/v1/restore')
+      .send({ before: { title: 'Before', data: postedBefore } })
+      .expect(201);
+
+    const saved = prismaMock.diagramVersion.create.mock.calls[0]![0].data;
+    expect(imageIdsInDiagram(saved.data)).toEqual(['already-indexed', 'in-history', 'owner-upload']);
+    expect(saved.data.nodes.some((node: { data: { imageSrc?: string } }) =>
+      node.data.imageSrc === '/api/images/forged-foreign')).toBe(false);
+
+    prismaMock.diagramVersion.findFirst.mockResolvedValueOnce({ data: saved.data, title: 'Before' });
+    prismaMock.diagram.create.mockResolvedValue({
+      id: 'fork1',
+      userId: 'u1',
+      title: 'Before (fork)',
+      data: saved.data,
+      shareToken: null,
+      thumbnail: null,
+      folderId: null,
+      createdAt: new Date(0),
+      updatedAt: new Date(0),
+    });
+
+    await request(server).post('/api/diagrams/d1/versions/v1/fork').expect(201);
+
+    const forkIndex = prismaMock.image.findMany.mock.calls.at(-1)![0];
+    expect(forkIndex.where.id.in).not.toContain('forged-foreign');
+    const forkRows = prismaMock.diagramImage.createMany.mock.calls[0]![0].data;
+    expect(forkRows.map((row: { imageId: string }) => row.imageId)).not.toContain('forged-foreign');
+  });
+
   it('refuses a viewer who posts a client safety copy', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue(memberRow('viewer'));
 
@@ -677,10 +778,10 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
 
   it('points the image index at the board it restored', async () => {
     const restored = boardWithImage('was-deleted');
-    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: restored, title: 'Then' });
+    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: restored });
     prismaMock.diagram.update.mockResolvedValue({
       id: 'd1',
-      title: 'Then',
+      title: 'Now',
       data: restored,
       updatedAt: new Date('2026-09-06T13:00:00.000Z'),
     });
@@ -778,10 +879,52 @@ describe('POST /api/diagrams/:id/versions/:versionId/fork', () => {
     const drawn = boardWithImage('img-1');
     prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: drawn, title: 'Then' });
     prismaMock.image.findMany.mockResolvedValue([{ id: 'img-1' }]);
+    prismaMock.diagram.findUnique.mockResolvedValue({ userId: 'u1', members: [] });
     await request(server).post('/api/diagrams/d1/versions/v1/fork').expect(201);
     expect(prismaMock.diagramImage.createMany).toHaveBeenCalledWith({
       data: [{ diagramId: 'fork1', imageId: 'img-1' }],
       skipDuplicates: true,
     });
+  });
+
+  it('does not index a foreign image from an already forged stored version on a fork', async () => {
+    prismaMock.diagramVersion.findFirst.mockResolvedValue({ data: boardWithImage('foreign-image'), title: 'Then' });
+    prismaMock.diagram.findUnique.mockResolvedValue({ userId: 'u1', members: [] });
+    prismaMock.image.findMany.mockImplementation(async (args: unknown) => {
+      const where = (args as { where: { OR?: unknown[] } }).where;
+      // The old lookup asked only whether the row existed, which let the fork
+      // index an image u1 could not fetch. Model the guarded lookup refusing it.
+      return where.OR ? [] : [{ id: 'foreign-image' }];
+    });
+
+    await request(server).post('/api/diagrams/d1/versions/v1/fork').expect(201);
+
+    expect(prismaMock.diagram.findUnique).toHaveBeenCalledWith({
+      where: { id: 'fork1' },
+      select: { userId: true, members: { select: { userId: true } } },
+    });
+    expect(prismaMock.image.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['foreign-image'] },
+        OR: [
+          { userId: { in: ['u1'] } },
+          {
+          diagrams: {
+            some: {
+              diagram: {
+                id: { not: 'fork1' },
+                OR: [
+                  { userId: { in: ['u1'] } },
+                  { members: { some: { userId: { in: ['u1'] } } } },
+                ],
+              },
+            },
+          },
+          },
+        ],
+      },
+      select: { id: true },
+    });
+    expect(prismaMock.diagramImage.createMany).not.toHaveBeenCalled();
   });
 });

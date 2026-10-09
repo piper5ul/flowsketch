@@ -40,14 +40,43 @@ import { imageIdsInDiagram } from './imageRefs.js';
 export async function syncDiagramImages(diagramId: string, data: unknown): Promise<void> {
   const referenced = imageIdsInDiagram(data);
 
-  // Only ids we actually hold an `Image` row for; the rest cannot be inserted
-  // (foreign key) and are not ours to garbage-collect either.
+  // Index only images some participant of this diagram can already fetch.
+  // Participants can see their own uploads, or images drawn by diagrams they
+  // were invited to. Without this filter, a forged URL in a board could make
+  // the image endpoint expose another account's upload to this diagram's
+  // members.
+  const diagram = await prisma.diagram.findUnique({
+    where: { id: diagramId },
+    select: { userId: true, members: { select: { userId: true } } },
+  });
+  const participantIds = diagram ? [...new Set([diagram.userId, ...diagram.members.map((member) => member.userId)])] : [];
+
+  // Only images with a row that a participant can fetch; the rest cannot be
+  // inserted (foreign key) or safely exposed through this diagram.
   const known =
-    referenced.length === 0
+    referenced.length === 0 || participantIds.length === 0
       ? []
       : (
           await prisma.image.findMany({
-            where: { id: { in: referenced } },
+            where: {
+              id: { in: referenced },
+              OR: [
+                { userId: { in: participantIds } },
+                {
+                  diagrams: {
+                    some: {
+                      diagram: {
+                        id: { not: diagramId },
+                        OR: [
+                          { userId: { in: participantIds } },
+                          { members: { some: { userId: { in: participantIds } } } },
+                        ],
+                      },
+                    },
+                  },
+                },
+              ],
+            },
             select: { id: true },
           })
         ).map((i) => i.id);

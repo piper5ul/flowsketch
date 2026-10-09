@@ -117,6 +117,7 @@ afterAll(() => {
 beforeEach(() => {
   vi.resetAllMocks();
   authState.user = testUser;
+  prismaMock.diagram.findUnique.mockResolvedValue({ userId: 'u1', members: [] });
   // A `PUT` that changes `data` also snapshots the previous state. That belongs
   // to `versions.test.ts`; here it only has to stay out of the way, so the
   // newest snapshot is always "just now" and the interval suppresses it.
@@ -862,6 +863,38 @@ describe('the DiagramImage index', () => {
     // than by what was there: the index has to match the JSON, not track it.
     expect(prismaMock.diagramImage.deleteMany).toHaveBeenCalledWith({
       where: { diagramId: 'd1', imageId: { notIn: ['kept', 'added'] } },
+    });
+  });
+
+  it('only reuses images from participant-owned or participant-shared source diagrams, excluding the target', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', data: dataWith() });
+    prismaMock.diagram.update.mockResolvedValue(owned);
+    prismaMock.diagram.findUnique.mockResolvedValue({ userId: 'u1', members: [{ userId: 'u2' }] });
+    mockImages({ known: ['shared-image'] });
+
+    await request(server).put('/api/diagrams/d1').send({ data: dataWith('shared-image') }).expect(200);
+
+    expect(prismaMock.image.findMany).toHaveBeenCalledWith({
+      where: {
+        id: { in: ['shared-image'] },
+        OR: [
+          { userId: { in: ['u1', 'u2'] } },
+          {
+            diagrams: {
+              some: {
+                diagram: {
+                  id: { not: 'd1' },
+                  OR: [
+                    { userId: { in: ['u1', 'u2'] } },
+                    { members: { some: { userId: { in: ['u1', 'u2'] } } } },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      },
+      select: { id: true },
     });
   });
 

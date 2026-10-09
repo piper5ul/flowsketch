@@ -189,12 +189,16 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   /** Follows the pointer for as long as a drag lasts, then tidies up after it. */
   const trackPointer = useCallback((onMove: (flow: Point) => void) => {
     const move = (ev: PointerEvent) => onMove(screenToFlowPosition({ x: ev.clientX, y: ev.clientY }));
-    const up = () => {
+    const finish = () => {
       window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
     };
     window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
   }, [screenToFlowPosition]);
 
   /** Drags the bend at `index`; the pointer is where the bend goes. */
@@ -270,14 +274,18 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           store().setConnectTarget(null);
         }
       };
-      const onUp = () => {
+      const finish = () => {
         window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', finish);
         store().setConnectTarget(null);
         store().setConnectorDragging(false);
       };
       window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', finish);
     },
     [id, source, target, screenToFlowPosition, reconnectEdgeEndpoint, freeEdgeEndpoint],
   );
@@ -299,12 +307,16 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
         const t = nearestTOnPolyline(pathPointsRef.current, flow.x, flow.y);
         updateEdgeDataTransient(id, { labelT: t });
       };
-      const onUp = () => {
+      const finish = () => {
         window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', finish);
       };
       window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', finish);
     },
     [id, editing, screenToFlowPosition, updateEdgeDataTransient],
   );
@@ -339,12 +351,16 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
           [target]: { x: tgtPos.x + dx, y: tgtPos.y + dy },
         });
       };
-      const onUp = () => {
+      const finish = () => {
         window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', finish);
       };
       window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', finish);
     },
     [source, target, srcX, srcY, tgtX, tgtY, screenToFlowPosition, moveNodesTransient],
   );

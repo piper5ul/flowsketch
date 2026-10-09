@@ -31,6 +31,7 @@ import type { DiagramVersion, DiagramVersionMeta } from '../../shared/types';
 export function HistoryPanel({ onClose }: { onClose: () => void }) {
   const diagramId = useDiagramStore((s) => s.diagramId);
   const readOnly = useDiagramStore((s) => s.readOnly);
+  const boardTitle = useDiagramStore((s) => s.title);
 
   const [versions, setVersions] = useState<DiagramVersionMeta[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -213,6 +214,13 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
           }
           if (stopForCanvasPointer()) return false;
 
+          // A label editor may have been reopened while the title flush or
+          // document save was pending. Commit it immediately before the safety
+          // copy captures the live board.
+          prepareCanvasForVersionRestore();
+          await Promise.resolve();
+          if (stopForCanvasPointer()) return false;
+
           // Keep this capture and apply adjacent and synchronous. A peer edit
           // delivered between the GET and this block belongs in the safety
           // copy; nothing can run between these statements and be deleted by
@@ -233,10 +241,6 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
             toastError(isDocumentBound() ? 'Could not restore that version.' : 'Reconnect to restore a version');
             return false;
           }
-          // Titles live in the Diagram row, outside the shared document. Let
-          // CanvasPage's title-only saver persist this change independently.
-          useDiagramStore.getState().setTitle(version.title);
-
           // The restore is already applied and undoable. A failed safety-copy
           // write only means history is missing this one entry.
           try {
@@ -251,6 +255,12 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
           const version = await api.getVersion(diagramId, versionId);
           if (!(await applyLiveVersion(version))) return;
         } else {
+          // The row-based route returns the persisted title alongside restored
+          // content, so commit this window's title before the server reads it.
+          if (!(await flushPendingDiagramTitle())) {
+            toastError("Couldn't save the diagram title");
+            return;
+          }
           const restored = await api.restoreVersion(diagramId, versionId);
           if (restored.applyAsEdit) {
             // A document may have connected while the row-based request was
@@ -264,11 +274,13 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
             if (!(await applyLiveVersion(version))) return;
           } else {
             // `viewerId` travels with the role and the token for the reason both
-            // of those do: a restore changes the board, never who is reading it.
-            const { starred, role, shareToken, viewerId } = useDiagramStore.getState();
+            // of those do: a restore changes content, never who is reading it.
+            // Read the title now so an edit made while the row request was in
+            // flight wins over the older title attached to its response.
+            const { title, starred, role, shareToken, viewerId } = useDiagramStore.getState();
             useDiagramStore
               .getState()
-              .loadDiagram(restored.id, restored.title, starred, restored.data, restored.updatedAt, {
+              .loadDiagram(restored.id, title, starred, restored.data, restored.updatedAt, {
                 role,
                 shareToken,
                 viewerId,
@@ -299,9 +311,14 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
       className="panel-in pointer-events-auto fixed right-0 top-0 z-30 flex h-screen w-[22rem] flex-col border-l border-line bg-panel/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
     >
       <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
-        <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ink-900">
-          <History size={15} /> Version history
-        </h2>
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ink-900">
+            <History size={15} /> Version history
+          </h2>
+          <p className="truncate pl-5 text-[12px] text-ink-600">
+            Board title: {boardTitle}
+          </p>
+        </div>
         <button
           type="button"
           onClick={onClose}
@@ -451,10 +468,14 @@ function VersionRow({
   onRestore: () => void;
   onFork: () => void;
 }) {
+  const beforeRestore = version.label === 'Before restore';
+
   return (
     <li className="rounded-lg px-2 py-2 transition hover:bg-hover-soft">
       <p className="text-[13px] font-medium text-ink-900">{describeVersion(version)}</p>
-      <p className="truncate text-[12px] text-ink-600/70">{version.title}</p>
+      {beforeRestore && (
+        <p className="truncate text-[12px] text-ink-600/70">Title before restore: {version.title}</p>
+      )}
       <div className="mt-1.5 flex items-center gap-2">
         <button
           type="button"
@@ -494,7 +515,7 @@ function VersionRow({
           <p className="mb-2 text-[12px] text-warn-ink">
             {canvasPointerActive
               ? "Finish what you're doing, then restore"
-              : 'Restore this version? Your current state will be saved to history too.'}
+              : "Restore this version's content? Your current content will be saved to history too. The board title stays the same."}
           </p>
           <div className="flex items-center gap-2">
             <button

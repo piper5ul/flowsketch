@@ -512,9 +512,9 @@ export function prepareCanvasForVersionRestore(): void {
     }
   }
   prepareVersionRestore?.();
-  // Drop any transient frame still held by the binding before the restore
-  // action opens its own undo boundary.
-  documentHistory?.cancelInteraction();
+  // Commit any transient frame still held by the binding before saveDiagram
+  // waits for the provider and the safety copy captures this canvas.
+  documentHistory?.flushInteraction();
 }
 
 export function setDocumentFlush(flush: (() => Promise<boolean>) | null): void {
@@ -551,8 +551,8 @@ export interface DocumentHistory {
    * still marks exactly the right place and none of them had to be visited.
    */
   beginEntry: () => void;
-  /** Discard a still-held transient gesture before starting a separate edit. */
-  cancelInteraction: () => void;
+  /** Commit a still-held transient gesture before starting a separate edit. */
+  flushInteraction: () => void;
   /** Forget both stacks when a board is loaded; live version restore uses an undoable edit. */
   clear: () => void;
 }

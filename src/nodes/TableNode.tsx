@@ -193,12 +193,16 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
           table: setColumnWidth(tableRef.current, col, startWidth + (e.clientX - startX) / (zoom || 1)),
         });
       };
-      const onUp = () => {
+      const finish = () => {
         window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', finish);
       };
       window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', finish);
     },
     [beginInteraction, canEdit, id, updateNodeDataTransient],
   );

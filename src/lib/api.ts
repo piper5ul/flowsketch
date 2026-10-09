@@ -251,17 +251,17 @@ export const api = {
     request<{ id: string; title: string }>(`/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/fork`, { method: 'POST' }),
 
   /**
-   * Puts a version back on the row-based path. Editor+.
+   * Restores version content on the row-based path. Editor+.
    *
    * A diagram without a document is restored through the row and returns its
-   * new `updatedAt`. With a document, an empty-body request returns the version
-   * for a bound client to apply; the client then posts its synchronous
-   * pre-restore capture with `saveRestoreSafetyCopy`.
+   * current title and new `updatedAt`. With a document, an empty-body request
+   * returns the version's content for a bound client to apply; the client then
+   * posts its synchronous pre-restore capture with `saveRestoreSafetyCopy`.
    */
   restoreVersion: (id: string, versionId: string) =>
     request<
       | { id: string; title: string; data: unknown; updatedAt: string; applyAsEdit?: false }
-      | { title: string; data: unknown; applyAsEdit: true }
+      | { data: unknown; applyAsEdit: true }
     >(
       `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
       { method: 'POST' },

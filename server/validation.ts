@@ -178,7 +178,7 @@ export const restoreVersionBody = z
     before: z
       .strictObject({
         title,
-        data: z.json(),
+        data: diagramData,
       })
       .optional(),
   })

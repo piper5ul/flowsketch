@@ -91,6 +91,93 @@ test('the toolbar adds a row to the selected table', async ({ page }) => {
   await expect(tableNode(page).locator('tr')).toHaveCount(3);
 });
 
+test('a canceled column resize stops tracking later pointer moves', async ({ page }) => {
+  await signUp(page);
+  await openEmptyBoard(page, 'Canceled table resize');
+  await page.keyboard.press('e');
+  await page.locator('.react-flow__pane').click({ position: { x: 420, y: 260 } });
+  await page.keyboard.press('Escape');
+
+  const table = tableNode(page);
+  await expect(table).toHaveCount(1);
+  const initialWidth = (await table.boundingBox())!.width;
+  const grip = page.getByRole('separator', { name: 'Resize column 1' });
+  const gripBox = (await grip.boundingBox())!;
+  const x = gripBox.x + gripBox.width / 2;
+  const y = gripBox.y + gripBox.height / 2;
+  await page.evaluate(({ startX, startY }) => {
+    const resizeGrip = document.querySelector<HTMLElement>('[role="separator"][aria-label="Resize column 1"]');
+    if (!resizeGrip) throw new Error('Table resize control was not found');
+    const pointer = (type: string, clientX: number) => new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX,
+      clientY: startY,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    });
+    resizeGrip.dispatchEvent(pointer('pointerdown', startX));
+    window.dispatchEvent(pointer('pointermove', startX + 60));
+  }, { startX: x, startY: y });
+  await expect.poll(async () => (await table.boundingBox())?.width ?? 0).toBeGreaterThan(initialWidth + 40);
+  const resizedWidth = (await table.boundingBox())!.width;
+
+  await page.evaluate(({ startX, startY }) => {
+    const pointer = (type: string, clientX: number) => new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX,
+      clientY: startY,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    });
+    window.dispatchEvent(pointer('pointercancel', startX + 60));
+    window.dispatchEvent(pointer('pointermove', startX + 160));
+  }, { startX: x, startY: y });
+
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await expect.poll(async () => Math.round((await table.boundingBox())?.width ?? 0)).toBe(Math.round(resizedWidth));
+
+  const nextGripBox = (await grip.boundingBox())!;
+  const nextX = nextGripBox.x + nextGripBox.width / 2;
+  const nextY = nextGripBox.y + nextGripBox.height / 2;
+  await page.evaluate(({ startX, startY }) => {
+    const resizeGrip = document.querySelector<HTMLElement>('[role="separator"][aria-label="Resize column 1"]');
+    if (!resizeGrip) throw new Error('Table resize control was not found');
+    const pointer = (type: string, clientX: number) => new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX,
+      clientY: startY,
+      isPrimary: true,
+      pointerId: 2,
+      pointerType: 'mouse',
+    });
+    resizeGrip.dispatchEvent(pointer('pointerdown', startX));
+    window.dispatchEvent(pointer('pointermove', startX + 30));
+  }, { startX: nextX, startY: nextY });
+  await expect.poll(async () => (await table.boundingBox())?.width ?? 0).toBeGreaterThan(resizedWidth + 20);
+  const widthAtBlur = (await table.boundingBox())!.width;
+
+  await page.evaluate(({ startX, startY }) => {
+    window.dispatchEvent(new Event('blur'));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: startX + 130,
+      clientY: startY,
+      isPrimary: true,
+      pointerId: 2,
+      pointerType: 'mouse',
+    }));
+  }, { startX: nextX, startY: nextY });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await expect.poll(async () => Math.round((await table.boundingBox())?.width ?? 0)).toBe(Math.round(widthAtBlur));
+});
+
 test('a pasted Markdown table becomes a table with a header row', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await signUp(page);

@@ -376,6 +376,7 @@ describe('store -> doc', () => {
   });
 
   it('applies a version as one undoable edit and deletes elements missing from it', () => {
+    vi.useFakeTimers();
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     const b = store().addShape('ellipse', { x: 200, y: 0 });
     store().onConnect({ source: a, target: b, sourceHandle: null, targetHandle: null });
@@ -388,9 +389,10 @@ describe('store -> doc', () => {
 
     // Model a text-size transient that is still held when restore starts.
     store().setNodeSizeTransient(a, { height: 170 });
+    const beforeRestore = snapshot();
     prepareCanvasForVersionRestore();
-    expect(snapshot()).toEqual(beforeGesture);
-    expect(docToDiagramData(doc)).toEqual(beforeGesture);
+    expect(snapshot()).toEqual(beforeRestore);
+    expect(docToDiagramData(doc)).toEqual(beforeRestore);
 
     let updates = 0;
     doc.on('update', () => { updates += 1; });
@@ -411,11 +413,14 @@ describe('store -> doc', () => {
     expect(docToDiagramData(doc)).toEqual(snapshot());
     expect(store().canUndo).toBe(true);
 
-    // One ⌘Z restores the exact board from before the version was applied;
-    // the canceled no-op transient did not consume the prior undo entry.
+    // One ⌘Z restores the board as it stood immediately before the version
+    // was applied, including the edit that was waiting in the trailing window.
+    store().undo();
+    expect(docToDiagramData(doc)).toEqual(beforeRestore);
+    expect(store().nodes.map((node) => node.id)).toEqual([a, b]);
+    expect(store().canUndo).toBe(true);
     store().undo();
     expect(docToDiagramData(doc)).toEqual(beforeGesture);
-    expect(store().nodes.map((node) => node.id)).toEqual([a, b]);
     expect(store().canUndo).toBe(true);
     store().undo();
     expect(docToDiagramData(doc)).toEqual(beforePriorEdit);

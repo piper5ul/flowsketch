@@ -1650,16 +1650,43 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await page.keyboard.press('Escape');
   await expect(node).toContainText('Version two');
   await expectSynced(page);
+  await page.getByRole('textbox', { name: 'Diagram title' }).fill('Current title');
+  const contentBeforeRestore = await page.locator('.react-flow__node').evaluateAll((nodes) =>
+    nodes.map((element) => ({
+      id: element.getAttribute('data-id'),
+      text: element.textContent?.trim(),
+      position: (element as HTMLElement).style.transform,
+    })),
+  );
 
   await page.getByRole('button', { name: 'History' }).click();
+  await expect(panel.getByText('Board title: Current title')).toBeVisible();
+  await expect(checkpoint).not.toContainText('Untitled');
   await checkpoint.getByRole('button', { name: 'Restore' }).click();
-  await expect(panel.getByText('Your current state will be saved to history too.')).toBeVisible();
+  await expect(panel.getByText("Restore this version's content? Your current content will be saved to history too. The board title stays the same.")).toBeVisible();
   await panel.getByRole('button', { name: 'Restore this version' }).click();
 
   // The board goes back to the snapshot...
   await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
+  await expect(page.getByRole('textbox', { name: 'Diagram title' })).toHaveValue('Current title');
   // ...and what it replaced is itself now a version, so the restore is undoable.
-  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+  const beforeRestoreEntry = panel.getByRole('listitem').filter({ hasText: 'Before restore' });
+  await expect(beforeRestoreEntry).toContainText('Title before restore: Current title');
+
+  // One ⌘Z returns the exact content the restore replaced, while the title
+  // remains the current title instead of following the historical version.
+  await page.locator('.react-flow__pane').click({ position: { x: 300, y: 500 } });
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect(page.locator('.react-flow__node')).toHaveCount(contentBeforeRestore.length);
+  const contentAfterUndo = await page.locator('.react-flow__node').evaluateAll((nodes) =>
+    nodes.map((element) => ({
+      id: element.getAttribute('data-id'),
+      text: element.textContent?.trim(),
+      position: (element as HTMLElement).style.transform,
+    })),
+  );
+  expect(contentAfterUndo).toEqual(contentBeforeRestore);
+  await expect(page.getByRole('textbox', { name: 'Diagram title' })).toHaveValue('Current title');
 
   // The restore wrote the row, and the client's conflict guard followed it —
   // an edit straight afterwards saves rather than colliding with that write.
@@ -1669,6 +1696,118 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await page.keyboard.press('Escape');
   await expectSynced(page);
   await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('a restore safety copy keeps a table resize in the transient window', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  await page.keyboard.press('e');
+  await pane.click({ position: { x: 400, y: 280 } });
+  await page.keyboard.press('Escape');
+  const table = page.locator('.react-flow__node [data-node-type="table"]');
+  await expect(table).toHaveCount(1);
+  await expectSynced(page);
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+  await expect(panel.getByRole('button', { name: 'Restore this version' })).toBeVisible();
+
+  const diagramId = new URL(page.url()).pathname.split('/').at(-1)!;
+  const checkpointVersion = await page.evaluate(async (id) => {
+    const versions = await fetch(`/api/diagrams/${id}/versions`).then((response) => response.json()) as {
+      id: string;
+      label: string | null;
+    }[];
+    const entry = versions.find((version) => version.label === 'Checkpoint');
+    if (!entry) throw new Error('Checkpoint version was not written');
+    const body = await fetch(`/api/diagrams/${id}/versions/${entry.id}`).then((response) => response.json());
+    return { id: entry.id, body };
+  }, diagramId);
+  let restoreVersionGetHit = false;
+  await page.route(`**/api/diagrams/${diagramId}/versions/${checkpointVersion.id}`, async (route) => {
+    restoreVersionGetHit = true;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(checkpointVersion.body),
+    });
+  });
+
+  // Hold the binding's trailing timer so the restore starts while the released
+  // resize is still transient, regardless of network or test-runner timing.
+  const resizeWasPending = await page.evaluate(async () => {
+    const grip = document.querySelector<HTMLElement>('[role="separator"][aria-label="Resize column 1"]');
+    if (!grip) throw new Error('Table resize control was not found');
+    const originalSetTimeout = window.setTimeout.bind(window);
+    const originalClearTimeout = window.clearTimeout.bind(window);
+    const timerId = 2_147_483_647;
+    const probe = { captured: false, cleared: false };
+    Object.assign(window, { __restoreTransientProbe: probe });
+    window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (!probe.captured && delay === 150 && typeof callback === 'function') {
+        probe.captured = true;
+        return timerId;
+      }
+      return originalSetTimeout(callback, delay, ...args);
+    }) as typeof window.setTimeout;
+    window.clearTimeout = ((handle?: number) => {
+      if (handle === timerId) {
+        probe.cleared = true;
+        return;
+      }
+      originalClearTimeout(handle);
+    }) as typeof window.clearTimeout;
+    const box = grip.getBoundingClientRect();
+    const startX = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const pointer = (type: string, clientX: number) => new PointerEvent(type, {
+      button: 0,
+      bubbles: true,
+      clientX,
+      clientY: y,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    });
+    grip.dispatchEvent(pointer('pointerdown', startX));
+    window.dispatchEvent(pointer('pointermove', startX + 80));
+    window.dispatchEvent(pointer('pointerup', startX + 80));
+    await Promise.resolve();
+    const pending = document.querySelector('[data-collab-sync="pending"]') !== null;
+    if (!probe.captured) throw new Error('Released table resize did not schedule its trailing write');
+    if (!pending) throw new Error('Released table resize left the transient window before restore');
+    return { pending, timerCaptured: probe.captured };
+  });
+  expect(resizeWasPending).toEqual({ pending: true, timerCaptured: true });
+  await panel.getByRole('button', { name: 'Restore this version' }).click();
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+  expect(restoreVersionGetHit).toBe(true);
+  const transientTimerWasCleared = await page.evaluate(() =>
+    (window as Window & { __restoreTransientProbe?: { cleared: boolean } }).__restoreTransientProbe?.cleared,
+  );
+  expect(transientTimerWasCleared).toBe(true);
+
+  const beforeRestore = await page.evaluate(async (id) => {
+    const versions = await fetch(`/api/diagrams/${id}/versions`).then((response) => response.json()) as {
+      id: string;
+      label: string | null;
+    }[];
+    const entry = versions.find((version) => version.label === 'Before restore');
+    if (!entry) throw new Error('Before restore version was not written');
+    return fetch(`/api/diagrams/${id}/versions/${entry.id}`).then((response) => response.json()) as Promise<{
+      data: { nodes: { data: { table?: { columns: { width: number }[] } } }[] };
+    }>;
+  }, diagramId);
+  const savedWidth = beforeRestore.data.nodes.find((node) => node.data.table)?.data.table?.columns[0]?.width;
+  const checkpointData = checkpointVersion.body as typeof beforeRestore;
+  const checkpointWidth = checkpointData.data.nodes.find((node) => node.data.table)?.data.table?.columns[0]?.width;
+  expect(checkpointWidth).toBeDefined();
+  expect(savedWidth).toBeGreaterThan((checkpointWidth ?? 0) + 40);
 });
 
 test('a held connector endpoint drag blocks version restore until pointerup', async ({ page }) => {
@@ -1701,6 +1840,74 @@ test('a held connector endpoint drag blocks version restore until pointerup', as
   await expect(restoreButton).toBeEnabled();
   await restoreButton.click();
   await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+});
+
+test('a canceled connector endpoint drag stops before a version restore', async ({ page }) => {
+  await signUp(page);
+  await selectConnector(page);
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+
+  const restoreButton = panel.getByRole('button', { name: 'Restore this version' });
+  const endpoint = page.locator('.connector-joint-hit').first();
+  const endpointBox = (await endpoint.boundingBox())!;
+  const x = endpointBox.x + endpointBox.width / 2;
+  const y = endpointBox.y + endpointBox.height / 2;
+  await page.evaluate(({ startX, startY }) => {
+    const handle = document.querySelector<HTMLElement>('.connector-joint-hit');
+    if (!handle) throw new Error('Connector endpoint was not found');
+    const pointer = (type: string, clientX: number, clientY: number) => new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX,
+      clientY,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    });
+    handle.dispatchEvent(pointer('pointerdown', startX, startY));
+    window.dispatchEvent(pointer('pointermove', startX + 40, startY + 140));
+  }, { startX: x, startY: y });
+
+  await expect(restoreButton).toBeDisabled();
+  await page.evaluate(({ startX, startY }) => {
+    window.dispatchEvent(new PointerEvent('pointercancel', {
+      bubbles: true,
+      clientX: startX + 40,
+      clientY: startY + 140,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    }));
+  }, { startX: x, startY: y });
+  await expect(restoreButton).toBeEnabled();
+  await restoreButton.evaluate((button) => (button as HTMLButtonElement).click());
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+  const edgePath = page.locator('.react-flow__edge-path').first();
+  await expect(edgePath).toBeAttached();
+  const restoredPath = await edgePath.getAttribute('d');
+
+  // A late move from the canceled pointer must not pull the endpoint away from
+  // the restored checkpoint.
+  await page.evaluate(({ startX, startY }) => {
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: startX + 180,
+      clientY: startY + 220,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    }));
+  }, { startX: x, startY: y });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  await expect(edgePath).toHaveAttribute('d', restoredPath!);
 });
 
 test('a connector drag that starts while restore fetches its version aborts the restore', async ({ page }) => {
@@ -1936,7 +2143,32 @@ test('restore commits a focused connector label before saving Before restore', a
   const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
   await expect(checkpoint).toHaveCount(1);
   await checkpoint.getByRole('button', { name: 'Restore' }).click();
-  await expect(panel.getByText('Your current state will be saved to history too.')).toBeVisible();
+  await expect(panel.getByText("Restore this version's content? Your current content will be saved to history too. The board title stays the same.")).toBeVisible();
+
+  let releaseTitlePut!: () => void;
+  const titlePutGate = new Promise<void>((resolve) => { releaseTitlePut = resolve; });
+  let titlePutReached!: () => void;
+  const titlePut = new Promise<void>((resolve) => { titlePutReached = resolve; });
+  const diagramId = new URL(page.url()).pathname.split('/').at(-1)!;
+  await page.route('**/api/diagrams/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const body = request.method() === 'PUT'
+      ? request.postDataJSON() as { title?: string; data?: unknown } | null
+      : null;
+    if (
+      request.method() === 'PUT' && url.pathname === `/api/diagrams/${diagramId}` &&
+      body?.title === 'Current before restore' && body.data === undefined
+    ) {
+      const response = await route.fetch();
+      titlePutReached();
+      await titlePutGate;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+  await page.getByLabel('Diagram title').fill('Current before restore');
 
   // Keep the confirmation open while the edge editor owns focus. Programmatic
   // activation starts Restore without moving focus to the button first.
@@ -1959,8 +2191,16 @@ test('restore commits a focused connector label before saving Before restore', a
   });
   expect(focusStayed).toBe(true);
 
+  // Restore has passed its first editor commit and is waiting for the title
+  // write. A label editor reopened now must still be included in the copy.
+  await titlePut;
+  await page.mouse.dblclick(edgeBox.x + edgeBox.width * 0.25, edgeBox.y + edgeBox.height / 2);
+  await expect(edgeEditor).toBeFocused();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Late connector label');
+  releaseTitlePut();
+
   await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
-  const diagramId = new URL(page.url()).pathname.split('/').at(-1)!;
   const before = await page.evaluate(async (id) => {
     const versions = await fetch(`/api/diagrams/${id}/versions`).then((res) => res.json()) as {
       id: string; label: string | null;
@@ -1972,7 +2212,7 @@ test('restore commits a focused connector label before saving Before restore', a
     }>;
   }, diagramId);
 
-  expect(before.data.edges[0]?.data.label).toBe('Draft connector label');
+  expect(before.data.edges[0]?.data.label).toBe('Late connector label');
   const editorWasBlurred = await page.evaluate(() =>
     (window as Window & { __restoreEditorBlurred?: boolean }).__restoreEditorBlurred,
   );
@@ -2530,6 +2770,66 @@ test('the connector tool draws from where you press to where you release', async
   await page.mouse.up();
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+});
+
+test('a canceled connector tool gesture stops drawing and ignores late pointer moves', async ({ page }) => {
+  await signUp(page);
+  await drawConnectedPair(page);
+  await page.keyboard.press('a');
+
+  const source = page.locator('.react-flow__node').first();
+  const box = (await source.boundingBox())!;
+  const x = box.x + box.width * 0.8;
+  const y = box.y + box.height * 0.8;
+  await page.evaluate(({ startX, startY }) => {
+    const node = document.querySelector<HTMLElement>('.react-flow__node');
+    if (!node) throw new Error('Connector source shape was not found');
+    node.dispatchEvent(new PointerEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      clientX: startX,
+      clientY: startY,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    }));
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: startX + 40,
+      clientY: startY + 60,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    }));
+  }, { startX: x, startY: y });
+  const draft = page.getByTestId('connector-draft');
+  await expect(draft).toBeVisible();
+
+  await page.evaluate(({ startX, startY }) => {
+    window.dispatchEvent(new PointerEvent('pointercancel', {
+      bubbles: true,
+      clientX: startX + 40,
+      clientY: startY + 60,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    }));
+  }, { startX: x, startY: y });
+  await expect(draft).toBeHidden();
+
+  await page.evaluate(({ startX, startY }) => {
+    window.dispatchEvent(new PointerEvent('pointermove', {
+      bubbles: true,
+      clientX: startX + 180,
+      clientY: startY + 200,
+      isPrimary: true,
+      pointerId: 1,
+      pointerType: 'mouse',
+    }));
+  }, { startX: x, startY: y });
+  await expect(draft).toBeHidden();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
 });
 
 /**
