@@ -1133,9 +1133,15 @@ test('two tabs on one diagram merge instead of racing each other', async ({ page
   // in a background tab even though its collaboration document is current.
   await second.bringToFront();
   await expect(second.locator('.react-flow__node').first()).toContainText('First tab edited');
-  const secondPositions = await nodePositions(second);
-  await page.bringToFront();
-  expect(await nodePositions(page)).toEqual(secondPositions);
+  // The same board in both, read with each tab in front in turn (a background
+  // tab may not have painted yet), polled the way `expectSameBoard` polls.
+  await expect.poll(async () => {
+    await second.bringToFront();
+    const there = JSON.stringify(await nodePositions(second));
+    await page.bringToFront();
+    const here = JSON.stringify(await nodePositions(page));
+    return here === there ? 'same' : `${here} != ${there}`;
+  }, { timeout: 15_000 }).toBe('same');
   await second.close();
 });
 
