@@ -33,7 +33,7 @@ import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { recordVersionIfDue } from './versions.js';
 import { docToDiagramData, seedDocFromDiagramData } from './collab/render.js';
-import { setLiveDiagramReader } from './collab/live.js';
+import { setLiveDiagramDocumentReader, setLiveDiagramReader } from './collab/live.js';
 import { COLLAB_FORBIDDEN, COLLAB_UNAUTHORIZED } from '../shared/collabAuth.js';
 import type { DiagramRole } from '../shared/types.js';
 
@@ -335,6 +335,7 @@ export function attachCollab(
     const document = hocuspocus.documents.get(`diagram:${diagramId}`);
     return document ? docToDiagramData(document) : null;
   });
+  setLiveDiagramDocumentReader((diagramId) => hocuspocus.documents.get(`diagram:${diagramId}`) ?? null);
 
   httpServer.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`).pathname;

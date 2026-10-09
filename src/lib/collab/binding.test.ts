@@ -427,6 +427,45 @@ describe('store -> doc', () => {
     expect(store().canUndo).toBe(false);
   });
 
+  it("doesn't delete a peer element the client hasn't received before restore", () => {
+    const localDoc = new Y.Doc();
+    bindWithHistory(localDoc);
+    const localId = store().addShape('rectangle', { x: 0, y: 0 });
+    const checkpoint = snapshot();
+    store().updateNodeData(localId, { label: 'Current' });
+
+    const serverDoc = new Y.Doc();
+    Y.applyUpdate(serverDoc, Y.encodeStateAsUpdate(localDoc));
+    const peerDoc = new Y.Doc();
+    const peerNode = {
+      ...snapshot().nodes[0],
+      id: 'peer-only-on-server',
+      position: { x: 240, y: 0 },
+      data: { ...snapshot().nodes[0].data, label: 'Peer edit' },
+    };
+    writeDiagramIntoDoc(peerDoc, { version: 3, nodes: [peerNode], edges: [] }, 'peer');
+    Y.applyUpdate(serverDoc, Y.encodeStateAsUpdate(peerDoc));
+    expect(nodeEntries(localDoc).has(peerNode.id)).toBe(false);
+    expect(nodeEntries(serverDoc).has(peerNode.id)).toBe(true);
+
+    expect(store().applyVersionRestore(checkpoint)).toBe(true);
+    Y.applyUpdate(
+      serverDoc,
+      Y.encodeStateAsUpdate(localDoc, Y.encodeStateVector(serverDoc)),
+    );
+    expect(nodeEntries(serverDoc).has(peerNode.id)).toBe(true);
+
+    // When the delayed peer update arrives, the binding applies it without
+    // turning it into a local edit or an undo step.
+    Y.applyUpdate(
+      localDoc,
+      Y.encodeStateAsUpdate(serverDoc, Y.encodeStateVector(localDoc)),
+      Symbol('remote'),
+    );
+    expect(store().nodes.map((node) => node.id)).toContain(peerNode.id);
+    expect(docToDiagramData(localDoc).nodes.map((node) => node.id)).toContain(peerNode.id);
+  });
+
   it('starts a new nudge history entry after a version restore', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));

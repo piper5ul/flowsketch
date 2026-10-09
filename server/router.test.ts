@@ -866,7 +866,7 @@ describe('the DiagramImage index', () => {
     });
   });
 
-  it('only reuses images from participant-owned or participant-shared source diagrams, excluding the target', async () => {
+  it('indexes every referenced image row that this server holds', async () => {
     prismaMock.diagram.findFirst.mockResolvedValue({ id: 'd1', userId: 'u1', data: dataWith() });
     prismaMock.diagram.update.mockResolvedValue(owned);
     prismaMock.diagram.findUnique.mockResolvedValue({ userId: 'u1', members: [{ userId: 'u2' }] });
@@ -877,22 +877,6 @@ describe('the DiagramImage index', () => {
     expect(prismaMock.image.findMany).toHaveBeenCalledWith({
       where: {
         id: { in: ['shared-image'] },
-        OR: [
-          { userId: { in: ['u1', 'u2'] } },
-          {
-            diagrams: {
-              some: {
-                diagram: {
-                  id: { not: 'd1' },
-                  OR: [
-                    { userId: { in: ['u1', 'u2'] } },
-                    { members: { some: { userId: { in: ['u1', 'u2'] } } } },
-                  ],
-                },
-              },
-            },
-          },
-        ],
       },
       select: { id: true },
     });

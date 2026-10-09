@@ -16,14 +16,22 @@
  * and reads the row, which is exactly what it should do.
  */
 import type { DiagramData } from '../../shared/types.js';
+import type * as Y from 'yjs';
 
 type Reader = (diagramId: string) => DiagramData | null;
+type DocumentReader = (diagramId: string) => Y.Doc | null;
 
 let read: Reader | null = null;
+let readDocument: DocumentReader | null = null;
 
 /** Called once, by `attachCollab`. */
 export function setLiveDiagramReader(reader: Reader | null): void {
   read = reader;
+}
+
+/** Called by the collaboration server so a route can snapshot the live Y.Doc. */
+export function setLiveDiagramDocumentReader(reader: DocumentReader | null): void {
+  readDocument = reader;
 }
 
 /**
@@ -32,4 +40,9 @@ export function setLiveDiagramReader(reader: Reader | null): void {
  */
 export function liveDiagramData(diagramId: string): DiagramData | null {
   return read?.(diagramId) ?? null;
+}
+
+/** The open Y.Doc, or `null` when this process has no bound document. */
+export function liveDiagramDocument(diagramId: string): Y.Doc | null {
+  return readDocument?.(diagramId) ?? null;
 }

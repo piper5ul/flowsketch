@@ -172,20 +172,11 @@ export const createVersionBody = z
 
 export type CreateVersionBody = z.infer<typeof createVersionBody>;
 
-/** Client-captured state immediately before a live version restore is applied. */
+/** The restore route accepts no client-authored diagram data. */
 export const restoreVersionBody = z
-  .strictObject({
-    before: z
-      .strictObject({
-        title,
-        data: diagramData,
-      })
-      .optional(),
-  })
+  .strictObject({})
   .nullish()
   .transform((body) => body ?? {});
-
-export type RestoreVersionBody = z.infer<typeof restoreVersionBody>;
 
 // ---------------------------------------------------------------------------
 // Comments

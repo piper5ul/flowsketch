@@ -254,24 +254,17 @@ export const api = {
    * Restores version content on the row-based path. Editor+.
    *
    * A diagram without a document is restored through the row and returns its
-   * current title and new `updatedAt`. With a document, an empty-body request
-   * returns the version's content for a bound client to apply; the client then
-   * posts its synchronous pre-restore capture with `saveRestoreSafetyCopy`.
+   * current title and new `updatedAt`. With a live document, the server
+   * snapshots its current state and returns the restored content with the
+   * state vector used for that snapshot.
    */
   restoreVersion: (id: string, versionId: string) =>
     request<
-      | { id: string; title: string; data: unknown; updatedAt: string; applyAsEdit?: false }
-      | { data: unknown; applyAsEdit: true }
+      | { id: string; title: string; data: unknown; updatedAt: string }
+      | { data: unknown; sv: string }
     >(
       `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
       { method: 'POST' },
-    ),
-
-  /** Persists the bound client's synchronous pre-restore capture. Editor+. */
-  saveRestoreSafetyCopy: (id: string, versionId: string, before: { title: string; data: unknown }) =>
-    request<{ saved: true }>(
-      `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
-      { method: 'POST', body: JSON.stringify({ before }) },
     ),
 
   /**

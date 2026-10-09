@@ -11,18 +11,20 @@
  * snapshot and restoring one are writes, so they are an editor's.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import * as Y from 'yjs';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, GitFork, History, Loader2, Pause, Play, RotateCcw, X } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ConflictError } from '../lib/api';
 import { isCanvasPointerActive, subscribeCanvasPointerState } from '../lib/canvasPointerState';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import { MAX_VERSION_LABEL_CHARS, describeVersion, scrubIndex } from '../lib/versionHistory';
 import { buildVersionPreview } from '../lib/versionPreview';
+import { hasUncoveredLocalUpdates } from '../lib/collab/stateVector';
+import { getBoundDocument } from '../store/useCollabStore';
 import {
   flushPendingDiagramTitle,
   isDocumentBound,
   prepareCanvasForVersionRestore,
-  serializeDiagram,
   useDiagramStore,
 } from '../store/useDiagramStore';
 import { toastError } from '../store/useToastStore';
@@ -193,14 +195,15 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
       if (stopForCanvasPointer()) return;
       setBusy(true);
       try {
-        const applyLiveVersion = async (version: DiagramVersion): Promise<boolean> => {
+        const prepareLiveRestore = async (): Promise<boolean> => {
+          if (!isDocumentBound()) {
+            toastError('Reconnect to restore a version');
+            return false;
+          }
           if (stopForCanvasPointer()) return false;
-          // Commit this window's active edit after fetching the version. The
-          // bound save path waits for the provider to send that write, and the
-          // title saver is flushed before its visible value is captured.
           prepareCanvasForVersionRestore();
-          // EditableLabel commits synchronously on blur, and a microtask lets
-          // any unmount cleanup finish before the board is serialized.
+          // Editable labels commit synchronously on blur; this lets their
+          // unmount cleanup finish before the title and provider flushes.
           await Promise.resolve();
           if (stopForCanvasPointer()) return false;
           if (!(await flushPendingDiagramTitle())) {
@@ -208,52 +211,65 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
             return false;
           }
           if (stopForCanvasPointer()) return false;
+          // A bound save waits until the provider has sent this window's
+          // document updates. Never fall through to a row data save if the
+          // binding disappeared while title persistence was pending.
+          if (!isDocumentBound()) {
+            toastError('Reconnect to restore a version');
+            return false;
+          }
           if (await useDiagramStore.getState().saveDiagram() !== 'saved') {
             toastError(isDocumentBound() ? 'Could not restore that version.' : 'Reconnect to restore a version');
             return false;
           }
           if (stopForCanvasPointer()) return false;
-
-          // A label editor may have been reopened while the title flush or
-          // document save was pending. Commit it immediately before the safety
-          // copy captures the live board.
-          prepareCanvasForVersionRestore();
-          await Promise.resolve();
-          if (stopForCanvasPointer()) return false;
-
-          // Keep this capture and apply adjacent and synchronous. A peer edit
-          // delivered between the GET and this block belongs in the safety
-          // copy; nothing can run between these statements and be deleted by
-          // the restore without also being recoverable from that copy.
-          const current = useDiagramStore.getState();
-          const before = {
-            title: current.title,
-            data: serializeDiagram(
-              current.nodes,
-              current.edges,
-              current.viewport,
-              current.defaults,
-              current.thumbnailNodeIds,
-              { voting: current.voting, timer: current.timer },
-            ),
-          };
-          if (!useDiagramStore.getState().applyVersionRestore(version.data)) {
-            toastError(isDocumentBound() ? 'Could not restore that version.' : 'Reconnect to restore a version');
-            return false;
-          }
-          // The restore is already applied and undoable. A failed safety-copy
-          // write only means history is missing this one entry.
-          try {
-            await api.saveRestoreSafetyCopy(diagramId, versionId, before);
-          } catch {
-            toastError("Couldn't save a copy of the previous version");
-          }
           return true;
         };
 
+        const applyLiveResponse = (data: unknown, serverStateVector: string): 'applied' | 'stale' | 'aborted' => {
+          // This whole response check is synchronous: committing editors can
+          // add local Yjs updates, and the state vector must be compared after
+          // those commits and immediately before the one undoable apply.
+          if (stopForCanvasPointer()) return 'aborted';
+          prepareCanvasForVersionRestore();
+          const document = getBoundDocument();
+          if (!document) {
+            toastError('Reconnect to restore a version');
+            return 'aborted';
+          }
+          if (hasUncoveredLocalUpdates(Y.encodeStateVector(document), serverStateVector)) return 'stale';
+          if (!useDiagramStore.getState().applyVersionRestore(data)) {
+            toastError(isDocumentBound() ? 'Could not restore that version.' : 'Reconnect to restore a version');
+            return 'aborted';
+          }
+          return 'applied';
+        };
+
+        const restoreLiveVersion = async (): Promise<boolean> => {
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            if (!(await prepareLiveRestore())) return false;
+            const restored = await api.restoreVersion(diagramId, versionId);
+            if (!('sv' in restored)) {
+              toastError('Reconnect to restore a version');
+              return false;
+            }
+            const result = applyLiveResponse(restored.data, restored.sv);
+            if (result === 'applied') return true;
+            if (result === 'aborted') {
+              // The server already persisted its live snapshot. Keep history
+              // current if a pointer gesture or a binding change prevented
+              // this response from being applied.
+              await refresh();
+              return false;
+            }
+          }
+          toastError('The board is busy, try restoring again');
+          await refresh();
+          return false;
+        };
+
         if (isDocumentBound()) {
-          const version = await api.getVersion(diagramId, versionId);
-          if (!(await applyLiveVersion(version))) return;
+          if (!(await restoreLiveVersion())) return;
         } else {
           // The row-based route returns the persisted title alongside restored
           // content, so commit this window's title before the server reads it.
@@ -262,17 +278,20 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
             return;
           }
           const restored = await api.restoreVersion(diagramId, versionId);
-          if (restored.applyAsEdit) {
-            // A document may have connected while the row-based request was
-            // in flight. That request does not snapshot a document, so fetch
-            // its version and use the same bound apply path now.
+          if ('sv' in restored) {
+            // A document may have connected while the row request was in
+            // flight. Discard this response and restart through the bound
+            // preparation and sync path before taking a fresh server snapshot.
             if (!isDocumentBound()) {
               toastError('Reconnect to restore a version');
               return;
             }
-            const version = await api.getVersion(diagramId, versionId);
-            if (!(await applyLiveVersion(version))) return;
+            if (!(await restoreLiveVersion())) return;
           } else {
+            if (isDocumentBound()) {
+              toastError('Reconnect to restore a version');
+              return;
+            }
             // `viewerId` travels with the role and the token for the reason both
             // of those do: a restore changes content, never who is reading it.
             // Read the title now so an edit made while the row request was in
@@ -295,8 +314,8 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
         setPreview(null);
         // The restore left a "Before restore" entry that is not in this list yet.
         await refresh();
-      } catch {
-        toastError('Could not restore that version.');
+      } catch (error) {
+        toastError(error instanceof ConflictError ? 'Reconnect to restore a version' : 'Could not restore that version.');
       } finally {
         setBusy(false);
       }

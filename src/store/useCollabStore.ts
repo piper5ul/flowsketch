@@ -336,6 +336,11 @@ export const useCollabStore = create<CollabState>((set, get) => ({
   reportCursor: (cursor) => connection?.setCursor(cursor),
 }));
 
+/** The open document once its provider has synced and the store is bound to it. */
+export function getBoundDocument(): Y.Doc | null {
+  return useCollabStore.getState().bound ? connection?.document ?? null : null;
+}
+
 /**
  * The peer holding `nodeId`, if anyone is — what the outline drawn on a shape
  * somebody else has selected is read from, the way `useSearchHighlight` feeds

@@ -23,19 +23,20 @@
  * reads each surplus row's `data` before deleting it.
  */
 import { Router } from 'express';
+import * as Y from 'yjs';
 import { prisma } from './db.js';
 import { publicDiagram, requireDiagramRole } from './access.js';
 import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { syncDiagramImages } from './diagramImages.js';
-import { liveDiagramData } from './collab/live.js';
+import { liveDiagramData, liveDiagramDocument } from './collab/live.js';
+import { docToDiagramData } from './collab/render.js';
 import { authedUser } from './types.js';
 import {
   createVersionBody,
   restoreVersionBody,
   validateBody,
   type CreateVersionBody,
-  type RestoreVersionBody,
 } from './validation.js';
 import type { DiagramVersion, DiagramVersionMeta } from '../shared/types.js';
 import { migrateDiagramData } from '../src/lib/diagramMigrations.js';
@@ -48,6 +49,9 @@ export const DEFAULT_MAX_VERSIONS = 50;
 
 /** The label on the snapshot a restore takes of what it is about to replace. */
 export const RESTORE_SNAPSHOT_LABEL = 'Before restore';
+
+/** A restore retry may replace its own fresh safety copy, but not a later edit. */
+const RESTORE_SNAPSHOT_COALESCE_MS = 30_000;
 
 /**
  * A positive-integer setting from the environment. Read at call time, not at
@@ -147,7 +151,6 @@ async function freeImagesOnlyPrunedVersionsDrew(
 async function pruneVersions(
   diagramId: string,
   ownerId: string,
-  collectOrphanImages = true,
 ): Promise<void> {
   try {
     const surplus = await prisma.diagramVersion.findMany({
@@ -158,7 +161,7 @@ async function pruneVersions(
     });
     if (surplus.length === 0) return;
     await prisma.diagramVersion.deleteMany({ where: { id: { in: surplus.map((v) => v.id) } } });
-    if (collectOrphanImages) await freeImagesOnlyPrunedVersionsDrew(diagramId, ownerId, surplus);
+    await freeImagesOnlyPrunedVersionsDrew(diagramId, ownerId, surplus);
   } catch (err) {
     console.error(`Version retention failed for diagram ${diagramId}:`, err);
   }
@@ -186,7 +189,6 @@ export interface VersionInput {
 /** Write one version and prune what falls off the end. */
 async function writeVersion(
   input: VersionInput,
-  { collectOrphanImages = true }: { collectOrphanImages?: boolean } = {},
 ): Promise<VersionRow> {
   const version = await prisma.diagramVersion.create({
     data: {
@@ -200,8 +202,45 @@ async function writeVersion(
     },
     select: { ...META_SELECT },
   });
-  await pruneVersions(input.diagramId, input.ownerId, collectOrphanImages);
+  await pruneVersions(input.diagramId, input.ownerId);
   return version;
+}
+
+/** Write a restore safety copy, replacing a recent newest copy from this user. */
+async function writeRestoreSnapshot(input: VersionInput): Promise<void> {
+  const newest = await prisma.diagramVersion.findFirst({
+    where: { diagramId: input.diagramId },
+    orderBy: [...NEWEST_FIRST],
+    select: { id: true, createdAt: true, createdById: true, label: true, data: true },
+  });
+  const age = newest ? Date.now() - newest.createdAt.getTime() : Number.POSITIVE_INFINITY;
+  if (
+    newest &&
+    newest.label === RESTORE_SNAPSHOT_LABEL &&
+    newest.createdById === input.createdById &&
+    age >= 0 &&
+    age < RESTORE_SNAPSHOT_COALESCE_MS
+  ) {
+    await prisma.diagramVersion.update({
+      where: { id: newest.id },
+      data: {
+        data: input.data ?? {},
+        title: input.title,
+        createdById: input.createdById,
+        label: RESTORE_SNAPSHOT_LABEL,
+        createdAt: new Date(),
+      },
+      select: { ...META_SELECT },
+    });
+    await pruneVersions(input.diagramId, input.ownerId);
+    try {
+      await deleteOrphanImages(input.ownerId, imageIdsInDiagram(newest.data));
+    } catch (err) {
+      console.error(`Orphan image cleanup after restore snapshot replacement failed for diagram ${input.diagramId}:`, err);
+    }
+    return;
+  }
+  await writeVersion(input);
 }
 
 /**
@@ -224,23 +263,6 @@ export async function recordVersionIfDue(input: VersionInput): Promise<void> {
 }
 
 export const versionsRouter = Router();
-
-/** Remove `/api/images/<id>` refs that this diagram had no right to draw. */
-function stripUnreachableImageSources(data: unknown, reachableIds: ReadonlySet<string>): unknown {
-  if (typeof data !== 'object' || data === null || !Array.isArray((data as { nodes?: unknown }).nodes)) return data;
-
-  const nodes = (data as { nodes: unknown[] }).nodes.map((node) => {
-    const imageId = imageIdsInDiagram({ nodes: [node] })[0];
-    if (!imageId || reachableIds.has(imageId) || typeof node !== 'object' || node === null) return node;
-
-    const nodeData = (node as { data?: unknown }).data;
-    if (typeof nodeData !== 'object' || nodeData === null || Array.isArray(nodeData)) return node;
-    const sanitizedData = { ...(nodeData as Record<string, unknown>) };
-    delete sanitizedData.imageSrc;
-    return { ...node, data: sanitizedData };
-  });
-  return { ...data, nodes };
-}
 
 /**
  * The history, newest first and without any `data`. Readable by anyone who can
@@ -321,19 +343,11 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
 /**
  * Restore a version's content. Editor+, because it is a write to the diagram.
  *
- * Row-based restores save the current row as `Before restore` before writing
- * the replacement. For a collaborative diagram, the bound client captures the
- * copy before applying the returned version as an ordinary edit, then posts it
- * here; a failed copy leaves the already-applied restore undoable but without
- * that history entry. A diagram without a document keeps the row-based path.
- *
- * A bound client captures its own safety copy and applies the version in one
- * synchronous turn, then posts that copy here. This closes the gap where a
- * peer edit could arrive after a server snapshot but before the client apply.
- * Restore leaves the current title alone. The empty-body path on a collaborative
- * diagram only returns the version's content and never snapshots it.
+ * A diagram without a collaborative document keeps the row-based path. For a
+ * collaborative diagram, the bound client applies the returned version through
+ * its document binding. Restore leaves the current title alone.
  */
-versionsRouter.post<{ id: string; versionId: string }, unknown, RestoreVersionBody>(
+versionsRouter.post<{ id: string; versionId: string }, unknown>(
   '/diagrams/:id/versions/:versionId/restore',
   validateBody(restoreVersionBody),
   async (req, res) => {
@@ -355,63 +369,41 @@ versionsRouter.post<{ id: string; versionId: string }, unknown, RestoreVersionBo
       return;
     }
 
-    // For a live document the caller captured this state immediately before
-    // applying the version through its binding. Narrow it through the same
-    // migration used at every other diagram-data boundary, then use the normal
-    // version writer for retention and orphan-image handling. This request
-    // deliberately does not write `Diagram.data` or `DiagramDoc`.
-    const before = req.body.before;
-    if (before) {
-      const data = migrateDiagramData(before.data);
-      const referencedIds = imageIdsInDiagram(data);
-      const reachableIds = new Set<string>();
-      if (referencedIds.length > 0) {
-        const [indexed, versions, owned] = await Promise.all([
-          prisma.diagramImage.findMany({
-            where: { diagramId: req.params.id, imageId: { in: referencedIds } },
-            select: { imageId: true },
-          }),
-          prisma.diagramVersion.findMany({
-            where: { diagramId: req.params.id },
-            select: { data: true },
-          }),
-          prisma.image.findMany({
-            where: { id: { in: referencedIds }, userId: access.diagram.userId },
-            select: { id: true },
-          }),
-        ]);
-        for (const row of indexed) reachableIds.add(row.imageId);
-        for (const version of versions) {
-          for (const imageId of imageIdsInDiagram(version.data)) reachableIds.add(imageId);
-        }
-        for (const image of owned) reachableIds.add(image.id);
-      }
+    const document = liveDiagramDocument(req.params.id);
+    if (document) {
+      // Both reads are synchronous against the same Y.Doc. The vector is the
+      // server snapshot boundary the bound client checks before applying data.
+      const beforeData = docToDiagramData(document);
+      const sv = Buffer.from(Y.encodeStateVector(document)).toString('base64');
+      const restoredData = migrateDiagramData(version.data ?? {});
 
-      // Retention may prune the version the client is about to restore. Keep
-      // its images until the restored board has synced its live image index.
-      await writeVersion({
+      // Retention runs inside writeVersion. Index both the current board and
+      // the version being restored first, so pruning cannot collect a restore
+      // image before the client has applied it.
+      await syncDiagramImages(req.params.id, {
+        nodes: [...beforeData.nodes, ...restoredData.nodes],
+      });
+      await writeRestoreSnapshot({
         diagramId: req.params.id,
-        data: stripUnreachableImageSources(data, reachableIds),
-        title: before.title,
+        data: beforeData,
+        title: access.diagram.title,
         createdById: authedUser(req).id,
         ownerId: access.diagram.userId,
         label: RESTORE_SNAPSHOT_LABEL,
-      }, { collectOrphanImages: false });
-      res.status(201).json({ saved: true });
+      });
+      res.json({
+        data: restoredData,
+        sv,
+      });
       return;
     }
 
-    const liveData = liveDiagramData(req.params.id);
     const storedDoc = await prisma.diagramDoc.findUnique({
       where: { diagramId: req.params.id },
       select: { state: true },
     });
-
-    if (liveData || storedDoc) {
-      res.json({
-        data: migrateDiagramData(version.data ?? {}),
-        applyAsEdit: true,
-      });
+    if (storedDoc) {
+      res.status(409).json({ error: 'Reconnect to restore a version' });
       return;
     }
 
