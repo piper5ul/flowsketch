@@ -1098,7 +1098,7 @@ test('two tabs on one diagram merge instead of racing each other', async ({ page
   test.setTimeout(90_000);
   await signUp(page);
   const pane = await newDiagram(page);
-  await drawLabelledShape(page, pane, 'First tab');
+  const first = await drawLabelledShape(page, pane, 'First tab');
 
   // The same diagram, in the same session, in a second tab.
   const second = await context.newPage();
@@ -1122,15 +1122,26 @@ test('two tabs on one diagram merge instead of racing each other', async ({ page
 
   // And its own next edit lands on top of the other tab's work instead of
   // being told the diagram changed underneath it.
-  const first = page.locator('.react-flow__node').first();
   await first.dblclick();
   await page.keyboard.type(' edited');
   await page.keyboard.press('Escape');
+  await expectSynced(page);
   await expect(first).toContainText('First tab edited');
   await expect(page.getByRole('alert').filter({ hasText: 'changed in another tab' })).toHaveCount(0);
 
+  // Read the receiving tab while it is active; Chrome may suspend rendering
+  // in a background tab even though its collaboration document is current.
+  await second.bringToFront();
   await expect(second.locator('.react-flow__node').first()).toContainText('First tab edited');
-  await expectSameBoard(page, second);
+  // The same board in both, read with each tab in front in turn (a background
+  // tab may not have painted yet), polled the way `expectSameBoard` polls.
+  await expect.poll(async () => {
+    await second.bringToFront();
+    const there = JSON.stringify(await nodePositions(second));
+    await page.bringToFront();
+    const here = JSON.stringify(await nodePositions(page));
+    return here === there ? 'same' : `${here} != ${there}`;
+  }, { timeout: 15_000 }).toBe('same');
   await second.close();
 });
 

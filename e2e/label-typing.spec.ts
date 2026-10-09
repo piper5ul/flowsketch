@@ -1,5 +1,9 @@
 import { expect, test, type Page } from '@playwright/test';
 
+async function expectSynced(page: Page) {
+  await expect(page.locator('[data-collab-sync="synced"]')).toBeVisible();
+}
+
 async function signUp(page: Page, name = 'E2E User') {
   const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
   await page.goto('/signup');
@@ -40,11 +44,13 @@ test('typing into an empty shape shows the text once', async ({ page }) => {
 test('editing an existing label keeps it once', async ({ page }) => {
   await signUp(page);
   const label = await boardWith(page, 'Runa');
+  await expectSynced(page);
   await page.locator('[data-id="a"]').dblclick();
   await page.keyboard.press('End');
   await page.keyboard.type(' Account');
   await page.mouse.click(900, 600);
   await expect(label).toHaveText('Runa Account');
+  await expectSynced(page);
   await page.keyboard.press('ControlOrMeta+z');
   await expect(label).toHaveText('Runa');
 });
@@ -85,6 +91,7 @@ test('a collaborator moving the shape mid-sentence does not duplicate or lose wh
   await signUp(page, 'Ada Lovelace');
   const label = await boardWith(page, '');
   await expect(page.locator('[data-collab-status="connected"]')).toBeVisible();
+  await expectSynced(page);
 
   const guest = await browser.newContext();
   const guestPage = await guest.newPage();
@@ -98,6 +105,7 @@ test('a collaborator moving the shape mid-sentence does not duplicate or lose wh
   await page.getByRole('button', { name: 'Close share dialog' }).click();
   await guestPage.goto(page.url());
   await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+  await expectSynced(guestPage);
 
   await page.locator('[data-id="a"]').dblclick();
   await page.keyboard.type('Clearing');
