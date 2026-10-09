@@ -1569,7 +1569,7 @@ test('two people on one diagram see each other, their pointers and their selecti
   await expect(page.getByLabel('Grace Hopper', { exact: true })).toHaveCount(0);
 });
 
-test('a live diagram refuses to restore a labelled snapshot without changing its current state', async ({ page }) => {
+test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);
   const node = await drawLabelledShape(page, pane, 'Version one');
@@ -1607,17 +1607,21 @@ test('a live diagram refuses to restore a labelled snapshot without changing its
   await page.getByRole('button', { name: 'History' }).click();
   await checkpoint.getByRole('button', { name: 'Restore' }).click();
   await expect(panel.getByText('Your current state is saved first')).toBeVisible();
-  const restoreResponse = page.waitForResponse((response) =>
-    response.url().endsWith('/restore') && response.status() === 409,
-  );
   await panel.getByRole('button', { name: 'Restore this version' }).click();
-  const refusedRestore = await restoreResponse;
 
-  // A live Yjs document owns the board state, so the row-based restore is
-  // refused and must leave both the current label and history unchanged.
-  await expect(page.locator('.react-flow__node').first()).toContainText('Version two');
-  expect(refusedRestore.status()).toBe(409);
-  await expect(panel.getByText('Before restore')).toHaveCount(0);
+  // The board goes back to the snapshot...
+  await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
+  // ...and what it replaced is itself now a version, so the restore is undoable.
+  await expect(panel.getByText('Before restore')).toBeVisible();
+
+  // The restore wrote the row, and the client's conflict guard followed it —
+  // an edit straight afterwards saves rather than colliding with that write.
+  await page.locator('.react-flow__node').first().dblclick();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Version three');
+  await page.keyboard.press('Escape');
+  await expectSynced(page);
+  await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
 /** The light canvas token. Nothing in dark mode may still be wearing it. */
