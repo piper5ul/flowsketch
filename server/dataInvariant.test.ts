@@ -1,18 +1,13 @@
 /**
- * The phase-2 invariant from `docs/realtime.md`: **anything that writes diagram
- * content writes the `Y.Doc`, never `Diagram.data` directly.** The JSON column
- * is output.
+ * The `docs/realtime.md` invariant: **when a `DiagramDoc` exists, the snapshot
+ * is rendered from it rather than written behind it.** A live version restore
+ * snapshots the live document and returns the version to the bound client; the
+ * client writes it through the binding. `versions.ts` is still an allowed row
+ * writer for the unchanged restore path when no document exists.
  *
- * The risk the design names is dual-write drift — while the document and the
- * snapshot coexist, a path that writes JSON behind the document's back
- * desynchronizes the two, and the next `store` renders the document straight
- * back over it, so the write is lost as well as wrong. Two tests guard it:
- *
- * - a source scan, so a *new* module cannot start writing the `Diagram` table
- *   without this list being reconsidered;
- * - the rule itself, on the one route that still takes a whole copy of a board
- *   — `PUT /api/diagrams/:id`, which is what a diagram nobody has ever opened
- *   collaboratively is still saved by.
+ * The source scan catches a new module writing the `Diagram` table without this
+ * list being reconsidered; the route test below checks that the guarded `PUT`
+ * still saves a whole copy only for a diagram nobody has opened collaboratively.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -25,12 +20,12 @@ import { serveForFile } from './testServer.js';
 /**
  * The modules allowed to write **`Diagram.data`**, and why.
  *
- * `collab.ts` is the snapshot renderer — the only place a document becomes
- * JSON. `router.ts` holds the create/import, the duplicate and the guarded
- * `PUT`. `versions.ts` holds the restore, which writes JSON server-side and is
- * re-seeded into the document by the client that asked for it. Adding a fourth
- * name here is a decision about the invariant, which is exactly why it has to
- * be made in this file.
+ * `collab.ts` renders the document snapshot. `router.ts` holds create/import,
+ * duplicate and the guarded `PUT`. `versions.ts` has a `Diagram.data` write
+ * only for restore when no `DiagramDoc` exists; with a document, restore only
+ * writes the safety version and returns the version for the bound client to
+ * apply through its binding. Adding a writer is a decision about the invariant,
+ * which is why it has to be made in this file.
  */
 const MAY_WRITE_DIAGRAM_DATA = ['collab.ts', 'router.ts', 'versions.ts'];
 
@@ -90,8 +85,8 @@ function writesDiagramData(source: string): boolean {
   return false;
 }
 
-describe('the JSON snapshot is written from one place', () => {
-  it('is written by no server module but the three that are allowed to', () => {
+describe('Diagram.data writes follow the document invariant', () => {
+  it('only known snapshot and row-based paths write it', () => {
     const root = path.join(import.meta.dirname);
     const writers = serverSources(root)
       .filter((file) => writesDiagramData(readFileSync(file, 'utf8')))

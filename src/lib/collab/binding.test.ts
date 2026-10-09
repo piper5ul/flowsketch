@@ -15,6 +15,7 @@ import { edgeEntries, nodeEntries, writeDiagramIntoDoc } from '../../../shared/c
 import type { SerializedEdge, SerializedNode } from '../../../shared/types';
 import {
   serializeDiagram,
+  prepareCanvasForVersionRestore,
   setDocumentFlush,
   setDocumentHistory,
   useDiagramStore,
@@ -374,26 +375,51 @@ describe('store -> doc', () => {
     expect(docToDiagramData(doc).nodes[0].position).toEqual({ x: 77, y: 0 });
   });
 
-  it('replaces the document when a version is restored onto the open diagram', () => {
+  it('applies a version as one undoable edit and deletes elements missing from it', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('ellipse', { x: 200, y: 0 });
+    store().onConnect({ source: a, target: b, sourceHandle: null, targetHandle: null });
+    const beforePriorEdit = snapshot();
+
     const doc = new Y.Doc();
-    bind(doc);
-    store().addShape('rectangle', { x: 0, y: 0 });
-    store().addShape('ellipse', { x: 200, y: 0 });
+    bindWithHistory(doc);
+    store().updateNodeData(a, { label: 'Committed before restore' });
+    const beforeGesture = snapshot();
+
+    // Model a text-size transient that is still held when restore starts.
+    store().setNodeSizeTransient(a, { height: 170 });
+    prepareCanvasForVersionRestore();
+    expect(snapshot()).toEqual(beforeGesture);
+    expect(docToDiagramData(doc)).toEqual(beforeGesture);
 
     let updates = 0;
     doc.on('update', () => { updates += 1; });
-
-    // What `HistoryPanel` does with the restore response: the same
-    // `loadDiagram` every open goes through, which the binding sees as one edit.
-    store().loadDiagram('test', 'Restored', false, {
+    const restoredData = {
       version: 3,
       nodes: [{ id: 'old', type: 'shape', position: { x: 9, y: 9 }, data: { label: 'Old' } }],
       edges: [],
-    });
+      defaults: { fill: '#FFF1CC' },
+      thumbnailNodeIds: ['old'],
+    };
 
+    expect(store().applyVersionRestore(restoredData)).toBe(true);
     expect(updates).toBe(1);
     expect(docToDiagramData(doc).nodes.map((n) => n.id)).toEqual(['old']);
+    expect(nodeEntries(doc).has(a)).toBe(false);
+    expect(nodeEntries(doc).has(b)).toBe(false);
+    expect(edgeEntries(doc).size).toBe(0);
     expect(docToDiagramData(doc)).toEqual(snapshot());
+    expect(store().canUndo).toBe(true);
+
+    // One ⌘Z restores the exact board from before the version was applied;
+    // the canceled no-op transient did not consume the prior undo entry.
+    store().undo();
+    expect(docToDiagramData(doc)).toEqual(beforeGesture);
+    expect(store().nodes.map((node) => node.id)).toEqual([a, b]);
+    expect(store().canUndo).toBe(true);
+    store().undo();
+    expect(docToDiagramData(doc)).toEqual(beforePriorEdit);
+    expect(store().canUndo).toBe(false);
   });
 
   it('writes nothing at all for a viewer', () => {
@@ -1284,19 +1310,20 @@ describe('undo', () => {
     expect(selectedIds()).toEqual([a]);
   });
 
-  it('forgets the old board when one is restored over it, and makes the restore one step', () => {
+  it('starts fresh history when a board is loaded', () => {
     const doc = new Y.Doc();
     bindWithHistory(doc);
     store().addShape('rectangle', { x: 0, y: 0 });
     store().addShape('ellipse', { x: 300, y: 0 });
     expect(store().canUndo).toBe(true);
 
-    // What a version restore does: the board becomes something else entirely.
+    // Loading a board clears the old snapshot history before the binding
+    // writes its contents into this document.
     store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] });
     expect(store().nodes).toHaveLength(0);
 
-    // The two shapes went with the board they were drawn on; the one thing left
-    // to take back is the restore, and taking it back is all one step.
+    // The old shapes are gone from the loaded board; the replacement is
+    // one fresh document edit and can be undone in a single step.
     store().undo();
     expect(store().nodes).toHaveLength(2);
     expect(store().canUndo).toBe(false);

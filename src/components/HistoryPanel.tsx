@@ -17,7 +17,12 @@ import { api } from '../lib/api';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import { MAX_VERSION_LABEL_CHARS, describeVersion, scrubIndex } from '../lib/versionHistory';
 import { buildVersionPreview } from '../lib/versionPreview';
-import { useDiagramStore } from '../store/useDiagramStore';
+import {
+  isDocumentBound,
+  prepareCanvasForVersionRestore,
+  useDiagramStore,
+} from '../store/useDiagramStore';
+import { useCollabStore } from '../store/useCollabStore';
 import { toastError } from '../store/useToastStore';
 import type { DiagramVersion, DiagramVersionMeta } from '../../shared/types';
 
@@ -176,28 +181,59 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
       if (!diagramId) return;
       setBusy(true);
       try {
+        // End this window's active edit before asking the server to snapshot
+        // the live document. Once the gesture is committed, saveDiagram's
+        // bound path waits for the provider to send that write.
+        if (isDocumentBound()) {
+          prepareCanvasForVersionRestore();
+          if (await useDiagramStore.getState().saveDiagram() !== 'saved') {
+            toastError('Reconnect to restore a version');
+            return;
+          }
+        }
+
         const restored = await api.restoreVersion(diagramId, versionId);
-        // `viewerId` travels with the role and the token for the reason both of
-        // those do: a restore changes the board, never who is reading it.
-        const { starred, role, shareToken, viewerId } = useDiagramStore.getState();
-        useDiagramStore
-          .getState()
-          .loadDiagram(restored.id, restored.title, starred, restored.data, restored.updatedAt, {
-            role,
-            shareToken,
-            viewerId,
-          });
-        // Belt and braces: `loadDiagram` already restarts the conflict guard
-        // from this timestamp, and this says so at the call site — the restore
-        // wrote the row, and the next autosave has to build on that write.
-        useDiagramStore.getState().noteSaved(restored.updatedAt);
+        if (restored.applyAsEdit) {
+          if (!isDocumentBound()) {
+            toastError('Reconnect to restore a version');
+            return;
+          }
+          // The panel may have been open during another local gesture while
+          // the request was in flight; cancel it before replacing the board.
+          prepareCanvasForVersionRestore();
+          if (!useDiagramStore.getState().applyVersionRestore(restored.data)) {
+            toastError('Reconnect to restore a version');
+            return;
+          }
+          // Titles live in the Diagram row, outside the shared document. Let
+          // CanvasPage's title-only saver persist this change independently.
+          useDiagramStore.getState().setTitle(restored.title);
+        } else {
+          // `viewerId` travels with the role and the token for the reason both
+          // of those do: a restore changes the board, never who is reading it.
+          const { starred, role, shareToken, viewerId } = useDiagramStore.getState();
+          useDiagramStore
+            .getState()
+            .loadDiagram(restored.id, restored.title, starred, restored.data, restored.updatedAt, {
+              role,
+              shareToken,
+              viewerId,
+            });
+          // The row-based restore wrote the Diagram row, so advance the
+          // conflict guard before its next autosave.
+          if (restored.updatedAt) useDiagramStore.getState().noteSaved(restored.updatedAt);
+        }
         setConfirming(null);
         setPreviewId(null);
         setPreview(null);
         // The restore left a "Before restore" entry that is not in this list yet.
         await refresh();
       } catch {
-        toastError('Could not restore that version.');
+        if (!isDocumentBound() || useCollabStore.getState().status !== 'connected') {
+          toastError('Reconnect to restore a version');
+        } else {
+          toastError('Could not restore that version.');
+        }
       } finally {
         setBusy(false);
       }

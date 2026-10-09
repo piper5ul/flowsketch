@@ -213,13 +213,13 @@ export function isSeeded(doc: Y.Doc): boolean {
 /**
  * Replace the document's contents with `data`, in one transaction.
  *
- * Used for the lazy upgrade (seeding from `Diagram.data` the first time a
- * diagram is opened collaboratively) and for a version restore, which is the
- * same act: the board becomes something else entirely. One transaction so that
- * every peer sees the new diagram arrive whole rather than watching the old one
- * be dismantled element by element.
+ * Used to seed a document from `Diagram.data` during the lazy upgrade, or
+ * to initialize an empty client document from the board already loaded on that
+ * page. One transaction so peers see the initial board arrive whole. A live
+ * version restore does not use this helper: the restoring client applies it as
+ * an ordinary store edit, and the binding diffs that edit into the document.
  *
- * Elements the new data does not have are deleted rather than left behind —
+ * Elements absent from the initial data are deleted rather than left behind —
  * this is a replacement, not a merge. `data` must already have been through
  * `migrateDiagramData`; this module holds no opinion about formats.
  */

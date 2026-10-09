@@ -480,6 +480,21 @@ export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'ski
  */
 let flushDocument: (() => Promise<boolean>) | null = null;
 
+let prepareVersionRestore: (() => void) | null = null;
+
+/** Register the canvas work needed before restoring over an open document. */
+export function setVersionRestorePreparation(prepare: (() => void) | null): void {
+  prepareVersionRestore = prepare;
+}
+
+/** Commit this window's active input before the server snapshots the document. */
+export function prepareCanvasForVersionRestore(): void {
+  prepareVersionRestore?.();
+  // Drop any transient frame still held by the binding before the restore
+  // action opens its own undo boundary.
+  documentHistory?.cancelInteraction();
+}
+
 export function setDocumentFlush(flush: (() => Promise<boolean>) | null): void {
   flushDocument = flush;
 }
@@ -514,7 +529,9 @@ export interface DocumentHistory {
    * still marks exactly the right place and none of them had to be visited.
    */
   beginEntry: () => void;
-  /** Forget both stacks — a different diagram, or one restored over this one. */
+  /** Discard a still-held transient gesture before starting a separate edit. */
+  cancelInteraction: () => void;
+  /** Forget both stacks when a board is loaded; live version restore uses an undoable edit. */
   clear: () => void;
 }
 
@@ -746,6 +763,8 @@ export interface DiagramState {
     updatedAt?: string | null,
     options?: LoadDiagramOptions,
   ) => void;
+  /** Apply a version to the bound document as one ordinary, undoable edit. */
+  applyVersionRestore: (data: unknown) => boolean;
   /**
    * Writes the diagram. `overwrite` drops the `ifUnmodifiedSince` guard, which
    * is what the conflict banner's "Overwrite" does: the user has been told
@@ -1991,10 +2010,9 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     past = [];
     future = [];
-    // Whichever history is in force, a load is where it starts again: the board
-    // being opened is not one the entries on the stack describe. For a bound
-    // diagram this is a version restore or a reload of the same document, and
-    // the edit the load then pushes into it is one step of its own.
+    // Whichever history is in force, loading a board starts fresh: entries
+    // for the previous canvas do not describe it. A live version restore uses
+    // applyVersionRestore instead, so it remains an ordinary undoable edit.
     documentHistory?.clear();
     suppressHistory = false;
     lastNudgeAt = 0;
@@ -2039,6 +2057,36 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       viewerId: options?.viewerId ?? null,
       ...historyFlags(),
     });
+  },
+
+  applyVersionRestore: (data) => {
+    // This path exists only for a bound document. The panel checks the live
+    // binding too, and this guard keeps a late response from becoming a local
+    // snapshot-stack edit after the socket has gone away.
+    if (!documentHistory) return false;
+
+    const migrated = migrateDiagramData(data);
+    const opened = deriveMindMapHidden(
+      sortParentsFirst(
+        normalizeParentage(migrated.nodes as unknown as ShapeNode[]).map(normalizeTableNode),
+      ),
+      migrated.edges as unknown as ConnectorEdge[],
+    );
+
+    // A version restore is one of the restorer's edits. The binding turns this
+    // single following set into one Yjs transaction and deletes absent ids.
+    pushHistory(get());
+    set({
+      nodes: opened.nodes,
+      edges: opened.edges,
+      // These are properties of the restored board. As in loadDiagram, an
+      // omitted field replaces the previous value with its default.
+      defaults: (migrated.defaults ?? {}) as BoardDefaults,
+      thumbnailNodeIds: migrated.thumbnailNodeIds ?? null,
+      voting: migrated.voting ?? null,
+      timer: migrated.timer ?? null,
+    });
+    return true;
   },
 
   saveDiagram: async (options) => {

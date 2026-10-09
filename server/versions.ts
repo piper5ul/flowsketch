@@ -29,9 +29,12 @@ import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { syncDiagramImages } from './diagramImages.js';
 import { liveDiagramData } from './collab/live.js';
+import { docToDiagramData } from './collab/render.js';
 import { authedUser } from './types.js';
 import { createVersionBody, validateBody, type CreateVersionBody } from './validation.js';
 import type { DiagramVersion, DiagramVersionMeta } from '../shared/types.js';
+import { migrateDiagramData } from '../src/lib/diagramMigrations.js';
+import * as Y from 'yjs';
 
 /** Default gap between two automatic snapshots. Env: `VERSION_INTERVAL_MS`. */
 export const DEFAULT_VERSION_INTERVAL_MS = 10 * 60 * 1000;
@@ -290,15 +293,14 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
 /**
  * Put a version back. Editor+, because it is a write to the diagram.
  *
- * The state being replaced is snapshotted first, labelled `Before restore`, so
- * a restore is itself undoable — and unlike the automatic recording that write
- * is *not* best-effort: losing the current board to a restore nobody can walk
- * back is the one failure this feature must not have, so it happens before the
- * update and its failure fails the request.
+ * The state being replaced is snapshotted first, labelled `Before restore`.
+ * That safety copy is not best-effort: if it fails, the request stops before
+ * returning or writing the restored version. For a collaborative diagram, the
+ * client applies the returned version as an ordinary edit, which is what makes
+ * that restore undoable. A diagram without a document keeps the row-based path.
  *
- * The response is the updated diagram, `updatedAt` included: the client's
- * autosave is holding the row's old timestamp as its conflict guard, and would
- * 409 on its next save if it were not told where the row has moved to.
+ * A collaborative restore's safety copy comes from the document, and the
+ * version is returned for the client to write through its binding.
  */
 versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res) => {
   const access = await requireDiagramRole(req, res, 'editor', {
@@ -319,26 +321,44 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     return;
   }
 
-  // A collab session owns the document: writing `data` here would be
-  // overwritten by the store hook's next debounce. The client re-seeds the
-  // Yjs doc through `loadDiagram`, which is the correct path — but only if
-  // we do not also race against it from the row side.
-  const liveDoc = await prisma.diagramDoc.findUnique({
+  const liveData = liveDiagramData(req.params.id);
+  const storedDoc = await prisma.diagramDoc.findUnique({
     where: { diagramId: req.params.id },
-    select: { diagramId: true },
+    select: { state: true },
   });
-  if (liveDoc) {
-    res.status(409).json({ error: 'Conflict', updatedAt: access.diagram.updatedAt });
+
+  if (liveData || storedDoc) {
+    let currentData = liveData;
+    if (!currentData && storedDoc) {
+      const document = new Y.Doc();
+      Y.applyUpdate(document, new Uint8Array(storedDoc.state));
+      currentData = docToDiagramData(document);
+      document.destroy();
+    }
+
+    await writeVersion({
+      diagramId: req.params.id,
+      data: currentData ?? access.diagram.data,
+      title: access.diagram.title,
+      createdById: authedUser(req).id,
+      ownerId: access.diagram.userId,
+      label: RESTORE_SNAPSHOT_LABEL,
+    });
+
+    res.json({
+      title: version.title,
+      data: migrateDiagramData(version.data ?? {}),
+      applyAsEdit: true,
+    });
     return;
   }
 
-  // The state being replaced, from the live document when there is one: the
-  // whole point of this snapshot is that a restore can be walked back, and
-  // walking back to a board ten seconds older than the one that was replaced
-  // would lose exactly the edits nobody meant to discard.
+  // This branch has no live or stored document, so the row is the current
+  // board. Preserve it before writing the replacement so the restore can be
+  // walked back.
   await writeVersion({
     diagramId: req.params.id,
-    data: liveDiagramData(req.params.id) ?? access.diagram.data,
+    data: access.diagram.data,
     title: access.diagram.title,
     createdById: authedUser(req).id,
     ownerId: access.diagram.userId,

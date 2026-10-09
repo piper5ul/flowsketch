@@ -18,7 +18,7 @@ Considered and rejected: Server-Sent Events + POST for presence only (cheap, but
 - `Diagram.data` (JSON) **stays** as a *derived snapshot*, re-rendered from the doc on a debounce. Everything that reads JSON — the dashboard, thumbnails, PNG/SVG/JSON export, versions, the public `/s/:token` page, comments' anchors, image reference index — keeps working unchanged.
 - New table `DiagramDoc { diagramId (pk), state bytea, updatedAt }` holds the encoded Yjs state (`Y.encodeStateAsUpdate`). Additive migration.
 - **Lazy upgrade:** the first collaborative open of a diagram whose `DiagramDoc` row is missing seeds the doc from `Diagram.data` (after `migrateDiagramData`). Nothing is bulk-migrated.
-- Invariant: **anything that writes diagram content writes the Y.Doc**, never `Diagram.data` directly (import, restore, image backfill). The JSON snapshot is output only. Version restore = replace the doc's maps from the version's JSON in one transaction.
+- Invariant: **when a `DiagramDoc` exists, edits to diagram content go through the Y.Doc binding**, and `Diagram.data` is its rendered snapshot. A live version restore writes neither `Diagram.data` nor `DiagramDoc` on the server: it snapshots current state from the live registry, then the stored-document render, then the row, and returns migrated version data for the bound client to apply as one ordinary edit. The restore title uses the existing row title saver. That makes the restore undoable for its author; peers merge the edit and keep their own undo stacks. An unbound client is told “Reconnect to restore a version.” Without a document, restore remains row-based. Fork from version is unchanged. New diagrams and imports still start as rows and are seeded on first collaborative open.
 
 ### Server
 
@@ -39,7 +39,7 @@ Considered and rejected: Server-Sent Events + POST for presence only (cheap, but
 ## Phases (each shippable alone, one PR each, test-first)
 
 1. ✅ **`realtime-p1` Infra + presence.** Hocuspocus attached to Express with cookie auth and role checks; awareness-based cursors, selections and "who's here"; no document sync yet (the doc is connected but empty — nothing reads it). Deliverable: two users see each other live. *No data-model change.*
-2. ✅ **`realtime-p2` Document sync.** `DiagramDoc` table + migration, database extension with lazy upgrade, the client binding, JSON snapshot rendering, `syncDiagramImages` on store; simultaneous editing works; the conflict banner and `ifUnmodifiedSince` are bypassed for collaborative diagrams. Import/restore/backfill write through the doc.
+2. ✅ **`realtime-p2` Document sync.** `DiagramDoc` table + migration, database extension with lazy upgrade, the client binding, JSON snapshot rendering, `syncDiagramImages` on store; simultaneous editing works; the conflict banner and `ifUnmodifiedSince` are bypassed for collaborative diagrams. Imports seed a document on first collaborative open; a live restore reaches the document through the client binding, while a restore without a document remains row-based.
 3. ✅ **`realtime-p3` Undo + cleanup.** `Y.UndoManager` scoped to this client's origin; the autosave loop, its retry backoff, `ifUnmodifiedSince` and the conflict banner stop running for a bound diagram; the save indicator becomes a connection indicator; docs.
 4. ✅ **`realtime-p4` Offline.** `y-indexeddb` so a dropped connection keeps working and merges on reconnect — and so a reload with no connection at all still has the board. Carried the re-auth fix with it (`collab-reauth`), because a cached copy of somebody's diagram must not outlive their access to it, which meant the server had to say *why* it refused a socket.
 
@@ -56,7 +56,7 @@ One thing the design left open: the **viewport** is written into the document's 
 Two limitations phase 2 shipped with, both listed against later phases:
 
 - **Undo is still the snapshot stack**, so ⌘Z can walk back over a collaborator's edit. That is phase 3's `Y.UndoManager` — done, below.
-- **A diagram whose socket will not open cannot be edited.** The document is the save, so a browser that reaches `/api` but not `/collab` (a proxy that will not upgrade, say) falls back to the JSON `PUT`, which the server refuses with `409` once the diagram has a document — the conflict banner's "Reload" is the way out, and the edits made in the meantime are lost. Phase 4's `y-indexeddb` is what makes that survivable: a *dropped* socket now keeps its edits across a reload and merges them on the way back. A socket that never opened at all is still the unbound board, kept by the `PUT` — and that `PUT` is still refused for a diagram that already has a document.
+- **A diagram whose socket will not open cannot be edited.** The document is the save, so a browser that reaches `/api` but not `/collab` (a proxy that will not upgrade, say) falls back to the JSON `PUT`, which the server refuses with `409` once the diagram has a document — the conflict banner's "Reload" is the way out, and the edits made in the meantime are lost. Phase 4's `y-indexeddb` is what makes that survivable: a *dropped* socket now keeps its edits across a reload and merges them on the way back. A socket that never opened at all is still the unbound board, kept by the `PUT` — and that `PUT` is still refused for a diagram that already has a document. If a restore response identifies that document while this client is unbound, HistoryPanel says “Reconnect to restore a version.”
 
 ## What phase 3 did differently
 
@@ -172,7 +172,7 @@ phase 3 shipped. A board is worth more than a copy of it.
 ## Risks
 
 - **Undo semantics change** (phase 3): per-user CRDT undo behaves differently from snapshot undo; every undo-related test from PR #4 onward is revisited.
-- **Dual-write drift** (phase 2): while the doc and the JSON snapshot coexist, any path that writes JSON directly desynchronizes them. The invariant above is enforced by tests that assert `Diagram.data` is only ever written by the snapshot renderer.
+- **Dual-write drift** (phase 2): while the doc and the JSON snapshot coexist, a path that writes JSON behind the document desynchronizes them. Tests keep row writes to known paths: the renderer, diagram creation and unbound `PUT`, and restore when no document exists.
 - **Single process.** Hocuspocus keeps open docs in memory; that is fine for one `whimsy.service`. A second process would need the Redis extension.
 
 ## Testing

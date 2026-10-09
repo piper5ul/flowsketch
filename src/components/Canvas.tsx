@@ -12,7 +12,13 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
+import {
+  computeMarkers,
+  setVersionRestorePreparation,
+  useDiagramStore,
+  type ClipboardPayload,
+  type ShapeNode,
+} from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { deepSelectTarget } from '../lib/deepSelect';
@@ -146,7 +152,7 @@ export function Canvas({
 }: { topBar?: boolean; beforeSignOut?: () => Promise<boolean> } = {}) {
   const nodes = useDiagramStore((s) => s.nodes);
   const edges = useDiagramStore((s) => s.edges);
-  const onNodesChange = useDiagramStore((s) => s.onNodesChange);
+  const storeOnNodesChange = useDiagramStore((s) => s.onNodesChange);
   const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
   const storeOnConnect = useDiagramStore((s) => s.onConnect);
   const addShape = useDiagramStore((s) => s.addShape);
@@ -193,6 +199,11 @@ export function Canvas({
   const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  // The active custom gesture is cancelled before restoring over the board.
+  const cancelGestureRef = useRef<(() => void) | null>(null);
+  const suppressDragEndChangesRef = useRef(false);
+  const suppressDragStopRef = useRef(false);
+  const activeTouchRef = useRef<{ target: Element; touch: Touch } | null>(null);
   const prevToolRef = useRef<Tool>('select');
   const connectorSourceRef = useRef<{ id: string; anchor?: EdgeAnchor } | null>(null);
   // A connector being drawn by hand — see `beginConnectorGesture`. The ref is
@@ -236,6 +247,82 @@ export function Canvas({
   // running the command (⌘K, a keystroke, the browser's own paste), and then
   // the middle of the view is used instead.
   const paneAnchorRef = useRef<{ x: number; y: number } | null>(null);
+
+  const onNodesChange = useCallback((changes: Parameters<typeof storeOnNodesChange>[0]) => {
+    if (
+      suppressDragEndChangesRef.current &&
+      changes.length > 0 &&
+      changes.every((change) => change.type === 'position' && change.dragging === false)
+    ) {
+      suppressDragEndChangesRef.current = false;
+      return;
+    }
+    storeOnNodesChange(changes);
+  }, [storeOnNodesChange]);
+
+  useEffect(() => {
+    const onTouchStart = (event: TouchEvent) => {
+      const target = event.target instanceof Element
+        ? event.target.closest('.react-flow__node')
+        : null;
+      const touch = event.changedTouches[0];
+      if (target && touch) activeTouchRef.current = { target, touch };
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      const current = activeTouchRef.current;
+      if (current && [...event.changedTouches].some((touch) => touch.identifier === current.touch.identifier)) {
+        activeTouchRef.current = null;
+      }
+    };
+    document.addEventListener('touchstart', onTouchStart, true);
+    document.addEventListener('touchend', onTouchEnd, true);
+    document.addEventListener('touchcancel', onTouchEnd, true);
+
+    const prepare = () => {
+      // Blur commits text synchronously (including tables and connector
+      // labels); restricting this to the canvas leaves the TopBar title alone.
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && isTypingTarget(active) && active.closest('.react-flow__node')) {
+        active.blur();
+      }
+
+      cancelGestureRef.current?.();
+
+      // React Flow's node drag uses d3-drag: it listens for `mouseup` on the
+      // window it received at `mousedown`. End that stream before replacing the
+      // controlled nodes, and ignore its final old position and reparent calls.
+      const state = useDiagramStore.getState();
+      const dragging = state.nodes.filter((node) => node.dragging);
+      const activeTouch = activeTouchRef.current;
+      if (dragging.length > 0 || activeTouch) {
+        suppressDragEndChangesRef.current = true;
+        suppressDragStopRef.current = true;
+        if (activeTouch?.target.isConnected && typeof TouchEvent !== 'undefined') {
+          activeTouch.target.dispatchEvent(new TouchEvent('touchcancel', {
+            bubbles: true,
+            cancelable: true,
+            changedTouches: [activeTouch.touch],
+          }));
+        } else {
+          window.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, view: window }));
+        }
+        queueMicrotask(() => {
+          suppressDragEndChangesRef.current = false;
+          suppressDragStopRef.current = false;
+        });
+      }
+
+      useDiagramStore.getState().setEditingNodeId(null);
+      useDiagramStore.getState().setEditingEdgeId(null);
+    };
+    setVersionRestorePreparation(prepare);
+    return () => {
+      document.removeEventListener('touchstart', onTouchStart, true);
+      document.removeEventListener('touchend', onTouchEnd, true);
+      document.removeEventListener('touchcancel', onTouchEnd, true);
+      setVersionRestorePreparation(null);
+    };
+  }, []);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   // The rail's wireframe picker. Lifted out of `LeftRail` because W opens it,
   // and a command reaches the canvas's own UI through `ctx.ui` — the shape the
@@ -514,6 +601,11 @@ export function Canvas({
    */
   const onNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, _node: ShapeNode, nodes: ShapeNode[]) => {
+      if (suppressDragStopRef.current) {
+        suppressDragStopRef.current = false;
+        suppressDragEndChangesRef.current = false;
+        return;
+      }
       useDiagramStore.getState().reparentByPosition(nodes.map((n) => n.id));
     },
     [],
@@ -788,6 +880,7 @@ export function Canvas({
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('keydown', onKey);
+        cancelGestureRef.current = null;
         gestureRef.current = null;
         setConnectDraft(null);
         useDiagramStore.getState().setConnectTarget(null);
@@ -867,6 +960,7 @@ export function Canvas({
       const onKey = (e: KeyboardEvent) => {
         if (e.key === 'Escape') finish();
       };
+      cancelGestureRef.current = finish;
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
       window.addEventListener('keydown', onKey);
@@ -928,6 +1022,7 @@ export function Canvas({
           window.removeEventListener('pointermove', onEraseMove);
           window.removeEventListener('pointerup', onEraseUp);
           window.removeEventListener('keydown', onEraseKey);
+          cancelGestureRef.current = null;
           eraseRef.current = null;
         };
         const onEraseMove = (e: PointerEvent) => erase(at(e));
@@ -935,6 +1030,7 @@ export function Canvas({
         const onEraseKey = (e: KeyboardEvent) => {
           if (e.key === 'Escape') finishErase();
         };
+        cancelGestureRef.current = finishErase;
         window.addEventListener('pointermove', onEraseMove);
         window.addEventListener('pointerup', onEraseUp);
         window.addEventListener('keydown', onEraseKey);
@@ -950,6 +1046,7 @@ export function Canvas({
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('keydown', onKey);
+        cancelGestureRef.current = null;
         inkRef.current = null;
         setInkDraft(null);
       };
@@ -972,6 +1069,7 @@ export function Canvas({
         // Abandons the stroke: nothing is committed, and the pen stays held.
         if (e.key === 'Escape') finish();
       };
+      cancelGestureRef.current = finish;
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
       window.addEventListener('keydown', onKey);

@@ -253,12 +253,16 @@ export const api = {
   /**
    * Puts a version back, after snapshotting what it replaces. Editor+.
    *
-   * The returned `updatedAt` is the row's new timestamp: hand it to the
-   * autosaver (`noteSaved`) or its next save will 409 against the write this
-   * restore just made.
+   * A diagram without a document is restored through the row and returns its
+   * new `updatedAt`. With a document, the response instead carries
+   * `applyAsEdit: true` so the bound client applies the version through its
+   * ordinary document binding.
    */
   restoreVersion: (id: string, versionId: string) =>
-    request<{ id: string; title: string; data: unknown; updatedAt: string }>(
+    request<
+      | { id: string; title: string; data: unknown; updatedAt: string; applyAsEdit?: false }
+      | { title: string; data: unknown; applyAsEdit: true }
+    >(
       `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
       { method: 'POST' },
     ),
