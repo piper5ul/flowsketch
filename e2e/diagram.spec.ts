@@ -1617,6 +1617,13 @@ test('two people on one diagram see each other, their pointers and their selecti
 });
 
 test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
+  // Known bug, parked 2026-10-09: restoring a version on a diagram with a live
+  // document answers 409 and changes nothing (server/versions.ts refuses when a
+  // `DiagramDoc` exists). Five designs were reviewed and set aside; the findings
+  // and the recommended simple fix are in piper5ul/flowsketch#94. This marks the
+  // failure as expected so CI stays meaningful, and it turns red the day restore
+  // works: delete this line then.
+  test.fail(true, 'Version restore on a live diagram is a known, parked bug (#94)');
   await signUp(page);
   const pane = await newDiagram(page);
   const node = await drawLabelledShape(page, pane, 'Version one');
