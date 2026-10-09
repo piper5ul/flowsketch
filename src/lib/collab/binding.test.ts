@@ -161,6 +161,43 @@ describe('store -> doc', () => {
     expect(updates).toBe(1);
   });
 
+  it('does not write a click when persisted object keys arrive in a different order', () => {
+    const id = 'click-target';
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [{
+        id,
+        type: 'shape',
+        position: { x: 300, y: 220 },
+        width: 180,
+        height: 80,
+        data: { label: 'Click target', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+      }],
+      edges: [],
+    });
+    const node = store().nodes[0];
+    // PostgreSQL jsonb returns object keys in a different order from the
+    // browser serializer. The fields and values are exactly the same.
+    const databaseNode = {
+      id: node.id,
+      data: node.data,
+      type: node.type,
+      width: node.width,
+      height: node.height,
+      position: node.position,
+    } as SerializedNode;
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, { ...snapshot(), nodes: [databaseNode] }, 'seed');
+    bindWithHistory(doc);
+
+    let updates = 0;
+    doc.on('update', () => { updates += 1; });
+    select(id);
+
+    expect(updates).toBe(0);
+    expect(store().canUndo).toBe(false);
+  });
+
   it('holds a gesture until it stops moving, then writes it once', () => {
     vi.useFakeTimers();
     const doc = new Y.Doc();
@@ -179,6 +216,27 @@ describe('store -> doc', () => {
     expect(updates).toBe(1);
     expect(docToDiagramData(doc).nodes[0].position).toEqual({ x: 100, y: 0 });
     expect(docToDiagramData(doc)).toEqual(snapshot());
+  });
+
+  it('writes nothing and creates no undo entry when a drag returns to its start', () => {
+    vi.useFakeTimers();
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    // Loading this shape clears the snapshot history before it becomes a
+    // bound document, just as opening a collaborative diagram does.
+    store().loadDiagram('test', 'Test', false, snapshot());
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, snapshot(), 'seed');
+    bindWithHistory(doc);
+
+    let updates = 0;
+    doc.on('update', () => { updates += 1; });
+    store().moveNodesTransient({ [id]: { x: 50, y: 20 } });
+    store().moveNodesTransient({ [id]: { x: 0, y: 0 } });
+    vi.advanceTimersByTime(TRANSIENT_COMMIT_MS);
+
+    expect(updates).toBe(0);
+    expect(store().canUndo).toBe(false);
+    expect(docToDiagramData(doc).nodes[0].position).toEqual({ x: 0, y: 0 });
   });
 
   it('writes a gesture the moment a real action commits it', () => {

@@ -129,9 +129,23 @@ export interface DocBinding {
   history: DocumentHistory;
 }
 
+/** Stable JSON form for document values, independent of object key order. */
+function stableJson(value: unknown): string | undefined {
+  const ordered = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(ordered);
+    if (item !== null && typeof item === 'object') {
+      return Object.fromEntries(
+        Object.keys(item).sort().map((key) => [key, ordered((item as Record<string, unknown>)[key])]),
+      );
+    }
+    return item;
+  };
+  return JSON.stringify(ordered(value));
+}
+
 /** True when two serializable values are the same diagram element. */
 function same(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableJson(a) === stableJson(b);
 }
 
 /**
@@ -452,7 +466,7 @@ export function bindDocToStore(
    */
   let rendered: string | null = null;
 
-  const contentOf = (data: DiagramData) => JSON.stringify([data.nodes, data.edges]);
+  const contentOf = (data: DiagramData) => stableJson([data.nodes, data.edges])!;
 
   /** Whether a gesture is being held here, reported only when it changes. */
   let pendingWrite = false;
@@ -465,7 +479,7 @@ export function bindDocToStore(
   const pull = () => {
     const nodes = nodesOf(doc);
     const edges = edgesOf(doc);
-    const next = JSON.stringify([nodes, edges]);
+    const next = stableJson([nodes, edges])!;
     // Written by another browser, so narrowed to style keys before anything
     // here acts on it — `sanitizeDefaults` is the same gate a stored row goes
     // through on load.

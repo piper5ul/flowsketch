@@ -123,10 +123,9 @@ test('a custom colour commits only on change as one undo step', async ({ page })
   await expect(node).toBeVisible();
   await node.click();
   const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
-  // No assertion on Undo being empty here: on main, a plain click on a shape
-  // records an undo step of its own (a separate bug), so "empty" would race it.
-  // What this test owns is the colour: dragging records nothing, the release
-  // records one step, and one ⌘Z takes the shape back to where it started.
+  // Selecting a fresh shape does not edit its serialized diagram, so it leaves
+  // the undo stack empty until the colour is committed below.
+  await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
   await toolbar.getByRole('button', { name: 'Color' }).click();
   const grid = page.getByRole('group', { name: 'Colors' });
   const customInput = page.locator('[data-testid="custom-colour-input"]');
