@@ -32,10 +32,18 @@ export function stableJson(value: unknown, cacheKey?: object): string | undefine
     if (item !== null && typeof item === 'object') {
       // Visit in JSON.stringify's property order so toJSON side effects retain
       // their usual order, then sort the resulting values for canonical output.
-      const entries = Object.keys(item).map((propertyKey) => [
-        propertyKey,
-        ordered((item as Record<string, unknown>)[propertyKey], propertyKey),
-      ] as const);
+      // Function and symbol values are dropped here, as JSON.stringify drops
+      // them; leaving one in would let the final stringify call a `toJSON`
+      // that this walk has already applied, a second time.
+      const entries = Object.keys(item)
+        .filter((propertyKey) => {
+          const raw = (item as Record<string, unknown>)[propertyKey];
+          return typeof raw !== 'function' && typeof raw !== 'symbol';
+        })
+        .map((propertyKey) => [
+          propertyKey,
+          ordered((item as Record<string, unknown>)[propertyKey], propertyKey),
+        ] as const);
       return Object.fromEntries(
         entries.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0),
       );

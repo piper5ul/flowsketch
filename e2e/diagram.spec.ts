@@ -2572,6 +2572,10 @@ async function openEmptyBoard(page: Page, title: string): Promise<void> {
   }, title);
   await page.goto(`/d/${id}`);
   await expect(page.locator('.react-flow__pane')).toBeVisible();
+  // Bound before anything is pasted: an edit made before the board binds to
+  // its document lands before the undo manager exists, so ⌘Z has nothing to
+  // take back and an undo test reads that as a failure.
+  await expectSynced(page);
   await page.locator('.react-flow__pane').click({ position: { x: 400, y: 300 } });
 }
 

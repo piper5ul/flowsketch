@@ -18,3 +18,15 @@ describe('stableJson', () => {
     expect(stableJson(value)).toBe('{"nested":{"a":2,"key":"nested","z":1}}');
   });
 });
+
+describe('stableJson and toJSON', () => {
+  it('applies a toJSON once, as JSON.stringify does, even when it returns another toJSON', () => {
+    const value = { toJSON: () => ({ x: 1, toJSON: () => 'second' }) };
+    expect(stableJson(value)).toBe(JSON.stringify(value));
+    expect(stableJson(value)).toBe('{"x":1}');
+  });
+
+  it('drops function values the way JSON.stringify does', () => {
+    expect(stableJson({ b: 2, a: () => 1 })).toBe('{"b":2}');
+  });
+});
