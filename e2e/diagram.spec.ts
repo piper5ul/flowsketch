@@ -1653,13 +1653,13 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
 
   await page.getByRole('button', { name: 'History' }).click();
   await checkpoint.getByRole('button', { name: 'Restore' }).click();
-  await expect(panel.getByText('Your current state is saved first')).toBeVisible();
+  await expect(panel.getByText('Your current state will be saved to history too.')).toBeVisible();
   await panel.getByRole('button', { name: 'Restore this version' }).click();
 
   // The board goes back to the snapshot...
   await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
   // ...and what it replaced is itself now a version, so the restore is undoable.
-  await expect(panel.getByText('Before restore')).toBeVisible();
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
 
   // The restore wrote the row, and the client's conflict guard followed it —
   // an edit straight afterwards saves rather than colliding with that write.
@@ -1669,6 +1669,87 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await page.keyboard.press('Escape');
   await expectSynced(page);
   await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
+test('a held connector endpoint drag blocks version restore until pointerup', async ({ page }) => {
+  await signUp(page);
+  await selectConnector(page);
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+
+  const restoreButton = panel.getByRole('button', { name: 'Restore this version' });
+  const endpoint = page.locator('.connector-joint-hit').first();
+  const endpointBox = (await endpoint.boundingBox())!;
+  const x = endpointBox.x + endpointBox.width / 2;
+  const y = endpointBox.y + endpointBox.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 16, y + 8);
+
+  await expect(panel.getByText("Finish what you're doing, then restore")).toBeVisible();
+  await expect(restoreButton).toBeDisabled();
+  await restoreButton.evaluate((button) => (button as HTMLButtonElement).click());
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toHaveCount(0);
+
+  await page.mouse.up();
+  await expect(restoreButton).toBeEnabled();
+  await restoreButton.click();
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+});
+
+test('a connector drag that starts while restore fetches its version aborts the restore', async ({ page }) => {
+  await signUp(page);
+  await selectConnector(page);
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+
+  let releaseVersionGet!: () => void;
+  const versionGetGate = new Promise<void>((resolve) => { releaseVersionGet = resolve; });
+  let versionGetReached!: () => void;
+  const versionGet = new Promise<void>((resolve) => { versionGetReached = resolve; });
+  await page.route('**/api/diagrams/**', async (route) => {
+    const request = route.request();
+    if (request.method() === 'GET' && /\/versions\/[^/]+$/.test(new URL(request.url()).pathname)) {
+      const response = await route.fetch();
+      versionGetReached();
+      await versionGetGate;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+
+  const restoreButton = panel.getByRole('button', { name: 'Restore this version' });
+  await restoreButton.evaluate((button) => (button as HTMLButtonElement).click());
+  await versionGet;
+
+  const endpoint = page.locator('.connector-joint-hit').first();
+  const endpointBox = (await endpoint.boundingBox())!;
+  const x = endpointBox.x + endpointBox.width / 2;
+  const y = endpointBox.y + endpointBox.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 16, y + 8);
+  releaseVersionGet();
+
+  await expect(page.locator('[aria-live="polite"]').getByText("Finish what you're doing, then restore")).toBeVisible();
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toHaveCount(0);
+  await page.mouse.up();
+  await expect(restoreButton).toBeEnabled();
+  await restoreButton.click();
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
 });
 
 test('a live version restore reaches another editor and the restorer can undo it', async ({ page, browser }) => {
@@ -1714,6 +1795,191 @@ test('a live version restore reaches another editor and the restorer can undo it
   await expect(guestPage.locator('.react-flow__node').first()).toContainText('Version two');
 
   await guest.close();
+});
+
+test('a live restore safety copy catches a peer edit before apply and preserves edits after apply', async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signUp(page, 'Ada Lovelace');
+  const pane = await newDiagram(page);
+  await drawLabelledShape(page, pane, 'Version one');
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+
+  const guest = await browser.newContext();
+  const guestPage = await guest.newPage();
+  await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'));
+  await guestPage.goto(page.url());
+  const guestPane = guestPage.locator('.react-flow__pane');
+  await expect(guestPane).toBeVisible();
+  await expect(guestPage.locator('[data-collab-status="connected"]')).toBeVisible();
+  const drawPeerNode = async (label: string, position: { x: number; y: number }) => {
+    await guestPage.keyboard.press('r');
+    await guestPane.click({ position });
+    await guestPage.keyboard.press('Escape');
+    const node = guestPage.locator('.react-flow__node').last();
+    await expect(node).toBeVisible();
+    await node.dblclick();
+    await guestPage.keyboard.type(label);
+    await guestPage.keyboard.press('Escape');
+    await expect(node).toContainText(label);
+    await expectSynced(guestPage);
+  };
+
+  let releaseTitlePut!: () => void;
+  const titlePutGate = new Promise<void>((resolve) => { releaseTitlePut = resolve; });
+  let titlePutReached!: () => void;
+  const titlePut = new Promise<void>((resolve) => { titlePutReached = resolve; });
+  let releaseSafetyPost!: () => void;
+  const safetyPostGate = new Promise<void>((resolve) => { releaseSafetyPost = resolve; });
+  let safetyPostReached!: () => void;
+  const safetyPost = new Promise<void>((resolve) => { safetyPostReached = resolve; });
+  let versionGetFinished = false;
+  const diagramId = new URL(page.url()).pathname.split('/').at(-1)!;
+
+  await page.route('**/api/diagrams/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const body = request.method() === 'PUT' || request.method() === 'POST'
+      ? request.postDataJSON() as { title?: string; data?: unknown; before?: unknown } | null
+      : null;
+    if (request.method() === 'GET' && /\/versions\/[^/]+$/.test(url.pathname)) {
+      const response = await route.fetch();
+      await route.fulfill({ response });
+      versionGetFinished = true;
+      return;
+    }
+    if (
+      request.method() === 'PUT' && url.pathname === `/api/diagrams/${diagramId}` &&
+      body?.title === 'Current before restore' && body.data === undefined
+    ) {
+      const response = await route.fetch();
+      titlePutReached();
+      await titlePutGate;
+      await route.fulfill({ response });
+      return;
+    }
+    if (
+      request.method() === 'POST' && url.pathname.endsWith('/restore') && body?.before
+    ) {
+      const response = await route.fetch();
+      safetyPostReached();
+      await safetyPostGate;
+      await route.fulfill({ response });
+      return;
+    }
+    await route.continue();
+  });
+
+  // The title is still pending its one-second save. Restore must fetch the
+  // version first, then wait for this title-only write before capturing.
+  await page.getByLabel('Diagram title').fill('Current before restore');
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+  await panel.getByRole('button', { name: 'Restore this version' }).click();
+  await titlePut;
+  expect(versionGetFinished).toBe(true);
+
+  // The GET has completed, but the title flush is held before capture/apply.
+  await drawPeerNode('Peer before apply', { x: 900, y: 260 });
+  await expect(page.locator('.react-flow__node').filter({ hasText: 'Peer before apply' })).toBeVisible();
+  releaseTitlePut();
+
+  // The safety-copy request starts only after the restore was applied. Hold its
+  // response to add another collaborator edit during that post-apply window.
+  await safetyPost;
+  await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
+  const safetyVersion = await page.evaluate(async (id) => {
+    const list = await fetch(`/api/diagrams/${id}/versions`).then((res) => res.json()) as {
+      id: string; label: string | null; title: string;
+    }[];
+    const entry = list.find((version) => version.label === 'Before restore');
+    if (!entry) throw new Error('Before restore version was not written');
+    return fetch(`/api/diagrams/${id}/versions/${entry.id}`).then((res) => res.json()) as Promise<{
+      title: string;
+      data: { nodes: { data: { label?: string } }[] };
+    }>;
+  }, diagramId);
+  expect(safetyVersion.title).toBe('Current before restore');
+  expect(safetyVersion.data.nodes.map((node) => node.data.label)).toContain('Peer before apply');
+
+  await drawPeerNode('Peer after apply', { x: 340, y: 260 });
+  await expect(page.locator('.react-flow__node').filter({ hasText: 'Peer after apply' })).toBeVisible();
+  releaseSafetyPost();
+
+  await expectSynced(page);
+  await expectSynced(guestPage);
+  await expect(page.locator('.react-flow__node')).toHaveCount(2);
+  await expect(guestPage.locator('.react-flow__node')).toHaveCount(2);
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+  await guest.close();
+});
+
+test('restore commits a focused connector label before saving Before restore', async ({ page }) => {
+  await signUp(page, 'Ada Lovelace');
+  const edgeBox = await drawConnectedPair(page);
+  await page.mouse.dblclick(edgeBox.x + edgeBox.width * 0.25, edgeBox.y + edgeBox.height / 2);
+  const edgeEditor = page.locator('.react-flow__edgelabel-renderer [contenteditable="true"]');
+  await expect(edgeEditor).toBeFocused();
+  await page.keyboard.type('Checkpoint label');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.react-flow__edgelabel-renderer').getByText('Checkpoint label')).toBeVisible();
+  await expectSynced(page);
+
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  await panel.getByLabel('Snapshot label').fill('Checkpoint');
+  await panel.getByRole('button', { name: 'Snapshot now' }).click();
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await expect(checkpoint).toHaveCount(1);
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+  await expect(panel.getByText('Your current state will be saved to history too.')).toBeVisible();
+
+  // Keep the confirmation open while the edge editor owns focus. Programmatic
+  // activation starts Restore without moving focus to the button first.
+  await page.mouse.dblclick(edgeBox.x + edgeBox.width * 0.25, edgeBox.y + edgeBox.height / 2);
+  await expect(edgeEditor).toBeFocused();
+  await page.keyboard.press('ControlOrMeta+a');
+  await page.keyboard.type('Draft connector label');
+  await edgeEditor.evaluate((editor) => {
+    const win = window as Window & { __restoreEditorBlurred?: boolean };
+    win.__restoreEditorBlurred = false;
+    const blur = editor.blur.bind(editor);
+    editor.blur = () => {
+      win.__restoreEditorBlurred = true;
+      blur();
+    };
+  });
+  const focusStayed = await panel.getByRole('button', { name: 'Restore this version' }).evaluate((button) => {
+    (button as HTMLButtonElement).click();
+    return document.activeElement?.matches('[contenteditable="true"]') ?? false;
+  });
+  expect(focusStayed).toBe(true);
+
+  await expect(panel.getByRole('listitem').filter({ hasText: 'Before restore' })).toBeVisible();
+  const diagramId = new URL(page.url()).pathname.split('/').at(-1)!;
+  const before = await page.evaluate(async (id) => {
+    const versions = await fetch(`/api/diagrams/${id}/versions`).then((res) => res.json()) as {
+      id: string; label: string | null;
+    }[];
+    const entry = versions.find((version) => version.label === 'Before restore');
+    if (!entry) throw new Error('Before restore version was not written');
+    return fetch(`/api/diagrams/${id}/versions/${entry.id}`).then((res) => res.json()) as Promise<{
+      data: { edges: { data: { label?: string } }[] };
+    }>;
+  }, diagramId);
+
+  expect(before.data.edges[0]?.data.label).toBe('Draft connector label');
+  const editorWasBlurred = await page.evaluate(() =>
+    (window as Window & { __restoreEditorBlurred?: boolean }).__restoreEditorBlurred,
+  );
+  expect(editorWasBlurred).toBe(true);
+  await expect(page.locator('.react-flow__edgelabel-renderer').getByText('Checkpoint label')).toBeVisible();
+  await expect(page.locator('.react-flow__edgelabel-renderer').getByText('Draft connector label')).toHaveCount(0);
+  await expectSynced(page);
 });
 
 test('a live version restore reaches an invited viewer without reloading', async ({ page, browser }) => {

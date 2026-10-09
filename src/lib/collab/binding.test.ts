@@ -422,6 +422,27 @@ describe('store -> doc', () => {
     expect(store().canUndo).toBe(false);
   });
 
+  it('starts a new nudge history entry after a version restore', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+    const doc = new Y.Doc();
+    bindWithHistory(doc);
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    store().nudgeSelected(1, 0);
+
+    expect(store().applyVersionRestore({
+      version: 3,
+      nodes: [{ id, type: 'shape', position: { x: 10, y: 0 }, data: { shape: 'rectangle' } }],
+      edges: [],
+    })).toBe(true);
+    select(id);
+    store().nudgeSelected(1, 0);
+
+    store().undo();
+    expect(store().nodes[0].position.x).toBe(10);
+  });
+
   it('writes nothing at all for a viewer', () => {
     const doc = new Y.Doc();
     bind(doc, { readOnly: true });

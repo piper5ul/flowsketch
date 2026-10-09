@@ -14,15 +14,17 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, ChevronRight, GitFork, History, Loader2, Pause, Play, RotateCcw, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { isCanvasPointerActive, subscribeCanvasPointerState } from '../lib/canvasPointerState';
 import { migrateDiagramData } from '../lib/diagramMigrations';
 import { MAX_VERSION_LABEL_CHARS, describeVersion, scrubIndex } from '../lib/versionHistory';
 import { buildVersionPreview } from '../lib/versionPreview';
 import {
+  flushPendingDiagramTitle,
   isDocumentBound,
   prepareCanvasForVersionRestore,
+  serializeDiagram,
   useDiagramStore,
 } from '../store/useDiagramStore';
-import { useCollabStore } from '../store/useCollabStore';
 import { toastError } from '../store/useToastStore';
 import type { DiagramVersion, DiagramVersionMeta } from '../../shared/types';
 
@@ -32,6 +34,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
 
   const [versions, setVersions] = useState<DiagramVersionMeta[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [canvasPointerActive, setCanvasPointerActive] = useState(isCanvasPointerActive);
   const [label, setLabel] = useState('');
   /** The version whose preview is open, and the body once it has arrived. */
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -41,6 +44,8 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
   /** Whether the scrubber is stepping through the versions on its own. */
   const [playing, setPlaying] = useState(false);
   const navigate = useNavigate();
+
+  useEffect(() => subscribeCanvasPointerState(setCanvasPointerActive), []);
 
   const refresh = useCallback(async () => {
     if (!diagramId) return;
@@ -179,49 +184,99 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
   const restore = useCallback(
     async (versionId: string) => {
       if (!diagramId) return;
+      const stopForCanvasPointer = () => {
+        if (!isCanvasPointerActive()) return false;
+        toastError("Finish what you're doing, then restore");
+        return true;
+      };
+      if (stopForCanvasPointer()) return;
       setBusy(true);
       try {
-        // End this window's active edit before asking the server to snapshot
-        // the live document. Once the gesture is committed, saveDiagram's
-        // bound path waits for the provider to send that write.
-        if (isDocumentBound()) {
+        const applyLiveVersion = async (version: DiagramVersion): Promise<boolean> => {
+          if (stopForCanvasPointer()) return false;
+          // Commit this window's active edit after fetching the version. The
+          // bound save path waits for the provider to send that write, and the
+          // title saver is flushed before its visible value is captured.
           prepareCanvasForVersionRestore();
+          // EditableLabel commits synchronously on blur, and a microtask lets
+          // any unmount cleanup finish before the board is serialized.
+          await Promise.resolve();
+          if (stopForCanvasPointer()) return false;
+          if (!(await flushPendingDiagramTitle())) {
+            toastError("Couldn't save the diagram title");
+            return false;
+          }
+          if (stopForCanvasPointer()) return false;
           if (await useDiagramStore.getState().saveDiagram() !== 'saved') {
-            toastError('Reconnect to restore a version');
-            return;
+            toastError(isDocumentBound() ? 'Could not restore that version.' : 'Reconnect to restore a version');
+            return false;
           }
-        }
+          if (stopForCanvasPointer()) return false;
 
-        const restored = await api.restoreVersion(diagramId, versionId);
-        if (restored.applyAsEdit) {
-          if (!isDocumentBound()) {
-            toastError('Reconnect to restore a version');
-            return;
-          }
-          // The panel may have been open during another local gesture while
-          // the request was in flight; cancel it before replacing the board.
-          prepareCanvasForVersionRestore();
-          if (!useDiagramStore.getState().applyVersionRestore(restored.data)) {
-            toastError('Reconnect to restore a version');
-            return;
+          // Keep this capture and apply adjacent and synchronous. A peer edit
+          // delivered between the GET and this block belongs in the safety
+          // copy; nothing can run between these statements and be deleted by
+          // the restore without also being recoverable from that copy.
+          const current = useDiagramStore.getState();
+          const before = {
+            title: current.title,
+            data: serializeDiagram(
+              current.nodes,
+              current.edges,
+              current.viewport,
+              current.defaults,
+              current.thumbnailNodeIds,
+              { voting: current.voting, timer: current.timer },
+            ),
+          };
+          if (!useDiagramStore.getState().applyVersionRestore(version.data)) {
+            toastError(isDocumentBound() ? 'Could not restore that version.' : 'Reconnect to restore a version');
+            return false;
           }
           // Titles live in the Diagram row, outside the shared document. Let
           // CanvasPage's title-only saver persist this change independently.
-          useDiagramStore.getState().setTitle(restored.title);
+          useDiagramStore.getState().setTitle(version.title);
+
+          // The restore is already applied and undoable. A failed safety-copy
+          // write only means history is missing this one entry.
+          try {
+            await api.saveRestoreSafetyCopy(diagramId, versionId, before);
+          } catch {
+            toastError("Couldn't save a copy of the previous version");
+          }
+          return true;
+        };
+
+        if (isDocumentBound()) {
+          const version = await api.getVersion(diagramId, versionId);
+          if (!(await applyLiveVersion(version))) return;
         } else {
-          // `viewerId` travels with the role and the token for the reason both
-          // of those do: a restore changes the board, never who is reading it.
-          const { starred, role, shareToken, viewerId } = useDiagramStore.getState();
-          useDiagramStore
-            .getState()
-            .loadDiagram(restored.id, restored.title, starred, restored.data, restored.updatedAt, {
-              role,
-              shareToken,
-              viewerId,
-            });
-          // The row-based restore wrote the Diagram row, so advance the
-          // conflict guard before its next autosave.
-          if (restored.updatedAt) useDiagramStore.getState().noteSaved(restored.updatedAt);
+          const restored = await api.restoreVersion(diagramId, versionId);
+          if (restored.applyAsEdit) {
+            // A document may have connected while the row-based request was
+            // in flight. That request does not snapshot a document, so fetch
+            // its version and use the same bound apply path now.
+            if (!isDocumentBound()) {
+              toastError('Reconnect to restore a version');
+              return;
+            }
+            const version = await api.getVersion(diagramId, versionId);
+            if (!(await applyLiveVersion(version))) return;
+          } else {
+            // `viewerId` travels with the role and the token for the reason both
+            // of those do: a restore changes the board, never who is reading it.
+            const { starred, role, shareToken, viewerId } = useDiagramStore.getState();
+            useDiagramStore
+              .getState()
+              .loadDiagram(restored.id, restored.title, starred, restored.data, restored.updatedAt, {
+                role,
+                shareToken,
+                viewerId,
+              });
+            // The row-based restore wrote the Diagram row, so advance the
+            // conflict guard before its next autosave.
+            if (restored.updatedAt) useDiagramStore.getState().noteSaved(restored.updatedAt);
+          }
         }
         setConfirming(null);
         setPreviewId(null);
@@ -229,11 +284,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
         // The restore left a "Before restore" entry that is not in this list yet.
         await refresh();
       } catch {
-        if (!isDocumentBound() || useCollabStore.getState().status !== 'connected') {
-          toastError('Reconnect to restore a version');
-        } else {
-          toastError('Could not restore that version.');
-        }
+        toastError('Could not restore that version.');
       } finally {
         setBusy(false);
       }
@@ -355,6 +406,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
                 version={version}
                 canRestore={!readOnly}
                 busy={busy}
+                canvasPointerActive={canvasPointerActive}
                 previewOpen={previewId === version.id}
                 preview={previewId === version.id ? preview : null}
                 confirming={confirming === version.id}
@@ -376,6 +428,7 @@ function VersionRow({
   version,
   canRestore,
   busy,
+  canvasPointerActive,
   previewOpen,
   preview,
   confirming,
@@ -388,6 +441,7 @@ function VersionRow({
   version: DiagramVersionMeta;
   canRestore: boolean;
   busy: boolean;
+  canvasPointerActive: boolean;
   previewOpen: boolean;
   preview: DiagramVersion | null;
   confirming: boolean;
@@ -435,16 +489,18 @@ function VersionRow({
       {confirming && (
         <div className="mt-2 rounded-lg bg-warn-wash px-2.5 py-2 ring-1 ring-warn-ink/25">
           {/* Said out loud because it is the reassurance that makes the button
-              pressable: the restore snapshots what it replaces before it
-              writes, so this is never a one-way door. */}
+              pressable: the current state is captured alongside the restore
+              and saved to history too. */}
           <p className="mb-2 text-[12px] text-warn-ink">
-            Restore this version? Your current state is saved first.
+            {canvasPointerActive
+              ? "Finish what you're doing, then restore"
+              : 'Restore this version? Your current state will be saved to history too.'}
           </p>
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={onRestore}
-              disabled={busy}
+              disabled={busy || canvasPointerActive}
               className="rounded-md bg-amber-600 px-2 py-0.5 text-[12px] font-semibold text-white transition hover:bg-amber-700 disabled:opacity-60"
             >
               Restore this version

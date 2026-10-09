@@ -8,7 +8,7 @@ import * as Y from 'yjs';
 import type { AuthUser } from './types.js';
 import { serveForFile } from './testServer.js';
 import { setLiveDiagramReader } from './collab/live.js';
-import { docToDiagramData, seedDocFromDiagramData } from './collab/render.js';
+import { seedDocFromDiagramData } from './collab/render.js';
 import { migrateDiagramData } from '../src/lib/diagramMigrations.js';
 
 // Retention can now delete image files (a snapshot may have been the last thing
@@ -599,7 +599,7 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(res.body).not.toHaveProperty('shareToken');
   });
 
-  it('snapshots live document data and returns a migrated edit without writing either document or row', async () => {
+  it('does not snapshot a live document before the client applies a restore', async () => {
     const live = board(['live']);
     setLiveDiagramReader((diagramId) => (diagramId === 'd1' ? live : null));
     onTestFinished(() => setLiveDiagramReader(null));
@@ -607,37 +607,70 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
 
     const res = await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
 
-    expect(prismaMock.diagramVersion.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          diagramId: 'd1',
-          data: live,
-          title: 'Now',
-          label: RESTORE_SNAPSHOT_LABEL,
-        }),
-      }),
-    );
+    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
     expect(prismaMock.diagramDoc.upsert).not.toHaveBeenCalled();
     expect(res.body).toEqual({ title: 'Then', data: migrateDiagramData(BEFORE), applyAsEdit: true });
   });
 
-  it('renders the stored document for the safety snapshot when it is not loaded in this process', async () => {
+  it('does not snapshot a stored document before a bound client applies the restore', async () => {
     const storedState = documentState(board(['stored']));
     prismaMock.diagramDoc.findUnique.mockResolvedValue({ state: storedState });
-    const storedData = (() => {
-      const document = new Y.Doc();
-      Y.applyUpdate(document, storedState);
-      const data = docToDiagramData(document);
-      document.destroy();
-      return data;
-    })();
 
     await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
 
-    expect(prismaMock.diagramVersion.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ data: storedData, label: RESTORE_SNAPSHOT_LABEL }) }),
-    );
+    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+    expect(prismaMock.diagramDoc.upsert).not.toHaveBeenCalled();
+  });
+
+  it('saves the client safety copy through the normal migration and version write path', async () => {
+    const hostile = {
+      version: 3,
+      nodes: [
+        {
+          id: 'unsafe-color', type: 'shape', position: { x: 0, y: 0 },
+          data: { shape: 'rectangle', fill: 'url(https://attacker.invalid/pixel)', stroke: 'expression(alert(1))' },
+        },
+        { id: 'bad-table', type: 'table', position: { x: 10, y: 0 }, data: { table: 'invalid' } },
+      ],
+      edges: [],
+    };
+    prismaMock.diagramDoc.findUnique.mockResolvedValue({ state: documentState(board(['stored'])) });
+
+    await request(server)
+      .post('/api/diagrams/d1/versions/v1/restore')
+      .send({ before: { title: 'Visible title', data: hostile } })
+      .expect(201);
+
+    const saved = prismaMock.diagramVersion.create.mock.calls[0]![0].data;
+    expect(saved).toMatchObject({
+      diagramId: 'd1',
+      title: 'Visible title',
+      createdById: 'u1',
+      label: RESTORE_SNAPSHOT_LABEL,
+    });
+    expect(saved.data).toEqual(migrateDiagramData(hostile));
+    expect(saved.data.nodes[0]!.data.fill).not.toContain('url(');
+    expect(saved.data.nodes[0]!.data.stroke).not.toContain('expression');
+    expect(saved.data.nodes[1]!.data.table).toMatchObject({
+      header: false,
+      columns: [{ width: 140 }],
+      rows: [{ cells: [''] }],
+    });
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+    expect(prismaMock.diagramDoc.upsert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a viewer who posts a client safety copy', async () => {
+    prismaMock.diagram.findFirst.mockResolvedValue(memberRow('viewer'));
+
+    await request(server)
+      .post('/api/diagrams/d1/versions/v1/restore')
+      .send({ before: { title: 'Before', data: BEFORE } })
+      .expect(403);
+
+    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
     expect(prismaMock.diagramDoc.upsert).not.toHaveBeenCalled();
   });

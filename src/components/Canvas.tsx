@@ -22,6 +22,7 @@ import {
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
 import { deepSelectTarget } from '../lib/deepSelect';
+import { trackCanvasPointers } from '../lib/canvasPointerState';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
 import {
   anchorFor,
@@ -259,6 +260,10 @@ export function Canvas({
     }
     storeOnNodesChange(changes);
   }, [storeOnNodesChange]);
+
+  useEffect(() => {
+    return trackCanvasPointers();
+  }, []);
 
   useEffect(() => {
     const onTouchStart = (event: TouchEvent) => {

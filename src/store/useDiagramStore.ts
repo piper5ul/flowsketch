@@ -480,6 +480,18 @@ export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'ski
  */
 let flushDocument: (() => Promise<boolean>) | null = null;
 
+let pendingTitleFlush: (() => Promise<boolean>) | null = null;
+
+/** Register the canvas's debounced title saver so history can flush it first. */
+export function setPendingTitleFlush(flush: (() => Promise<boolean>) | null): void {
+  pendingTitleFlush = flush;
+}
+
+/** Flush a pending title edit before capturing a pre-restore snapshot. */
+export function flushPendingDiagramTitle(): Promise<boolean> {
+  return pendingTitleFlush?.() ?? Promise.resolve(true);
+}
+
 let prepareVersionRestore: (() => void) | null = null;
 
 /** Register the canvas work needed before restoring over an open document. */
@@ -487,8 +499,18 @@ export function setVersionRestorePreparation(prepare: (() => void) | null): void
   prepareVersionRestore = prepare;
 }
 
-/** Commit this window's active input before the server snapshots the document. */
+/** Commit this window's active canvas editor before capturing a version restore. */
 export function prepareCanvasForVersionRestore(): void {
+  if (typeof document !== 'undefined') {
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      active.closest('[data-canvas-root]') &&
+      (active.isContentEditable || active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement)
+    ) {
+      active.blur();
+    }
+  }
   prepareVersionRestore?.();
   // Drop any transient frame still held by the binding before the restore
   // action opens its own undo boundary.
@@ -2075,6 +2097,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
     // A version restore is one of the restorer's edits. The binding turns this
     // single following set into one Yjs transaction and deletes absent ids.
+    lastNudgeAt = 0;
     pushHistory(get());
     set({
       nodes: opened.nodes,

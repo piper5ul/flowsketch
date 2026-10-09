@@ -29,12 +29,16 @@ import { deleteOrphanImages } from './images.js';
 import { imageIdsInDiagram } from './imageRefs.js';
 import { syncDiagramImages } from './diagramImages.js';
 import { liveDiagramData } from './collab/live.js';
-import { docToDiagramData } from './collab/render.js';
 import { authedUser } from './types.js';
-import { createVersionBody, validateBody, type CreateVersionBody } from './validation.js';
+import {
+  createVersionBody,
+  restoreVersionBody,
+  validateBody,
+  type CreateVersionBody,
+  type RestoreVersionBody,
+} from './validation.js';
 import type { DiagramVersion, DiagramVersionMeta } from '../shared/types.js';
 import { migrateDiagramData } from '../src/lib/diagramMigrations.js';
-import * as Y from 'yjs';
 
 /** Default gap between two automatic snapshots. Env: `VERSION_INTERVAL_MS`. */
 export const DEFAULT_VERSION_INTERVAL_MS = 10 * 60 * 1000;
@@ -293,100 +297,109 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
 /**
  * Put a version back. Editor+, because it is a write to the diagram.
  *
- * The state being replaced is snapshotted first, labelled `Before restore`.
- * That safety copy is not best-effort: if it fails, the request stops before
- * returning or writing the restored version. For a collaborative diagram, the
- * client applies the returned version as an ordinary edit, which is what makes
- * that restore undoable. A diagram without a document keeps the row-based path.
+ * Row-based restores save the current row as `Before restore` before writing
+ * the replacement. For a collaborative diagram, the bound client captures the
+ * copy before applying the returned version as an ordinary edit, then posts it
+ * here; a failed copy leaves the already-applied restore undoable but without
+ * that history entry. A diagram without a document keeps the row-based path.
  *
- * A collaborative restore's safety copy comes from the document, and the
- * version is returned for the client to write through its binding.
+ * A bound client captures its own safety copy and applies the version in one
+ * synchronous turn, then posts that copy here. This closes the gap where a
+ * peer edit could arrive after a server snapshot but before the client apply.
+ * The empty-body path keeps row-based restores unchanged; an empty request for
+ * a collaborative diagram only returns the version and never snapshots it.
  */
-versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res) => {
-  const access = await requireDiagramRole(req, res, 'editor', {
-    id: true,
-    userId: true,
-    data: true,
-    title: true,
-    updatedAt: true,
-  });
-  if (!access) return;
+versionsRouter.post<{ id: string; versionId: string }, unknown, RestoreVersionBody>(
+  '/diagrams/:id/versions/:versionId/restore',
+  validateBody(restoreVersionBody),
+  async (req, res) => {
+    const access = await requireDiagramRole(req, res, 'editor', {
+      id: true,
+      userId: true,
+      data: true,
+      title: true,
+      updatedAt: true,
+    });
+    if (!access) return;
 
-  const version = await prisma.diagramVersion.findFirst({
-    where: { id: req.params.versionId, diagramId: req.params.id },
-    select: { data: true, title: true },
-  });
-  if (!version) {
-    res.status(404).json({ error: 'Not found' });
-    return;
-  }
-
-  const liveData = liveDiagramData(req.params.id);
-  const storedDoc = await prisma.diagramDoc.findUnique({
-    where: { diagramId: req.params.id },
-    select: { state: true },
-  });
-
-  if (liveData || storedDoc) {
-    let currentData = liveData;
-    if (!currentData && storedDoc) {
-      const document = new Y.Doc();
-      Y.applyUpdate(document, new Uint8Array(storedDoc.state));
-      currentData = docToDiagramData(document);
-      document.destroy();
+    const version = await prisma.diagramVersion.findFirst({
+      where: { id: req.params.versionId, diagramId: req.params.id },
+      select: { data: true, title: true },
+    });
+    if (!version) {
+      res.status(404).json({ error: 'Not found' });
+      return;
     }
 
+    // For a live document the caller captured this state immediately before
+    // applying the version through its binding. Narrow it through the same
+    // migration used at every other diagram-data boundary, then use the normal
+    // version writer for retention and orphan-image handling. This request
+    // deliberately does not write `Diagram.data` or `DiagramDoc`.
+    const before = req.body.before;
+    if (before) {
+      await writeVersion({
+        diagramId: req.params.id,
+        data: migrateDiagramData(before.data),
+        title: before.title,
+        createdById: authedUser(req).id,
+        ownerId: access.diagram.userId,
+        label: RESTORE_SNAPSHOT_LABEL,
+      });
+      res.status(201).json({ saved: true });
+      return;
+    }
+
+    const liveData = liveDiagramData(req.params.id);
+    const storedDoc = await prisma.diagramDoc.findUnique({
+      where: { diagramId: req.params.id },
+      select: { state: true },
+    });
+
+    if (liveData || storedDoc) {
+      res.json({
+        title: version.title,
+        data: migrateDiagramData(version.data ?? {}),
+        applyAsEdit: true,
+      });
+      return;
+    }
+
+    // This branch has no live or stored document, so the row is the current
+    // board. Preserve it before writing the replacement so the restore can be
+    // walked back.
     await writeVersion({
       diagramId: req.params.id,
-      data: currentData ?? access.diagram.data,
+      data: access.diagram.data,
       title: access.diagram.title,
       createdById: authedUser(req).id,
       ownerId: access.diagram.userId,
       label: RESTORE_SNAPSHOT_LABEL,
     });
 
-    res.json({
-      title: version.title,
-      data: migrateDiagramData(version.data ?? {}),
-      applyAsEdit: true,
+    const updated = await prisma.diagram.update({
+      where: { id: req.params.id },
+      data: { data: version.data ?? {}, title: version.title },
+      // Selected rather than returned whole: the row carries the owner's
+      // `shareToken`, which an editor restoring a version has no business seeing.
+      select: { id: true, title: true, data: true, updatedAt: true },
     });
-    return;
-  }
 
-  // This branch has no live or stored document, so the row is the current
-  // board. Preserve it before writing the replacement so the restore can be
-  // walked back.
-  await writeVersion({
-    diagramId: req.params.id,
-    data: access.diagram.data,
-    title: access.diagram.title,
-    createdById: authedUser(req).id,
-    ownerId: access.diagram.userId,
-    label: RESTORE_SNAPSHOT_LABEL,
-  });
+    // A restore is a write to `data` like any other, so the image index follows
+    // it — the restored board may draw images the one it replaced did not.
+    // Best-effort: the restore itself has already happened, and a stale index is
+    // a reason for the collector to keep an image, never to delete one.
+    try {
+      await syncDiagramImages(req.params.id, updated.data);
+    } catch (err) {
+      console.error(`Image index sync after restore failed for diagram ${req.params.id}:`, err);
+    }
 
-  const updated = await prisma.diagram.update({
-    where: { id: req.params.id },
-    data: { data: version.data ?? {}, title: version.title },
-    // Selected rather than returned whole: the row carries the owner's
-    // `shareToken`, which an editor restoring a version has no business seeing.
-    select: { id: true, title: true, data: true, updatedAt: true },
-  });
-
-  // A restore is a write to `data` like any other, so the image index follows
-  // it — the restored board may draw images the one it replaced did not.
-  // Best-effort: the restore itself has already happened, and a stale index is
-  // a reason for the collector to keep an image, never to delete one.
-  try {
-    await syncDiagramImages(req.params.id, updated.data);
-  } catch (err) {
-    console.error(`Image index sync after restore failed for diagram ${req.params.id}:`, err);
-  }
-
-  // Already narrow enough that this strips nothing — it is here so that every
-  // route answering with a diagram row does so through the one serializer.
-  res.json(publicDiagram(updated, access.role));
-});
+    // Already narrow enough that this strips nothing — it is here so that every
+    // route answering with a diagram row does so through the one serializer.
+    res.json(publicDiagram(updated, access.role));
+  },
+);
 
 /** What a fork is called: the version's own title, marked as a branch off it. */
 export function forkTitle(title: string): string {

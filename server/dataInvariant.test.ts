@@ -1,9 +1,12 @@
 /**
  * The `docs/realtime.md` invariant: **when a `DiagramDoc` exists, the snapshot
- * is rendered from it rather than written behind it.** A live version restore
- * snapshots the live document and returns the version to the bound client; the
- * client writes it through the binding. `versions.ts` is still an allowed row
- * writer for the unchanged restore path when no document exists.
+ * is rendered from it rather than written behind it.** Writing JSON behind a
+ * document is both wrong and ineffective: the next `store` render replaces
+ * that write with the Y.Doc's state. A live restore therefore captures its
+ * safety copy in the bound client immediately before applying the selected
+ * version through the binding; the server stores that copy in version history
+ * without changing `Diagram.data` or `DiagramDoc`. `versions.ts` remains an
+ * allowed row writer for the unchanged restore path when no document exists.
  *
  * The source scan catches a new module writing the `Diagram` table without this
  * list being reconsidered; the route test below checks that the guarded `PUT`

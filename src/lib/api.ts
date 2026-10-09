@@ -251,12 +251,12 @@ export const api = {
     request<{ id: string; title: string }>(`/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/fork`, { method: 'POST' }),
 
   /**
-   * Puts a version back, after snapshotting what it replaces. Editor+.
+   * Puts a version back on the row-based path. Editor+.
    *
    * A diagram without a document is restored through the row and returns its
-   * new `updatedAt`. With a document, the response instead carries
-   * `applyAsEdit: true` so the bound client applies the version through its
-   * ordinary document binding.
+   * new `updatedAt`. With a document, an empty-body request returns the version
+   * for a bound client to apply; the client then posts its synchronous
+   * pre-restore capture with `saveRestoreSafetyCopy`.
    */
   restoreVersion: (id: string, versionId: string) =>
     request<
@@ -265,6 +265,13 @@ export const api = {
     >(
       `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
       { method: 'POST' },
+    ),
+
+  /** Persists the bound client's synchronous pre-restore capture. Editor+. */
+  saveRestoreSafetyCopy: (id: string, versionId: string, before: { title: string; data: unknown }) =>
+    request<{ saved: true }>(
+      `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
+      { method: 'POST', body: JSON.stringify({ before }) },
     ),
 
   /**

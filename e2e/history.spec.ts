@@ -43,3 +43,43 @@ test('the history panel scrubs through versions and forks one into a new diagram
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
   await expect(page.getByRole('textbox', { name: 'Diagram title' })).toHaveValue(/\(fork\)/);
 });
+
+test('a row-based restore failure shows its error instead of a reconnect prompt', async ({ page }) => {
+  await signUp(page);
+  const id = await page.evaluate(async () => {
+    const post = async (path: string, body: unknown) => {
+      const response = await fetch(path, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return response.json() as Promise<{ id: string }>;
+    };
+    const diagram = await post('/api/diagrams', {
+      title: 'Restore error',
+      data: { version: 3, nodes: [], edges: [] },
+    });
+    await post(`/api/diagrams/${diagram.id}/versions`, { label: 'Checkpoint' });
+    return diagram.id;
+  });
+
+  // Keep this diagram on its row-based path: the websocket never reaches the
+  // server, so opening the canvas cannot create a DiagramDoc row.
+  await page.routeWebSocket(/\/collab/, (socket) => { void socket.close(); });
+  let restoreRequestIntercepted = false;
+  await page.route(/\/api\/diagrams\/[^/]+\/versions\/[^/]+\/restore$/, async (route) => {
+    restoreRequestIntercepted = true;
+    await route.fulfill({ status: 500, json: { error: 'Database unavailable' } });
+  });
+  await page.goto(`/d/${id}`);
+  await page.getByRole('button', { name: 'History' }).click();
+  const panel = page.getByRole('dialog', { name: 'Version history' });
+  const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+  await checkpoint.getByRole('button', { name: 'Restore' }).click();
+  await panel.getByRole('button', { name: 'Restore this version' }).click();
+
+  await expect.poll(() => restoreRequestIntercepted).toBe(true);
+  await expect(page.getByText('Could not restore that version.')).toBeVisible();
+  await expect(page.getByText('Reconnect to restore a version')).toHaveCount(0);
+});

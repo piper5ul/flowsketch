@@ -172,6 +172,21 @@ export const createVersionBody = z
 
 export type CreateVersionBody = z.infer<typeof createVersionBody>;
 
+/** Client-captured state immediately before a live version restore is applied. */
+export const restoreVersionBody = z
+  .strictObject({
+    before: z
+      .strictObject({
+        title,
+        data: z.json(),
+      })
+      .optional(),
+  })
+  .nullish()
+  .transform((body) => body ?? {});
+
+export type RestoreVersionBody = z.infer<typeof restoreVersionBody>;
+
 // ---------------------------------------------------------------------------
 // Comments
 // ---------------------------------------------------------------------------

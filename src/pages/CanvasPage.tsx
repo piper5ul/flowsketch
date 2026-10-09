@@ -6,7 +6,11 @@ import { ReauthDialog } from '../components/ReauthDialog';
 import { Toasts } from '../components/Toasts';
 import { TooltipProvider } from '../components/Tooltip';
 import { useCollabStore } from '../store/useCollabStore';
-import { createDiagramPictureChangeTracker, useDiagramStore } from '../store/useDiagramStore';
+import {
+  createDiagramPictureChangeTracker,
+  setPendingTitleFlush,
+  useDiagramStore,
+} from '../store/useDiagramStore';
 import { api, setUnauthorizedHandler } from '../lib/api';
 import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
@@ -465,6 +469,7 @@ export function CanvasPage() {
       return pending ? flushPendingTitle() : true;
     };
     flushTitleRef.current = flushPendingTitle;
+    setPendingTitleFlush(flushPendingTitle);
 
     const unsubscribe = useDiagramStore.subscribe((state) => {
       if (state.title === latestTitle) return;
@@ -482,6 +487,7 @@ export function CanvasPage() {
       unsubscribe();
       if (timer) clearTimeout(timer);
       if (flushTitleRef.current === flushPendingTitle) flushTitleRef.current = async () => true;
+      setPendingTitleFlush(null);
       // Leave a pending database-column update on the wire before the page goes.
       if (pending || inFlight) void flushPendingTitle();
     };
