@@ -232,3 +232,78 @@ test('pasting Excel HTML keeps cell formatting', async ({ page }) => {
     }
   ).getComputedStyle(label).color)).toBe('rgb(24, 26, 36)');
 });
+
+test('desktop Excel puts a picture of the range on the clipboard too, and the table wins', async ({ page }) => {
+  await signUp(page);
+  await openEmptyBoard(page, 'Excel table over picture');
+
+  // What desktop Excel copies: tab-separated text, its HTML, and a PNG of the
+  // range. The PNG used to win and the paste arrived as a picture of a table.
+  const plain = 'Metric\tAmount\nTotal\t$0.12';
+  const html = `
+    <html xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head><meta name="ProgId" content="Excel.Sheet"><style>
+        .xl65 { background: #203764; color: #FFFFFF; font-weight: 700; }
+      </style></head>
+      <body><table>
+        <tr><td class="xl65">Metric</td><td class="xl65">Amount</td></tr>
+        <tr><td>Total</td><td>$0.12</td></tr>
+      </table></body>
+    </html>`;
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  await page.evaluate(({ plainText, htmlText, pngBase64 }) => {
+    const browser = globalThis as unknown as {
+      DataTransfer: new () => {
+        setData(type: string, value: string): void;
+        items: { add(file: object): void };
+      };
+      File: new (bits: object[], name: string, init: { type: string }) => object;
+      Uint8Array: { from(data: string, map: (c: string) => number): object };
+      atob(data: string): string;
+      ClipboardEvent: new (
+        type: string,
+        init: { bubbles: boolean; cancelable: boolean; clipboardData: object },
+      ) => object;
+      dispatchEvent(event: object): boolean;
+    };
+    const clipboardData = new browser.DataTransfer();
+    clipboardData.setData('text/plain', plainText);
+    clipboardData.setData('text/html', htmlText);
+    const bytes = browser.Uint8Array.from(browser.atob(pngBase64), (c) => c.charCodeAt(0));
+    clipboardData.items.add(new browser.File([bytes], 'image.png', { type: 'image/png' }));
+    browser.dispatchEvent(new browser.ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+  }, { plainText: plain, htmlText: html, pngBase64: png });
+
+  await expect(tableNode(page)).toHaveCount(1);
+  await expect(page.locator('.react-flow__node img')).toHaveCount(0);
+  const header = tableNode(page).locator('tr').first().locator('td').first();
+  await expect.poll(() => header.evaluate((cell) => (
+    globalThis as unknown as { getComputedStyle(element: object): { backgroundColor: string } }
+  ).getComputedStyle(cell).backgroundColor)).toBe('rgb(32, 55, 100)');
+});
+
+test('a screenshot that is not a spreadsheet still pastes as an image', async ({ page }) => {
+  await signUp(page);
+  await openEmptyBoard(page, 'Plain image paste');
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await page.evaluate((pngBase64) => {
+    const browser = globalThis as unknown as {
+      DataTransfer: new () => { items: { add(file: object): void } };
+      File: new (bits: object[], name: string, init: { type: string }) => object;
+      Uint8Array: { from(data: string, map: (c: string) => number): object };
+      atob(data: string): string;
+      ClipboardEvent: new (
+        type: string,
+        init: { bubbles: boolean; cancelable: boolean; clipboardData: object },
+      ) => object;
+      dispatchEvent(event: object): boolean;
+    };
+    const clipboardData = new browser.DataTransfer();
+    const bytes = browser.Uint8Array.from(browser.atob(pngBase64), (c) => c.charCodeAt(0));
+    clipboardData.items.add(new browser.File([bytes], 'screenshot.png', { type: 'image/png' }));
+    browser.dispatchEvent(new browser.ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData }));
+  }, png);
+  await expect(page.locator('.react-flow__node img')).toHaveCount(1);
+  await expect(tableNode(page)).toHaveCount(0);
+});

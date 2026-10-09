@@ -1031,6 +1031,20 @@ export function Canvas({
       const data = e.clipboardData;
       if (!data) return;
 
+      // A spreadsheet goes on the clipboard twice: as its table and as a
+      // picture of the range (desktop Excel, Google Sheets and Numbers all do
+      // this). The table is what was copied, so it wins over the picture.
+      // `parseTableHtml` only answers for spreadsheet HTML (tab-separated text
+      // beside it, or an Excel / Sheets marker), so an ordinary screenshot, or
+      // an image copied from a web page, still pastes as an image.
+      const text = data.getData('text/plain');
+      const spreadsheet = parseTableHtml(data.getData('text/html'), text);
+      if (spreadsheet) {
+        e.preventDefault();
+        useDiagramStore.getState().addTable(dropPoint(), spreadsheet);
+        return;
+      }
+
       const files: File[] = [];
       for (const item of data.items) {
         if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
@@ -1043,7 +1057,6 @@ export function Canvas({
         return;
       }
 
-      const text = data.getData('text/plain');
       if (text) {
         if (parseMermaidSequence(text)) {
           e.preventDefault();
@@ -1056,7 +1069,7 @@ export function Canvas({
           return;
         }
       }
-      const table = parseTableHtml(data.getData('text/html'), text) ?? (text ? parseTableText(text) : null);
+      const table = text ? parseTableText(text) : null;
       if (!table) return;
       e.preventDefault();
       useDiagramStore.getState().addTable(dropPoint(), table);
