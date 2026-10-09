@@ -1098,7 +1098,7 @@ test('two tabs on one diagram merge instead of racing each other', async ({ page
   test.setTimeout(90_000);
   await signUp(page);
   const pane = await newDiagram(page);
-  await drawLabelledShape(page, pane, 'First tab');
+  const first = await drawLabelledShape(page, pane, 'First tab');
 
   // The same diagram, in the same session, in a second tab.
   const second = await context.newPage();
@@ -1122,15 +1122,20 @@ test('two tabs on one diagram merge instead of racing each other', async ({ page
 
   // And its own next edit lands on top of the other tab's work instead of
   // being told the diagram changed underneath it.
-  const first = page.locator('.react-flow__node').first();
   await first.dblclick();
   await page.keyboard.type(' edited');
   await page.keyboard.press('Escape');
+  await expectSynced(page);
   await expect(first).toContainText('First tab edited');
   await expect(page.getByRole('alert').filter({ hasText: 'changed in another tab' })).toHaveCount(0);
 
+  // Read the receiving tab while it is active; Chrome may suspend rendering
+  // in a background tab even though its collaboration document is current.
+  await second.bringToFront();
   await expect(second.locator('.react-flow__node').first()).toContainText('First tab edited');
-  await expectSameBoard(page, second);
+  const secondPositions = await nodePositions(second);
+  await page.bringToFront();
+  expect(await nodePositions(page)).toEqual(secondPositions);
   await second.close();
 });
 
@@ -1564,7 +1569,7 @@ test('two people on one diagram see each other, their pointers and their selecti
   await expect(page.getByLabel('Grace Hopper', { exact: true })).toHaveCount(0);
 });
 
-test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
+test('a live diagram refuses to restore a labelled snapshot without changing its current state', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);
   const node = await drawLabelledShape(page, pane, 'Version one');
@@ -1602,21 +1607,17 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await page.getByRole('button', { name: 'History' }).click();
   await checkpoint.getByRole('button', { name: 'Restore' }).click();
   await expect(panel.getByText('Your current state is saved first')).toBeVisible();
+  const restoreResponse = page.waitForResponse((response) =>
+    response.url().endsWith('/restore') && response.status() === 409,
+  );
   await panel.getByRole('button', { name: 'Restore this version' }).click();
+  const refusedRestore = await restoreResponse;
 
-  // The board goes back to the snapshot...
-  await expect(page.locator('.react-flow__node').first()).toContainText('Version one');
-  // ...and what it replaced is itself now a version, so the restore is undoable.
-  await expect(panel.getByText('Before restore')).toBeVisible();
-
-  // The restore wrote the row, and the client's conflict guard followed it —
-  // an edit straight afterwards saves rather than colliding with that write.
-  await page.locator('.react-flow__node').first().dblclick();
-  await page.keyboard.press('ControlOrMeta+a');
-  await page.keyboard.type('Version three');
-  await page.keyboard.press('Escape');
-  await expectSynced(page);
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  // A live Yjs document owns the board state, so the row-based restore is
+  // refused and must leave both the current label and history unchanged.
+  await expect(page.locator('.react-flow__node').first()).toContainText('Version two');
+  expect(refusedRestore.status()).toBe(409);
+  await expect(panel.getByText('Before restore')).toHaveCount(0);
 });
 
 /** The light canvas token. Nothing in dark mode may still be wearing it. */
