@@ -42,12 +42,17 @@ export function FloatingToolbar({
   const [linkOpen, setLinkOpen] = useState(false);
   const [linkValue, setLinkValue] = useState('');
   const [toolbarHalfWidth, setToolbarHalfWidth] = useState(200);
+  const [toolbarHeight, setToolbarHeight] = useState(40);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
+  const [windowHeight, setWindowHeight] = useState(() => window.innerHeight);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const onResize = () => setWindowWidth(window.innerWidth);
+    const onResize = () => {
+      setWindowWidth(window.innerWidth);
+      setWindowHeight(window.innerHeight);
+    };
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
@@ -59,6 +64,25 @@ export function FloatingToolbar({
     [selectedNodes, selectedEdges],
   );
   useEffect(() => setTextMode(false), [selectedIdKey]);
+
+  useEffect(() => {
+    if (!textMode || editingNodeId || editingEdgeId) return;
+    const finishTextModeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      const target = event.target;
+      if (target instanceof Element && target.closest(
+        '[data-radix-popper-content-wrapper], [data-radix-popover-content], [data-radix-menu-content], [role="menu"], [role="menuitem"], [role="radiogroup"], [role="listbox"]',
+      )) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setTextMode(false);
+    };
+    // Text mode removes its Text trigger, which leaves focus on body. Capture
+    // Escape there so it exits text mode before the canvas deselect command.
+    // Open pickers keep their own Escape behavior and selection.
+    window.addEventListener('keydown', finishTextModeOnEscape, true);
+    return () => window.removeEventListener('keydown', finishTextModeOnEscape, true);
+  }, [textMode, editingNodeId, editingEdgeId]);
 
   const isEdgeMode = selectedNodes.length === 0 && selectedEdges.length > 0;
   useEffect(() => {
@@ -142,21 +166,31 @@ export function FloatingToolbar({
     const tx = targetPosition.x + (target.measured?.width ?? 100) / 2;
     const ty = targetPosition.y + (target.measured?.height ?? 60) / 2;
     const naturalTop = Math.min(sy, ty);
+    const naturalBottom = Math.max(sy, ty);
     let pathTop: number | null = null;
+    let pathBottom: number | null = null;
     const path = document.querySelector(`[data-testid="rf__edge-${edge.id}"]`);
-    if (path) pathTop = screenToFlowPosition({ x: path.getBoundingClientRect().left, y: path.getBoundingClientRect().top }).y;
-    return { x: (sx + tx) / 2, y: pathTop === null ? naturalTop : Math.min(naturalTop, pathTop) };
+    if (path) {
+      const pathBounds = path.getBoundingClientRect();
+      pathTop = screenToFlowPosition({ x: pathBounds.left, y: pathBounds.top }).y;
+      pathBottom = screenToFlowPosition({ x: pathBounds.left, y: pathBounds.bottom }).y;
+    }
+    return {
+      x: (sx + tx) / 2,
+      y: pathTop === null ? naturalTop : Math.min(naturalTop, pathTop),
+      bottom: pathBottom === null ? naturalBottom : Math.max(naturalBottom, pathBottom),
+    };
   };
 
   const anchor = useMemo(() => {
     if (editingNode && !isTableNode(editingNode)) {
       const bounds = getNodesBounds([editingNode]);
-      return { x: bounds.x + bounds.width / 2, y: bounds.y };
+      return { x: bounds.x + bounds.width / 2, y: bounds.y, bottom: bounds.y + bounds.height };
     }
     if (editingEdge) return edgeAnchor(editingEdge);
     if (selectedNodes.length > 0) {
       const bounds = getNodesBounds(selectedNodes);
-      return { x: bounds.x + bounds.width / 2, y: bounds.y };
+      return { x: bounds.x + bounds.width / 2, y: bounds.y, bottom: bounds.y + bounds.height };
     }
     if (selectedEdges.length > 0) return edgeAnchor(selectedEdges[0]);
     return null;
@@ -169,7 +203,11 @@ export function FloatingToolbar({
   useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     if (!toolbar) return;
-    const measure = () => setToolbarHalfWidth(toolbar.getBoundingClientRect().width / 2);
+    const measure = () => {
+      const bounds = toolbar.getBoundingClientRect();
+      setToolbarHalfWidth(bounds.width / 2);
+      setToolbarHeight(bounds.height);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(toolbar);
@@ -181,7 +219,10 @@ export function FloatingToolbar({
   const rawScreenY = anchor.y * viewport.zoom + viewport.y;
   const safeHalfWidth = Math.min(toolbarHalfWidth, Math.max(0, (windowWidth - 16) / 2));
   const screenX = Math.max(safeHalfWidth + 8, Math.min(rawScreenX, windowWidth - safeHalfWidth - 8));
-  const screenY = Math.max(60, rawScreenY);
+  const selectionBottom = anchor.bottom * viewport.zoom + viewport.y;
+  const aboveTop = rawScreenY - toolbarHeight - 39;
+  const requestedTop = aboveTop >= 0 ? aboveTop : selectionBottom + 39;
+  const screenY = Math.max(0, Math.min(requestedTop, Math.max(0, windowHeight - toolbarHeight)));
 
   const editNodeForText = editingNode && !isTableNode(editingNode) ? editingNode : null;
   const editEdgeForText = editingEdge;
@@ -207,8 +248,16 @@ export function FloatingToolbar({
     else updateSelectedNodesData(patch);
   };
   const finishText = () => {
-    if (isEditingText) (document.activeElement as HTMLElement | null)?.blur();
-    else setTextMode(false);
+    if (isEditingText) {
+      const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
+      if (editor) {
+        if (document.activeElement !== editor) editor.focus();
+        editor.blur();
+      } else {
+        setEditingNodeId(null);
+        setEditingEdgeId(null);
+      }
+    } else setTextMode(false);
   };
   const openLink = () => {
     const node = editNodeForText ?? selectedNodes[0];
@@ -239,7 +288,7 @@ export function FloatingToolbar({
       style={{
         left: screenX,
         top: screenY,
-        transform: 'translate(-50%, calc(-100% - 39px))',
+        transform: 'translateX(-50%)',
         opacity: connectorDragging ? 0.15 : 1,
       }}
     >
@@ -250,6 +299,7 @@ export function FloatingToolbar({
             target={textTarget}
             link={textLink}
             multi={textMulti}
+            keepEditorFocus={isEditingText}
             onChange={applyText}
             onFinish={finishText}
           />

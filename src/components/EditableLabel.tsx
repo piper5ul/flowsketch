@@ -105,6 +105,15 @@ export function EditableLabel({ editing, value, onCommit, caret = 'end', childre
         }}
         contentEditable
         suppressContentEditableWarning
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') return;
+          event.preventDefault();
+          // Toolbar clicks can leave a one-shot blur suppression behind when
+          // focus stayed in the editor. Escape intentionally ends editing, so
+          // consume that stale suppression before committing through blur.
+          consumeSuppressBlur();
+          event.currentTarget.blur();
+        }}
         onBlur={(e) => {
           // A formatting button took the focus for a moment: still editing.
           if (consumeSuppressBlur()) return;

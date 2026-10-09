@@ -83,6 +83,7 @@ import {
   isWireNode,
 } from '../lib/nodeKinds';
 import { resolveFillLook } from '../lib/shapeStyle';
+import { resolveFontSize } from '../lib/text';
 import { emptyTable, normalizeTable, tableSize } from '../lib/table';
 import {
   absolutePosition,
@@ -3322,10 +3323,24 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // selection at once. Images carry no text and no fill or stroke of their own,
   // so they sit it out rather than collecting data nothing will ever render.
   updateSelectedNodesData: (patch) => {
-    pushHistory(get());
+    const state = get();
+    const changesNode = (node: ShapeNode) => Object.entries(patch).some(([key, value]) => {
+      if (key === 'fontSize') {
+        return resolveFontSize(node.data.fontSize) !== resolveFontSize(value as ShapeData['fontSize']);
+      }
+      return node.data[key as keyof ShapeData] !== value;
+    });
+    const changedIds = new Set(
+      state.nodes
+        .filter((node) => node.selected && node.data.shape !== 'image' && changesNode(node))
+        .map((node) => node.id),
+    );
+    if (changedIds.size === 0) return;
+
+    pushHistory(state);
     set((s) => ({
       nodes: s.nodes.map((n) =>
-        n.selected && n.data.shape !== 'image' ? { ...n, data: { ...n.data, ...patch } } : n,
+        changedIds.has(n.id) ? { ...n, data: { ...n.data, ...patch } } : n,
       ),
     }));
   },

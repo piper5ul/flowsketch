@@ -10,6 +10,7 @@ export function TextBar({
   target,
   link,
   multi,
+  keepEditorFocus,
   onChange,
   onFinish,
 }: {
@@ -17,6 +18,7 @@ export function TextBar({
   target: 'shape' | 'connectorLabel';
   link: { active: boolean; onOpen: () => void } | null;
   multi: boolean;
+  keepEditorFocus: boolean;
   onChange: (patch: Partial<TextFormatValue>) => void;
   onFinish: () => void;
 }) {
@@ -45,7 +47,7 @@ export function TextBar({
       <TextFormatControls
         value={value}
         target={target}
-        keepEditorFocus
+        keepEditorFocus={keepEditorFocus}
         link={slots.includes('link') ? link : null}
         onChange={onChange}
       />

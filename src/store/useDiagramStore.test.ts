@@ -1883,6 +1883,19 @@ describe('updateSelectedNodesData', () => {
     expect(store().nodes.every((n) => n.data.italic === undefined)).toBe(true);
   });
 
+  it('does not record an inherited 14px size as a second history entry', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    store().updateSelectedNodesData({ bold: true });
+    store().updateSelectedNodesData({ fontSize: 14 });
+
+    expect(store().nodes.find((n) => n.id === id)!.data.fontSize).toBeUndefined();
+
+    store().undo();
+    expect(store().nodes.find((n) => n.id === id)!.data.bold).toBeUndefined();
+    expect(store().nodes.find((n) => n.id === id)!.data.fontSize).toBeUndefined();
+  });
+
   it('carries the decorations and an explicit text colour', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     select(a);

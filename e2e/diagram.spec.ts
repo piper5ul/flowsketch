@@ -998,12 +998,25 @@ test('the format bar underlines a label being edited', async ({ page }) => {
 
   await node.dblclick();
   await page.keyboard.type('Hi');
+  await page.getByRole('button', { name: 'Bold' }).click();
+  await page.keyboard.press('Escape');
+
+  await expect(node.locator('[contenteditable="true"]')).toHaveCount(0);
+  let renderedLabel = node.locator('[contenteditable="false"]');
+  await expect(renderedLabel).toBeVisible();
+  await expect(renderedLabel).toContainText('Hi');
+  await expect(renderedLabel).toHaveCSS('font-weight', '700');
+
+  await node.dblclick();
   await page.getByRole('button', { name: 'More text styles' }).click();
   await page.getByRole('button', { name: 'Underline' }).click();
   await page.keyboard.press('Escape');
 
-  await expect(node).toContainText('Hi');
-  await expect(node.locator('[contenteditable]')).toHaveCSS('text-decoration-line', 'underline');
+  await expect(node.locator('[contenteditable="true"]')).toHaveCount(0);
+  renderedLabel = node.locator('[contenteditable="false"]');
+  await expect(renderedLabel).toBeVisible();
+  await expect(renderedLabel).toContainText('Hi');
+  await expect(renderedLabel).toHaveCSS('text-decoration-line', 'underline');
 });
 
 test('More text styles keeps the live label editor focused and shows its colour grid directly', async ({ page }) => {

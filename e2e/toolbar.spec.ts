@@ -179,6 +179,88 @@ test('the theme switch ArrowRight does not nudge the selected shape', async ({ p
   expect(after).toBe(before);
 });
 
+test('shape and style popovers keep canvas shortcuts off the selected shape', async ({ page }) => {
+  await signUp(page);
+  const { node, toolbar } = await drawRectangle(page);
+  const before = await node.boundingBox();
+  expect(before).not.toBeNull();
+
+  for (const [trigger, dialog] of [
+    ['Change shape', 'Shape picker'],
+    ['Style', 'Style'],
+  ] as const) {
+    await toolbar.getByRole('button', { name: trigger, exact: true }).click();
+    const popover = page.getByRole('dialog', { name: dialog });
+    await expect(popover).toBeVisible();
+    await expect(popover.locator(':focus')).toHaveCount(1);
+
+    await page.keyboard.press('ArrowRight');
+    await expect(popover.locator(':focus')).toHaveCount(1);
+    await expect(node).toBeVisible();
+    let current = await node.boundingBox();
+    expect(current).not.toBeNull();
+    expect(current!.x).toBe(before!.x);
+    expect(current!.y).toBe(before!.y);
+
+    await page.keyboard.press('Backspace');
+    await expect(page.locator('.react-flow__node')).toHaveCount(1);
+    current = await node.boundingBox();
+    expect(current).not.toBeNull();
+    expect(current!.x).toBe(before!.x);
+    expect(current!.y).toBe(before!.y);
+    await toolbar.getByRole('button', { name: trigger, exact: true }).click();
+    await expect(page.getByRole('dialog', { name: dialog })).toHaveCount(0);
+  }
+});
+
+test('connector picker popovers keep canvas shortcuts off the selected connector', async ({ page }) => {
+  await signUp(page);
+  const hitbox = await drawConnectedPair(page);
+  await page.mouse.click(hitbox.x + hitbox.width * 0.25, hitbox.y + hitbox.height / 2);
+
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+  const nodes = page.locator('.react-flow__node');
+  const edges = page.locator('.react-flow__edge');
+  const beforeNodes = await nodes.evaluateAll((elements) => elements.map((element) => {
+    const box = element.getBoundingClientRect();
+    return { x: box.x, y: box.y };
+  }));
+  const edgePath = page.locator('.react-flow__edge-path').first();
+  const beforePath = await edgePath.getAttribute('d');
+  expect(beforePath).not.toBeNull();
+
+  for (const [trigger, dialog] of [
+    ['Start arrowhead', 'Start arrowhead'],
+    ['End arrowhead', 'End arrowhead'],
+    ['Line', 'Line'],
+  ] as const) {
+    await toolbar.getByRole('button', { name: trigger, exact: true }).click();
+    await expect(page.getByRole('dialog', { name: dialog })).toBeVisible();
+
+    await page.keyboard.press('ArrowRight');
+    await expect(edges).toHaveCount(1);
+    await expect(nodes).toHaveCount(2);
+    let positions = await nodes.evaluateAll((elements) => elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { x: box.x, y: box.y };
+    }));
+    expect(positions).toEqual(beforeNodes);
+    expect(await edgePath.getAttribute('d')).toBe(beforePath);
+
+    await page.keyboard.press('Backspace');
+    await expect(edges).toHaveCount(1);
+    await expect(nodes).toHaveCount(2);
+    positions = await nodes.evaluateAll((elements) => elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { x: box.x, y: box.y };
+    }));
+    expect(positions).toEqual(beforeNodes);
+    expect(await edgePath.getAttribute('d')).toBe(beforePath);
+    await toolbar.getByRole('button', { name: trigger, exact: true }).click();
+    await expect(page.getByRole('dialog', { name: dialog })).toHaveCount(0);
+  }
+});
+
 test('Dash combines with Transparent, Fill clears it, and Transparent from Fill selects Outline', async ({ page }) => {
   await signUp(page);
   const { node, toolbar } = await drawRectangle(page);
@@ -284,6 +366,66 @@ test('Text switches into the inline text bar and edits the selected label', asyn
   await expect(toolbar.getByRole('button', { name: 'Change shape' })).toBeVisible();
 });
 
+test('choosing text size by keyboard returns to the editor and Finish editing commits', async ({ page }) => {
+  await signUp(page);
+  const { node, toolbar } = await drawRectangle(page);
+
+  await toolbar.getByRole('button', { name: 'Text' }).click();
+  const editor = node.locator('[contenteditable="true"]');
+  await expect(editor).toBeFocused();
+  await page.keyboard.type('First');
+
+  await toolbar.getByRole('button', { name: 'Text size' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Text size' });
+  await expect(dialog).toBeVisible();
+  const large = page.getByRole('dialog', { name: 'Text size' }).getByRole('button', { name: 'L', exact: true });
+  await large.press('Enter');
+
+  await expect(editor).toBeFocused();
+  await page.keyboard.type(' after');
+  await toolbar.getByRole('button', { name: 'Finish editing' }).click();
+
+  await expect(node.locator('[contenteditable="false"]')).toContainText('First after');
+  await expect(node.locator('[contenteditable="true"]')).toHaveCount(0);
+});
+
+test('Escape leaves multi-selection text mode without clearing the selection', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+
+  for (const position of [{ x: 420, y: 300 }, { x: 700, y: 300 }]) {
+    await page.keyboard.press('r');
+    await pane.click({ position });
+    await page.keyboard.press('Escape');
+  }
+
+  await page.keyboard.press('ControlOrMeta+a');
+  const selected = page.locator('.react-flow__node.selected');
+  await expect(selected).toHaveCount(2);
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+  await toolbar.getByRole('button', { name: 'Text' }).click();
+  await expect(toolbar.getByRole('button', { name: 'Finish editing' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Change shape' })).toHaveCount(0);
+
+  await page.keyboard.press('Escape');
+
+  await expect(selected).toHaveCount(2);
+  await expect(toolbar.getByRole('button', { name: 'Change shape' })).toBeVisible();
+
+  await toolbar.getByRole('button', { name: 'Text' }).click();
+  await toolbar.getByRole('button', { name: 'Text size' }).click();
+  const sizePicker = page.getByRole('dialog', { name: 'Text size' });
+  await expect(sizePicker).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(sizePicker).toHaveCount(0);
+  await expect(toolbar.getByRole('button', { name: 'Finish editing' })).toBeVisible();
+  await expect(selected).toHaveCount(2);
+
+  await page.keyboard.press('Escape');
+  await expect(selected).toHaveCount(2);
+  await expect(toolbar.getByRole('button', { name: 'Change shape' })).toBeVisible();
+});
+
 test('text toolbar clamps by its rendered width near the viewport edge', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 700 });
   await signUp(page);
@@ -295,6 +437,51 @@ test('text toolbar clamps by its rendered width near the viewport edge', async (
     const box = (await toolbar.boundingBox())!;
     return box.x >= 0 && box.x + box.width <= 800 && box.width > 400;
   }).toBe(true);
+});
+
+test('the selection toolbar flips below a shape at the top edge and stays in the viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await signUp(page);
+  const diagramId = await page.evaluate(async () => {
+    const response = await fetch('/api/diagrams', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Top edge toolbar',
+        data: {
+          version: 3,
+          nodes: [{
+            id: 'top-edge',
+            type: 'shape',
+            position: { x: 350, y: 0 },
+            width: 180,
+            height: 80,
+            data: { label: 'Top edge', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+          }],
+          edges: [],
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+      }),
+    });
+    if (!response.ok) throw new Error(`Could not create top-edge diagram: ${response.status}`);
+    return ((await response.json()) as { id: string }).id;
+  });
+  await page.goto(`/d/${diagramId}`);
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await node.click();
+  const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
+
+  const viewport = page.viewportSize()!;
+  const barBox = (await toolbar.boundingBox())!;
+  const shape = (await shapeBox(node).boundingBox())!;
+  expect(barBox.x).toBeGreaterThanOrEqual(0);
+  expect(barBox.x + barBox.width).toBeLessThanOrEqual(viewport.width);
+  expect(shape.y).toBe(0);
+  expect(barBox.y).toBeGreaterThanOrEqual(0);
+  expect(barBox.y + barBox.height).toBeLessThanOrEqual(viewport.height);
+  expect(barBox.y - (shape.y + shape.height)).toBe(39);
 });
 
 test('Delete lives in More actions and both Delete and Backspace work', async ({ page }) => {
@@ -313,6 +500,13 @@ test('Delete lives in More actions and both Delete and Backspace work', async ({
   await page.keyboard.press('Escape');
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
   await page.keyboard.press('Backspace');
+  await expect(page.locator('.react-flow__node')).toHaveCount(0);
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 420, y: 300 } });
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.react-flow__node')).toHaveCount(1);
+  await page.keyboard.press('Delete');
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
 });
 
