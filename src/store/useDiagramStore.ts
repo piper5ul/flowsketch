@@ -84,6 +84,7 @@ import {
 } from '../lib/nodeKinds';
 import { resolveFillLook } from '../lib/shapeStyle';
 import { resolveFontSize } from '../lib/text';
+import { stableJsonFor } from '../lib/stableJson';
 import { emptyTable, normalizeTable, tableSize } from '../lib/table';
 import {
   absolutePosition,
@@ -1690,25 +1691,12 @@ function serializeEdges(edges: ConnectorEdge[]) {
   return edges.map(serializeEdge);
 }
 
-const serializedNodeKeys = new WeakMap<ShapeNode, string>();
-const serializedEdgeKeys = new WeakMap<ConnectorEdge, string>();
-
 function serializedNodeKey(node: ShapeNode): string {
-  let key = serializedNodeKeys.get(node);
-  if (key === undefined) {
-    key = JSON.stringify(serializeNode(node));
-    serializedNodeKeys.set(node, key);
-  }
-  return key;
+  return stableJsonFor(node, () => serializeNode(node)) ?? '';
 }
 
 function serializedEdgeKey(edge: ConnectorEdge): string {
-  let key = serializedEdgeKeys.get(edge);
-  if (key === undefined) {
-    key = JSON.stringify(serializeEdge(edge));
-    serializedEdgeKeys.set(edge, key);
-  }
-  return key;
+  return stableJsonFor(edge, () => serializeEdge(edge)) ?? '';
 }
 
 /**

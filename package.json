@@ -21,6 +21,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "benchmark:collab-binding": "tsx scripts/benchmark-collab-binding.ts",
     "check": "npm run lint && npm run typecheck && npm test",
     "prepare": "simple-git-hooks"
   },

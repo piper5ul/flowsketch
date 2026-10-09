@@ -68,6 +68,7 @@ import { sanitizeTimer } from '../timer';
 import { normalizeTable } from '../table';
 import type { TableData } from '../../types';
 import { sanitizeConnectorData, sanitizeShapeData } from '../colorSafety';
+import { reuseStableJson, stableJson } from '../stableJson';
 
 /**
  * How long a gesture has to stop moving before it is written to the document.
@@ -129,20 +130,6 @@ export interface DocBinding {
   history: DocumentHistory;
 }
 
-/** Stable JSON form for document values, independent of object key order. */
-function stableJson(value: unknown): string | undefined {
-  const ordered = (item: unknown): unknown => {
-    if (Array.isArray(item)) return item.map(ordered);
-    if (item !== null && typeof item === 'object') {
-      return Object.fromEntries(
-        Object.keys(item).sort().map((key) => [key, ordered((item as Record<string, unknown>)[key])]),
-      );
-    }
-    return item;
-  };
-  return JSON.stringify(ordered(value));
-}
-
 /** True when two serializable values are the same diagram element. */
 function same(a: unknown, b: unknown): boolean {
   return stableJson(a) === stableJson(b);
@@ -162,18 +149,34 @@ function plain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+/** Store objects used to key the canonical cache for their serialized forms. */
+interface ElementReferences {
+  nodes: readonly object[];
+  edges: readonly object[];
+}
+
 /** Write `elements` into `map`, touching only the entries that really changed. */
-function syncElements<T extends { id: string }>(map: Y.Map<DocEntry<T>>, elements: T[]): boolean {
+function syncElements<T extends { id: string }>(
+  map: Y.Map<DocEntry<T>>,
+  elements: T[],
+  references: readonly object[] = elements,
+): boolean {
   let changed = false;
   const kept = new Set<string>();
 
   elements.forEach((element, order) => {
     kept.add(element.id);
     const current = map.get(element.id);
+    const reference = references[order] ?? element;
+    const elementJson = stableJson(element, reference);
     // The order is part of the entry: a z-order command rewrites the entries it
     // moved past each other, and nothing else.
-    if (current && current.order === order && same(current.value, element)) return;
-    map.set(element.id, { order, value: plain(element) });
+    if (current && current.order === order && stableJson(current.value) === elementJson) return;
+    const value = plain(element);
+    // The cache key for a store element and for its Yjs value point at the same
+    // string. This also avoids walking the newly copied value a second time.
+    stableJson(value, reference);
+    map.set(element.id, { order, value });
     changed = true;
   });
 
@@ -208,11 +211,12 @@ export function pushDiagramToDoc(
   data: DiagramData,
   origin: unknown,
   viewportOrigin: unknown = origin,
+  references?: ElementReferences,
 ): boolean {
   let changed = false;
   doc.transact(() => {
-    changed = syncElements(nodeEntries(doc), data.nodes) || changed;
-    changed = syncElements(edgeEntries(doc), data.edges) || changed;
+    changed = syncElements(nodeEntries(doc), data.nodes, references?.nodes) || changed;
+    changed = syncElements(edgeEntries(doc), data.edges, references?.edges) || changed;
 
     const meta = docMeta(doc);
 
@@ -361,6 +365,7 @@ function mergeSince<T extends { id: string }>(
 export function docNodesOntoStore(
   serialized: SerializedNode[],
   existing: readonly ShapeNode[],
+  changedIds?: ReadonlySet<string>,
 ): ShapeNode[] {
   const byId = new Map(existing.map((node) => [node.id, node]));
   return normalizeParentage(
@@ -372,6 +377,7 @@ export function docNodesOntoStore(
         data: node.type === 'table' && data.table ? { ...data, table: normalizeTable(data.table as TableData) } : data,
       } as unknown as ShapeNode;
       if (!previous) return next;
+      if (changedIds && !changedIds.has(node.id)) return previous;
       return {
         ...next,
         selected: previous.selected,
@@ -386,6 +392,7 @@ export function docNodesOntoStore(
 export function docEdgesOntoStore(
   serialized: SerializedEdge[],
   existing: readonly ConnectorEdge[],
+  changedIds?: ReadonlySet<string>,
 ): ConnectorEdge[] {
   const byId = new Map(existing.map((edge) => [edge.id, edge]));
   return serialized.map((edge) => {
@@ -394,6 +401,7 @@ export function docEdgesOntoStore(
       data: sanitizeConnectorData(edge.data),
     } as unknown as ConnectorEdge;
     const previous = byId.get(edge.id);
+    if (previous && changedIds && !changedIds.has(edge.id)) return previous;
     return previous ? { ...next, selected: previous.selected } : next;
   });
 }
@@ -408,6 +416,56 @@ function diagramOf(state: DiagramState): DiagramData {
     state.thumbnailNodeIds,
     { voting: state.voting, timer: state.timer },
   );
+}
+
+/** Compare a complete ordered array; used only for the initial bind. */
+function entryArraysDiffer<Local extends { id: string }, Wire extends { id: string }>(
+  remote: Wire[],
+  local: readonly Local[],
+  projected: Wire[],
+): boolean {
+  if (remote.length !== local.length) return true;
+  for (let index = 0; index < remote.length; index += 1) {
+    if (
+      remote[index].id !== local[index].id ||
+      stableJson(remote[index]) !== stableJson(projected[index], local[index])
+    ) return true;
+  }
+  return false;
+}
+
+/** Compare only map entries named by the transaction's Yjs event. */
+function changedEntriesDiffer<Local extends { id: string }, Wire extends { id: string }>(
+  map: Y.Map<DocEntry<Wire>>,
+  changed: ReadonlySet<string>,
+  orderChanged: ReadonlySet<string>,
+  local: readonly Local[],
+  project: (element: Local) => Wire,
+): boolean {
+  if (changed.size === 0) return false;
+  const localById = new Map(local.map((element) => [element.id, element]));
+  for (const id of changed) {
+    const entry = map.get(id);
+    const element = localById.get(id);
+    if (!entry || !element || orderChanged.has(id)) return true;
+    if (stableJson(entry.value) !== stableJson(project(element), element)) return true;
+  }
+  return false;
+}
+
+/** Only compare fields that `serializeNode` writes; selection is browser-local. */
+function sameStoreNodeContent(a: ShapeNode, b: ShapeNode): boolean {
+  return a.id === b.id && a.type === b.type && a.position === b.position &&
+    a.width === b.width && a.height === b.height && a.data === b.data &&
+    a.parentId === b.parentId && a.extent === b.extent;
+}
+
+/** Only compare fields that `serializeEdge` writes; selection is browser-local. */
+function sameStoreEdgeContent(a: ConnectorEdge, b: ConnectorEdge): boolean {
+  return a.id === b.id && a.source === b.source && a.target === b.target &&
+    a.type === b.type && a.sourceHandle === b.sourceHandle && a.targetHandle === b.targetHandle &&
+    a.zIndex === b.zIndex && a.markerStart === b.markerStart && a.markerEnd === b.markerEnd &&
+    a.data === b.data;
 }
 
 /**
@@ -455,19 +513,6 @@ export function bindDocToStore(
   /** A gesture whose last frame has not been written yet. */
   let transientTimer: ReturnType<typeof setTimeout> | null = null;
   let destroyed = false;
-  /**
-   * The diagram the store is known to be holding, as JSON.
-   *
-   * A remote transaction is not necessarily a remote *edit* — a peer's viewport
-   * lands in the same document, and so does an update that says only what this
-   * client already had. Rebuilding every node object for one of those would
-   * re-render the whole canvas, and would blur a label somebody is in the
-   * middle of typing into.
-   */
-  let rendered: string | null = null;
-
-  const contentOf = (data: DiagramData) => stableJson([data.nodes, data.edges])!;
-
   /** Whether a gesture is being held here, reported only when it changes. */
   let pendingWrite = false;
   const setPendingWrite = (next: boolean) => {
@@ -476,10 +521,12 @@ export function bindDocToStore(
     options.onPendingWrite?.(next);
   };
 
-  const pull = () => {
-    const nodes = nodesOf(doc);
-    const edges = edgesOf(doc);
-    const next = stableJson([nodes, edges])!;
+  const pull = (changes?: {
+    nodes: ReadonlySet<string>;
+    edges: ReadonlySet<string>;
+    nodeOrderChanged: ReadonlySet<string>;
+    edgeOrderChanged: ReadonlySet<string>;
+  }) => {
     // Written by another browser, so narrowed to style keys before anything
     // here acts on it — `sanitizeDefaults` is the same gate a stored row goes
     // through on load.
@@ -494,7 +541,30 @@ export function bindDocToStore(
     const timer = sanitizeTimer(timerOf(doc));
 
     const state = store.getState();
-    const elementsChanged = next !== rendered;
+    let elementsChanged = false;
+    if (!changes) {
+      // The initial bind has no Y events to narrow the comparison. Compare the
+      // ordered arrays once, then later transactions use only their event keys.
+      const nodes = nodesOf(doc);
+      const edges = edgesOf(doc);
+      const projected = serializeDiagram(state.nodes, state.edges);
+      elementsChanged =
+        entryArraysDiffer(nodes, state.nodes, projected.nodes) ||
+        entryArraysDiffer(edges, state.edges, projected.edges);
+    } else if (changes.nodes.size > 0 || changes.edges.size > 0) {
+      // A Y map event names the exact ids whose persisted value or order moved.
+      // Do not canonicalize untouched elements, and leave meta-only changes out
+      // of this path entirely.
+      elementsChanged =
+        changedEntriesDiffer(
+          nodeEntries(doc), changes.nodes, changes.nodeOrderChanged, state.nodes,
+          (node) => serializeDiagram([node], []).nodes[0],
+        ) ||
+        changedEntriesDiffer(
+          edgeEntries(doc), changes.edges, changes.edgeOrderChanged, state.edges,
+          (edge) => serializeDiagram([], [edge]).edges[0],
+        );
+    }
     const defaultsChanged = !same(defaults, state.defaults);
     const thumbnailChanged = !same(thumbnailNodeIds, state.thumbnailNodeIds);
     const votingChanged = !same(voting, state.voting);
@@ -511,13 +581,14 @@ export function bindDocToStore(
 
     const patch: Partial<DiagramState> = {};
     if (elementsChanged) {
-      rendered = next;
+      const nodes = nodesOf(doc);
+      const edges = edgesOf(doc);
       // `hidden` is not in the document — it is derived from the mind maps'
       // `collapsed` flags, the same way `loadDiagram` derives it — so a
       // collaborator folding a branch away folds it here too.
       const derived = deriveMindMapHidden(
-        docNodesOntoStore(nodes, state.nodes),
-        docEdgesOntoStore(edges, state.edges),
+        docNodesOntoStore(nodes, state.nodes, changes?.nodes),
+        docEdgesOntoStore(edges, state.edges, changes?.edges),
       );
       patch.nodes = derived.nodes;
       patch.edges = derived.edges;
@@ -540,13 +611,14 @@ export function bindDocToStore(
     } finally {
       applyingRemote = false;
     }
+    if (elementsChanged) primeStoreCaches(store.getState());
   };
 
   const push = (state: DiagramState) => {
     if (readOnly) return;
+    reuseLocalCaches(state);
     const data = diagramOf(state);
-    pushDiagramToDoc(doc, data, origin, viewportOrigin);
-    rendered = contentOf(data);
+    pushDiagramToDoc(doc, data, origin, viewportOrigin, { nodes: state.nodes, edges: state.edges });
     // Offered to the provider: from here whether it has arrived is its answer.
     setPendingWrite(false);
   };
@@ -561,6 +633,50 @@ export function bindDocToStore(
   const edgeMap = edgeEntries(doc);
   const metaMap = docMeta(doc);
 
+  const lastStoreNodes = new Map<string, ShapeNode>();
+  const lastStoreEdges = new Map<string, ConnectorEdge>();
+  const primeStoreCaches = (state: DiagramState) => {
+    const projected = serializeDiagram(state.nodes, state.edges);
+    const nodeValues = new Map([...nodeMap.values()].map((entry) => [entry.value.id, entry.value]));
+    const edgeValues = new Map([...edgeMap.values()].map((entry) => [entry.value.id, entry.value]));
+    lastStoreNodes.clear();
+    lastStoreEdges.clear();
+    state.nodes.forEach((node, index) => {
+      const localJson = stableJson(projected.nodes[index], node);
+      const remoteValue = nodeValues.get(node.id);
+      if (remoteValue && stableJson(remoteValue) === localJson) reuseStableJson(remoteValue, node);
+      lastStoreNodes.set(node.id, node);
+    });
+    state.edges.forEach((edge, index) => {
+      const localJson = stableJson(projected.edges[index], edge);
+      const remoteValue = edgeValues.get(edge.id);
+      if (remoteValue && stableJson(remoteValue) === localJson) reuseStableJson(remoteValue, edge);
+      lastStoreEdges.set(edge.id, edge);
+    });
+    // New Y values such as an inserted remote element are cached too. Existing
+    // references are hits, so this serializes only values not seen yet.
+    for (const entry of nodeMap.values()) stableJson(entry.value);
+    for (const entry of edgeMap.values()) stableJson(entry.value);
+  };
+  const reuseLocalCaches = (state: DiagramState) => {
+    for (const node of state.nodes) {
+      const previous = lastStoreNodes.get(node.id);
+      if (previous && previous !== node && sameStoreNodeContent(previous, node)) {
+        reuseStableJson(previous, node);
+      }
+    }
+    for (const edge of state.edges) {
+      const previous = lastStoreEdges.get(edge.id);
+      if (previous && previous !== edge && sameStoreEdgeContent(previous, edge)) {
+        reuseStableJson(previous, edge);
+      }
+    }
+    lastStoreNodes.clear();
+    lastStoreEdges.clear();
+    state.nodes.forEach((node) => lastStoreNodes.set(node.id, node));
+    state.edges.forEach((edge) => lastStoreEdges.set(edge.id, edge));
+  };
+
   const local = diagramOf(store.getState());
   if (!isSeeded(doc)) {
     // Nothing has ever been written here — the server seeds a document on the
@@ -569,7 +685,7 @@ export function bindDocToStore(
     // the loaded board is written in as the seed instead.
     if (!readOnly) {
       writeDiagramIntoDoc(doc, local, origin);
-      rendered = contentOf(local);
+      primeStoreCaches(store.getState());
     }
   } else {
     // Anything drawn between the page load and this moment is a local edit, and
@@ -579,8 +695,8 @@ export function bindDocToStore(
     }
     // Seeded with what the store already holds, so a document that agrees with
     // the canvas costs no re-render at all.
-    rendered = contentOf(local);
     pull();
+    primeStoreCaches(store.getState());
   }
 
   // ---- undo ----------------------------------------------------------------
@@ -712,17 +828,32 @@ export function bindDocToStore(
   // The three observers all fire inside one transaction, so they only mark the
   // store dirty; `afterTransaction` is what rebuilds it, once.
   let dirty = false;
-  const markDirty = (_event: unknown, transaction: Y.Transaction) => {
+  const changedNodes = new Set<string>();
+  const changedEdges = new Set<string>();
+  const nodeOrderChanged = new Set<string>();
+  const edgeOrderChanged = new Set<string>();
+  const markDirty = (_event: unknown, transaction: Y.Transaction): boolean => {
     // Our own write, already in the store — reading it back would be a round
     // trip that replaces every node object for nothing. Either origin: the
     // camera's is this browser's too, it is simply not one undo tracks.
-    if (isLocalOrigin(transaction.origin)) return;
+    if (isLocalOrigin(transaction.origin)) return false;
     dirty = true;
+    return true;
   };
   const flush = () => {
     if (!dirty) return;
     dirty = false;
-    pull();
+    const changes = {
+      nodes: new Set(changedNodes),
+      edges: new Set(changedEdges),
+      nodeOrderChanged: new Set(nodeOrderChanged),
+      edgeOrderChanged: new Set(edgeOrderChanged),
+    };
+    changedNodes.clear();
+    changedEdges.clear();
+    nodeOrderChanged.clear();
+    edgeOrderChanged.clear();
+    pull(changes);
   };
 
   /**
@@ -732,13 +863,33 @@ export function bindDocToStore(
    * refuses to describe its changes once its transaction has been cleaned up,
    * and `stack-item-popped` — the one place that wants them — fires after that.
    */
-  function markDirtyElements<T>(event: Y.YMapEvent<T>, transaction: Y.Transaction): void {
-    markDirty(event, transaction);
-    for (const key of event.keys.keys()) touched.add(key);
+  function markDirtyElements<T>(
+    event: Y.YMapEvent<DocEntry<T>>,
+    transaction: Y.Transaction,
+    changed: Set<string>,
+    reordered: Set<string>,
+  ): void {
+    const isRemote = markDirty(event, transaction);
+    for (const [key, change] of event.keys) {
+      touched.add(key);
+      if (!isRemote) continue;
+      changed.add(key);
+      const previous = change.oldValue;
+      const current = event.target.get(key);
+      if (
+        change.action === 'update' && previous && current &&
+        previous.order !== current.order
+      ) reordered.add(key);
+    }
   }
 
-  nodeMap.observe(markDirtyElements);
-  edgeMap.observe(markDirtyElements);
+  const markDirtyNodeElements = (event: Y.YMapEvent<DocEntry<SerializedNode>>, transaction: Y.Transaction) =>
+    markDirtyElements(event, transaction, changedNodes, nodeOrderChanged);
+  const markDirtyEdgeElements = (event: Y.YMapEvent<DocEntry<SerializedEdge>>, transaction: Y.Transaction) =>
+    markDirtyElements(event, transaction, changedEdges, edgeOrderChanged);
+
+  nodeMap.observe(markDirtyNodeElements);
+  edgeMap.observe(markDirtyEdgeElements);
   metaMap.observe(markDirty);
   doc.on('afterTransaction', flush);
 
@@ -793,8 +944,8 @@ export function bindDocToStore(
       // binding could lose an edit.
       if (hadGesture) push(store.getState());
       unsubscribe();
-      nodeMap.unobserve(markDirtyElements);
-      edgeMap.unobserve(markDirtyElements);
+      nodeMap.unobserve(markDirtyNodeElements);
+      edgeMap.unobserve(markDirtyEdgeElements);
       metaMap.unobserve(markDirty);
       doc.off('afterTransaction', flush);
       undoManager.destroy();

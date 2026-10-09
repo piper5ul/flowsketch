@@ -121,10 +121,13 @@ test('a custom colour commits only on change as one undo step', async ({ page })
   await page.goto(`/d/${diagramId}`);
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
+  await expect(page.locator('[data-collab-sync="synced"]')).toBeVisible();
   await node.click();
   const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
   // Selecting a fresh shape does not edit its serialized diagram, so it leaves
   // the undo stack empty until the colour is committed below.
+  // Let the binding's transient flush interval settle before checking history.
+  await page.waitForTimeout(2_000);
   await expect(page.getByRole('button', { name: 'Undo' })).toBeDisabled();
   await toolbar.getByRole('button', { name: 'Color' }).click();
   const grid = page.getByRole('group', { name: 'Colors' });

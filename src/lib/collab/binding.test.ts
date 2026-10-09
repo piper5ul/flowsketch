@@ -74,6 +74,33 @@ function select(...ids: string[]) {
   }));
 }
 
+/** Same serialized node with `position` and `data` keys in a different order. */
+function reorderNestedNodeKeys(node: SerializedNode): SerializedNode {
+  return {
+    ...node,
+    position: { y: node.position.y, x: node.position.x },
+    data: Object.fromEntries(Object.entries(node.data).reverse()),
+  };
+}
+
+function countNodeCanonicalizations(run: () => void): number {
+  let count = 0;
+  const originalKeys = Object.keys;
+  const keys = vi.spyOn(Object, 'keys').mockImplementation((value: object) => {
+    if (
+      value !== null && typeof value === 'object' &&
+      'id' in value && 'type' in value && 'position' in value && 'data' in value
+    ) count += 1;
+    return originalKeys(value);
+  });
+  try {
+    run();
+  } finally {
+    keys.mockRestore();
+  }
+  return count;
+}
+
 beforeEach(() => {
   // The only public way to reset the module-level undo history.
   store().loadDiagram('test', 'Test', false, { nodes: [], edges: [] });
@@ -89,6 +116,32 @@ afterEach(() => {
 });
 
 describe('store -> doc', () => {
+  it('canonicalizes only the selected node, and none for a remote viewport', () => {
+    const nodes: SerializedNode[] = Array.from({ length: 1_000 }, (_, index) => ({
+      id: `node-${index}`,
+      type: 'shape',
+      position: { x: index, y: index },
+      width: 100,
+      height: 80,
+      data: { label: `Node ${index}`, shape: 'rectangle', fill: '#fff', stroke: '#000' },
+    }));
+    store().loadDiagram('test', 'Large test board', false, { version: 3, nodes, edges: [] });
+    const doc = new Y.Doc();
+    bind(doc);
+
+    const selectionSerializations = countNodeCanonicalizations(() => {
+      store().narrowSelection(new Set(['node-500']));
+    });
+    expect(selectionSerializations).toBeLessThanOrEqual(1);
+
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    peer.getMap('meta').set('viewport', { x: 100, y: 200, zoom: 1.5 });
+    const viewportUpdate = Y.encodeStateAsUpdate(peer);
+    const viewportSerializations = countNodeCanonicalizations(() => Y.applyUpdate(doc, viewportUpdate));
+    expect(viewportSerializations).toBe(0);
+  });
+
   it('renders a document that is exactly what the JSON save would have been', () => {
     const doc = new Y.Doc();
     bind(doc);
@@ -196,6 +249,40 @@ describe('store -> doc', () => {
 
     expect(updates).toBe(0);
     expect(store().canUndo).toBe(false);
+  });
+
+  it('does not rewrite or replace nodes when a seeded document differs only in nested key order', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [{
+        id: 'nested-order',
+        type: 'shape',
+        position: { x: 20, y: 30 },
+        data: { label: 'Same shape', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+      }],
+      edges: [],
+    });
+    const baseline = snapshot();
+    const beforeNodes = store().nodes;
+    const beforeNode = beforeNodes[0];
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(
+      doc,
+      { ...baseline, nodes: [reorderNestedNodeKeys(baseline.nodes[0])] },
+      'server',
+    );
+
+    let localWrites = 0;
+    doc.on('update', (_update, origin) => {
+      if (origin === LOCAL) localWrites += 1;
+    });
+    binding = bindDocToStore(doc, useDiagramStore, LOCAL, { baseline });
+    setDocumentHistory(binding.history);
+
+    expect(localWrites).toBe(0);
+    expect(store().canUndo).toBe(false);
+    expect(store().nodes).toBe(beforeNodes);
+    expect(store().nodes[0]).toBe(beforeNode);
   });
 
   it('holds a gesture until it stops moving, then writes it once', () => {
@@ -853,6 +940,49 @@ describe('doc -> store', () => {
 
     bind(doc);
     expect(store().nodes.map((n) => n.id)).toEqual(['fresh']);
+  });
+
+  it('does not write or replace nodes when a remote update only reorders nested keys', () => {
+    store().loadDiagram('test', 'Test', false, {
+      version: 3,
+      nodes: [{
+        id: 'remote-nested-order',
+        type: 'shape',
+        position: { x: 20, y: 30 },
+        data: { label: 'Same shape', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+      }],
+      edges: [],
+    });
+    const doc = new Y.Doc();
+    writeDiagramIntoDoc(doc, snapshot(), 'server');
+    bindWithHistory(doc);
+    const beforeNodes = store().nodes;
+    const beforeNode = beforeNodes[0];
+
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    const peerState = Y.encodeStateVector(peer);
+    const entries = nodeEntries(peer);
+    const current = entries.get(beforeNode.id)!;
+    entries.set(beforeNode.id, {
+      ...current,
+      value: reorderNestedNodeKeys(current.value),
+    });
+    const remoteUpdate = Y.encodeStateAsUpdate(peer, peerState);
+
+    let updates = 0;
+    let localWrites = 0;
+    doc.on('update', (_update, origin) => {
+      updates += 1;
+      if (origin === LOCAL) localWrites += 1;
+    });
+    Y.applyUpdate(doc, remoteUpdate);
+
+    expect(updates).toBe(1);
+    expect(localWrites).toBe(0);
+    expect(store().canUndo).toBe(false);
+    expect(store().nodes).toBe(beforeNodes);
+    expect(store().nodes[0]).toBe(beforeNode);
   });
 
   it('keeps a shape drawn while the socket was still opening', () => {
