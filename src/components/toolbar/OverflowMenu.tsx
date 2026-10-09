@@ -7,7 +7,7 @@ import { EDGE_OVERFLOW, NODE_OVERFLOW, resolveOverflow } from '../../lib/overflo
 import { registry } from '../../commands/commands';
 import { ToolButton } from './chrome';
 
-const ROW = 'flex h-[30px] w-full items-center gap-2 rounded-md px-2 text-left text-sm font-normal text-white outline-none data-[highlighted]:bg-[var(--color-chrome-hover)] disabled:opacity-40';
+const ROW = 'flex h-[30px] w-full items-center gap-2 whitespace-nowrap rounded-md px-2 text-left text-sm font-normal text-white outline-none data-[highlighted]:bg-[var(--color-chrome-hover)] disabled:opacity-40';
 
 function ShortcutChips({ chips }: { chips: string[] }) {
   if (!chips.length) return null;
@@ -48,20 +48,18 @@ export function OverflowMenu({
           sideOffset={9}
           aria-label="More actions"
           className="chrome-pop z-50 flex flex-col"
-          style={{ width: 272, padding: 6 }}
+          style={{ minWidth: 272, padding: 6 }}
           onEscapeKeyDown={(event) => event.stopPropagation()}
         >
           {sections.map((section, sectionIndex) => {
-            const hasChecks = section.some((entry) => entry.kind === 'item' && entry.checked !== undefined);
             return (
               <div key={sectionIndex} className={sectionIndex > 0 ? 'mt-1 border-t border-[var(--color-chrome-ring)] pt-1' : ''}>
                 {section.map((entry) => {
                   if (entry.kind === 'submenu') {
-                    const childHasChecks = entry.items.some((item) => item.kind === 'item' && item.checked !== undefined);
                     return (
                       <DropdownMenu.Sub key={entry.title}>
                         <DropdownMenu.SubTrigger className={`${ROW} overflow-subtrigger relative`}>
-                          {hasChecks && <span aria-hidden="true" className="flex h-5 w-5 flex-none" />}
+                          <span aria-hidden="true" className="flex h-5 w-5 flex-none" />
                           <span className="flex-1">{entry.title}</span>
                           <ChevronRight size={16} className="text-[var(--color-chrome-text-muted)]" />
                         </DropdownMenu.SubTrigger>
@@ -74,14 +72,14 @@ export function OverflowMenu({
                             {entry.items.map((item, index) => item.kind === 'sep' ? (
                               <DropdownMenu.Separator key={`sep-${index}`} className="my-1 h-px bg-[var(--color-chrome-ring)]" />
                             ) : (
-                              <OverflowItem key={item.id} item={item} onRun={onRun} reserveCheck={childHasChecks} />
+                              <OverflowItem key={item.id} item={item} onRun={onRun} />
                             ))}
                           </DropdownMenu.SubContent>
                         </DropdownMenu.Portal>
                       </DropdownMenu.Sub>
                     );
                   }
-                  return <OverflowItem key={entry.id} item={entry} onRun={onRun} reserveCheck={hasChecks} />;
+                  return <OverflowItem key={entry.id} item={entry} onRun={onRun} />;
                 })}
               </div>
             );
@@ -95,17 +93,15 @@ export function OverflowMenu({
 function OverflowItem({
   item,
   onRun,
-  reserveCheck,
 }: {
   item: { id: string; title: string; chips: string[]; enabled: boolean; checked?: boolean };
   onRun: (id: string) => void;
-  reserveCheck: boolean;
 }) {
-  const leading = reserveCheck ? (
-    <span className="flex h-5 w-5 flex-none items-center justify-center">
+  const leading = (
+    <span aria-hidden="true" className="flex h-5 w-5 flex-none items-center justify-center">
       {item.checked && <Check size={16} />}
     </span>
-  ) : null;
+  );
 
   if (item.checked !== undefined) {
     return (

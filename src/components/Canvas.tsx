@@ -1135,6 +1135,7 @@ export function Canvas({
   return (
     <div
       ref={wrapperRef}
+      data-canvas-root=""
       className="relative h-full w-full"
       onDoubleClick={onCanvasDoubleClick}
       onDragOver={onDragOver}

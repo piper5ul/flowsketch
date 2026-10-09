@@ -1142,7 +1142,7 @@ function distributeCommands(): Command[] {
   }));
 }
 
-/** Match selected shapes' widths, heights or both, as the Arrange menu does. */
+/** Build commands to match selected shapes' widths, heights or both. */
 function matchSizeCommands(): Command[] {
   const dimensions = [
     ['width', 'Match width'],

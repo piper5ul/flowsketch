@@ -986,7 +986,7 @@ test('a new shape is a borderless white card, and Outline hands it its stroke ba
   await expect(box).toHaveCSS('border-top-width', '0px');
 });
 
-test('the format bar underlines a label being edited', async ({ page }) => {
+test('the text toolbar underlines a label being edited', async ({ page }) => {
   await signUp(page);
   const pane = await newDiagram(page);
 

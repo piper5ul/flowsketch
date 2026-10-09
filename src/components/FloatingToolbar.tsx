@@ -45,6 +45,7 @@ export function FloatingToolbar({
   const [toolbarHeight, setToolbarHeight] = useState(40);
   const [windowWidth, setWindowWidth] = useState(() => window.innerWidth);
   const [windowHeight, setWindowHeight] = useState(() => window.innerHeight);
+  const [usableTop, setUsableTop] = useState(0);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const linkInputRef = useRef<HTMLInputElement>(null);
 
@@ -201,6 +202,30 @@ export function FloatingToolbar({
   const hasAnchor = anchor !== null;
 
   useLayoutEffect(() => {
+    const root = toolbarRef.current?.closest<HTMLElement>('[data-canvas-root]');
+    if (!root) {
+      setUsableTop(0);
+      return;
+    }
+    const topBar = root.querySelector<HTMLElement>('[data-canvas-top-bar]');
+    const measure = () => {
+      const inset = topBar
+        ? Math.max(0, topBar.getBoundingClientRect().bottom - root.getBoundingClientRect().top)
+        : 0;
+      setUsableTop(inset);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    if (topBar) observer.observe(topBar);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [hasAnchor, selectedIdKey, windowWidth, windowHeight]);
+
+  useLayoutEffect(() => {
     const toolbar = toolbarRef.current;
     if (!toolbar) return;
     const measure = () => {
@@ -221,8 +246,8 @@ export function FloatingToolbar({
   const screenX = Math.max(safeHalfWidth + 8, Math.min(rawScreenX, windowWidth - safeHalfWidth - 8));
   const selectionBottom = anchor.bottom * viewport.zoom + viewport.y;
   const aboveTop = rawScreenY - toolbarHeight - 39;
-  const requestedTop = aboveTop >= 0 ? aboveTop : selectionBottom + 39;
-  const screenY = Math.max(0, Math.min(requestedTop, Math.max(0, windowHeight - toolbarHeight)));
+  const requestedTop = aboveTop >= usableTop ? aboveTop : selectionBottom + 39;
+  const screenY = Math.max(usableTop, Math.min(requestedTop, Math.max(usableTop, windowHeight - toolbarHeight)));
 
   const editNodeForText = editingNode && !isTableNode(editingNode) ? editingNode : null;
   const editEdgeForText = editingEdge;

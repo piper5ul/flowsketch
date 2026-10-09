@@ -12,7 +12,7 @@ interface ToolButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   children: ReactNode;
 }
 
-/** Reserved for PR 2; PR 1 currently uses the shared popover chrome only. */
+/** Shared chrome button with one accessible name and consistent toolbar state. */
 export const ToolButton = forwardRef<HTMLButtonElement, ToolButtonProps>(function ToolButton(
   { label, shortcut, active, popover, className, children, type = 'button', ...buttonProps },
   ref,
@@ -97,10 +97,13 @@ export function ChromePopover({
               : null;
           } else {
             const content = event.currentTarget as HTMLElement;
+            const activeGroupButton = content.querySelector<HTMLElement>(
+              '[role="group"] button[tabindex="0"], [role="group"] button[aria-pressed="true"]',
+            );
             const firstFocusable = content.querySelector<HTMLElement>(
               'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
             );
-            (firstFocusable ?? content).focus();
+            (activeGroupButton ?? firstFocusable ?? content).focus();
           }
         }}
         onCloseAutoFocus={(event) => {

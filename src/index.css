@@ -52,7 +52,7 @@
   --color-accent-400: #9b81ff;
 }
 
-/* Fixed selection toolbar chrome and its popovers (PR 1 foundations). */
+/* Shared dark chrome for the selection toolbar and its popovers. */
 .chrome-bar {
   height: 40px;
   padding: 6px;

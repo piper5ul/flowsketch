@@ -1,6 +1,5 @@
 import {
   Copy,
-  EyeOff,
   PanelTop,
   Rows,
   Rows3,
@@ -25,6 +24,18 @@ import { OverflowMenu } from './OverflowMenu';
 import { ShapePicker } from './ShapePicker';
 import { StylePopover } from './StylePopover';
 import { Separator, Segmented, ToolButton } from './chrome';
+
+function CheckerboardIcon() {
+  return (
+    <svg aria-hidden="true" width="20" height="20" viewBox="0 0 20 20" fill="none">
+      <rect x="2.5" y="2.5" width="15" height="15" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="4" y="4" width="5.5" height="5.5" fill="currentColor" fillOpacity="0.65" />
+      <rect x="10.5" y="4" width="5.5" height="5.5" fill="currentColor" fillOpacity="0.18" />
+      <rect x="4" y="10.5" width="5.5" height="5.5" fill="currentColor" fillOpacity="0.18" />
+      <rect x="10.5" y="10.5" width="5.5" height="5.5" fill="currentColor" fillOpacity="0.65" />
+    </svg>
+  );
+}
 
 function TableOperations({ node }: { node: ShapeNode & { data: ShapeData & { table: TableData } } }) {
   const updateNodeData = useDiagramStore((state) => state.updateNodeData);
@@ -118,7 +129,7 @@ export function ShapeBar({
             </ToolButton>
           ))}
         </Segmented>
-        <ToolButton key="transparent" label="Transparent" active={allTransparent} onClick={toggleSelectedNodesTransparent}><EyeOff size={16} /></ToolButton>
+        <ToolButton key="transparent" label="Transparent" active={allTransparent} onClick={toggleSelectedNodesTransparent}><CheckerboardIcon /></ToolButton>
       </Fragment>
     );
     if (slot === 'style' && firstStyleable) return (

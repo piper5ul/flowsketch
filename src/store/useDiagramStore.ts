@@ -1396,11 +1396,47 @@ function touchesMarkers(patch: Partial<ConnectorData>): boolean {
 }
 
 /**
- * True when every key in `patch` already holds that exact value — a commit that
+ * True when every patched key resolves to its current value — a commit that
  * would leave the diagram untouched and so must not cost the user a ⌘Z.
  */
-function isNoOpPatch<T extends object>(current: T, patch: Partial<T>): boolean {
-  return (Object.keys(patch) as (keyof T)[]).every((key) => Object.is(current[key], patch[key]));
+function isNoOpPatch<T extends object>(
+  current: T,
+  patch: Partial<T>,
+  resolve: (data: T, key: keyof T) => unknown = (data, key) => data[key],
+): boolean {
+  const next = { ...current, ...patch };
+  return (Object.keys(patch) as (keyof T)[]).every((key) => Object.is(resolve(current, key), resolve(next, key)));
+}
+
+function resolveShapePatchValue(data: ShapeData, key: keyof ShapeData): unknown {
+  switch (key) {
+    case 'fontSize':
+      return resolveFontSize(data.fontSize);
+    case 'bold':
+    case 'italic':
+    case 'underline':
+    case 'strikethrough':
+      return data[key] ?? false;
+    case 'textAlign':
+      return data.textAlign ?? (data.shape === 'text' ? 'left' : 'center');
+    case 'verticalAlign':
+      return data.verticalAlign ?? 'middle';
+    default:
+      return data[key];
+  }
+}
+
+function resolveConnectorPatchValue(data: ConnectorData, key: keyof ConnectorData): unknown {
+  switch (key) {
+    case 'labelFontSize':
+      return resolveFontSize(data.labelFontSize);
+    case 'labelBold':
+      return data.labelBold ?? false;
+    case 'labelItalic':
+      return data.labelItalic ?? false;
+    default:
+      return data[key];
+  }
 }
 
 /**
@@ -2822,7 +2858,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
   // given when the text has not moved, so the second patch is `Object.is`).
   updateNodeData: (id, data) => {
     const node = get().nodes.find((n) => n.id === id);
-    if (!node || isNoOpPatch(node.data, data)) return;
+    if (!node || isNoOpPatch(node.data, data, resolveShapePatchValue)) return;
     pushHistory(get());
     set((s) => ({
       nodes: s.nodes.map((n) => (n.id === id ? withTableSize({ ...n, data: { ...n.data, ...data } }) : n)),
@@ -2872,7 +2908,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   updateEdgeData: (id, data) => {
     const edge = get().edges.find((e) => e.id === id);
-    if (!edge || (edge.data && isNoOpPatch(edge.data, data))) return;
+    if (!edge || (edge.data && isNoOpPatch(edge.data, data, resolveConnectorPatchValue))) return;
     pushHistory(get());
     set((s) => ({
       edges: s.edges.map((e) => {

@@ -76,6 +76,14 @@ test('the colour picker has a keyboard-accessible 4 by 4 grid and Escape keeps t
   await page.keyboard.press('Enter');
   await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(41, 135, 215)');
 
+  // Opening on an existing colour should focus that colour, so the default
+  // Enter action keeps the shape Blue instead of recolouring it White.
+  await toolbar.getByRole('button', { name: 'Color' }).click();
+  await expect(blue).toHaveAttribute('aria-pressed', 'true');
+  await expect(blue).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(shapeBox(node)).toHaveCSS('background-color', 'rgb(41, 135, 215)');
+
   // Picking a swatch closes the popover. Reopen it to check Escape's focus and
   // selection behavior independently.
   await toolbar.getByRole('button', { name: 'Color' }).click();
@@ -269,6 +277,9 @@ test('Dash combines with Transparent, Fill clears it, and Transparent from Fill 
   const outline = toolbar.getByRole('button', { name: 'Outline', exact: true });
   const dash = toolbar.getByRole('button', { name: 'Dash', exact: true });
   const transparent = toolbar.getByRole('button', { name: 'Transparent', exact: true });
+  const transparentIcon = transparent.locator('svg');
+  await expect(transparentIcon).toHaveAttribute('viewBox', '0 0 20 20');
+  await expect(transparentIcon.locator('rect')).toHaveCount(5);
 
   await dash.click();
   await expect(dash).toHaveAttribute('aria-pressed', 'true');
@@ -439,7 +450,7 @@ test('text toolbar clamps by its rendered width near the viewport edge', async (
   }).toBe(true);
 });
 
-test('the selection toolbar flips below a shape at the top edge and stays in the viewport', async ({ page }) => {
+test('the selection toolbar flips below a shape when its above-position overlaps the top bar', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 700 });
   await signUp(page);
   const diagramId = await page.evaluate(async () => {
@@ -448,16 +459,16 @@ test('the selection toolbar flips below a shape at the top edge and stays in the
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: 'Top edge toolbar',
+        title: 'Top bar toolbar',
         data: {
           version: 3,
           nodes: [{
-            id: 'top-edge',
+            id: 'top-bar-edge',
             type: 'shape',
-            position: { x: 350, y: 0 },
+            position: { x: 350, y: 100 },
             width: 180,
             height: 80,
-            data: { label: 'Top edge', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+            data: { label: 'Top bar edge', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
           }],
           edges: [],
           viewport: { x: 0, y: 0, zoom: 1 },
@@ -478,9 +489,10 @@ test('the selection toolbar flips below a shape at the top edge and stays in the
   const shape = (await shapeBox(node).boundingBox())!;
   expect(barBox.x).toBeGreaterThanOrEqual(0);
   expect(barBox.x + barBox.width).toBeLessThanOrEqual(viewport.width);
-  expect(shape.y).toBe(0);
   expect(barBox.y).toBeGreaterThanOrEqual(0);
   expect(barBox.y + barBox.height).toBeLessThanOrEqual(viewport.height);
+  const share = (await page.getByRole('button', { name: 'Share' }).boundingBox())!;
+  expect(barBox.y).toBeGreaterThanOrEqual(share.y + share.height);
   expect(barBox.y - (shape.y + shape.height)).toBe(39);
 });
 
@@ -540,6 +552,27 @@ test('More actions uses command shortcuts and exposes checked Lock state', async
   });
 
   await more.click();
+  const menu = page.getByRole('menu', { name: 'More actions' });
+  const copyItem = menu.getByRole('menuitem', { name: 'Copy', exact: true });
+  const saveDefaultItem = menu.getByRole('menuitem', { name: 'Save as default style', exact: true });
+  const arrangeItem = menu.getByRole('menuitem', { name: 'Arrange', exact: true });
+  const lockItem = menu.getByRole('menuitemcheckbox', { name: 'Lock / unlock' });
+  const wrapItem = menu.getByRole('menuitem', { name: 'Wrap in frame', exact: true });
+  const snapItem = menu.getByRole('menuitemcheckbox', { name: 'Snap to grid' });
+  const thumbnailItem = menu.getByRole('menuitem', { name: 'Set as board thumbnail', exact: true });
+  const menuBox = (await menu.boundingBox())!;
+  const copyBox = (await copyItem.boundingBox())!;
+  expect(menuBox.width).toBeGreaterThanOrEqual(272);
+  const copyText = (await copyItem.locator(':scope > span.flex-1').boundingBox())!;
+  for (const row of [saveDefaultItem, arrangeItem, lockItem, wrapItem, snapItem, thumbnailItem]) {
+    const text = (await row.locator(':scope > span.flex-1').boundingBox())!;
+    expect(Math.abs(text.x - copyText.x)).toBeLessThanOrEqual(1);
+    await expect(row).toHaveCSS('height', '30px');
+  }
+  await expect(menu).toHaveCSS('min-width', '272px');
+  await expect(saveDefaultItem.locator(':scope > span.flex-1')).toHaveCSS('white-space', 'nowrap');
+  const lastShortcut = (await copyItem.locator('kbd').last().boundingBox())!;
+  expect(lastShortcut.x + lastShortcut.width).toBe(copyBox.x + copyBox.width - 8);
   await expect(toolbar.getByRole('button', { name: 'Delete', exact: true })).toHaveCount(0);
   await expect(page.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
   const copy = page.getByRole('menuitem', { name: 'Copy', exact: true });
