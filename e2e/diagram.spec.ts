@@ -97,6 +97,47 @@ test('a new user can create a diagram, add a labeled shape, and see it survive a
   await expect(page.locator('.react-flow__node', { hasText: 'Hello from e2e' })).toBeVisible();
 });
 
+test('clicking a shape without moving it does not create an undo step', async ({ page }) => {
+  await signUp(page);
+  const diagramId = await page.evaluate(async () => {
+    const response = await fetch('/api/diagrams', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Click does not edit',
+        data: {
+          version: 3,
+          nodes: [{
+            id: 'click-target',
+            type: 'shape',
+            position: { x: 300, y: 220 },
+            width: 180,
+            height: 80,
+            data: { label: 'Click target', shape: 'rectangle', fill: '#FFFFFF', stroke: '#CBD5E1' },
+          }],
+          edges: [],
+        },
+      }),
+    });
+    if (!response.ok) throw new Error(`Could not create click regression diagram: ${response.status}`);
+    return ((await response.json()) as { id: string }).id;
+  });
+
+  await page.goto(`/d/${diagramId}`);
+  const node = page.locator('.react-flow__node').first();
+  await expect(node).toBeVisible();
+  await expectSynced(page);
+
+  const undo = page.getByRole('button', { name: 'Undo' });
+  await expect(undo).toBeDisabled();
+  await node.click();
+  // Match the reported polling window, including the binding's 150 ms
+  // transient flush interval.
+  await page.waitForTimeout(2_000);
+  await expect(undo).toBeDisabled();
+});
+
 test('sign out flushes pending offline board and title saves before revoking the session', async ({ page }) => {
   const saves: { kind: 'diagram' | 'sign-out'; payload?: { title?: string; data?: { nodes?: { data?: { label?: string } }[] } } }[] = [];
   await page.routeWebSocket(/\/collab/, (socket) => { void socket.close(); });
@@ -2531,6 +2572,10 @@ async function openEmptyBoard(page: Page, title: string): Promise<void> {
   }, title);
   await page.goto(`/d/${id}`);
   await expect(page.locator('.react-flow__pane')).toBeVisible();
+  // Bound before anything is pasted: an edit made before the board binds to
+  // its document lands before the undo manager exists, so ⌘Z has nothing to
+  // take back and an undo test reads that as a failure.
+  await expectSynced(page);
   await page.locator('.react-flow__pane').click({ position: { x: 400, y: 300 } });
 }
 

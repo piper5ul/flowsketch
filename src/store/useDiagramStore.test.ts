@@ -2176,6 +2176,35 @@ describe('diagramPictureChanged', () => {
     expect(diagramPictureChanged(nodes, edges, transientNodes, selectedEdges)).toBe(false);
   });
 
+  it('treats reordered nested node and edge keys as the same picture', () => {
+    const nodes = [node({ data: {
+      shape: 'rectangle',
+      label: 'Start',
+      style: { fill: '#ffffff', stroke: '#111111' },
+    } })];
+    const reorderedNodes = [node({
+      position: { y: 20, x: 10 },
+      data: {
+        style: { stroke: '#111111', fill: '#ffffff' },
+        label: 'Start',
+        shape: 'rectangle',
+      },
+    })];
+    const edges = [edge({ data: {
+      connectorType: 'straight',
+      style: { stroke: '#111111', strokeStyle: 'solid' },
+      label: '',
+    } })];
+    const reorderedEdges = [edge({ data: {
+      label: '',
+      style: { strokeStyle: 'solid', stroke: '#111111' },
+      connectorType: 'straight',
+    } })];
+
+    expect(diagramPictureChanged(nodes, [], reorderedNodes, [])).toBe(false);
+    expect(diagramPictureChanged([], edges, [], reorderedEdges)).toBe(false);
+  });
+
   it('marks label, committed position and fill changes dirty', () => {
     const nodes = [node()];
     const edges: ConnectorEdge[] = [];
