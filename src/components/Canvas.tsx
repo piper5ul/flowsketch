@@ -63,7 +63,6 @@ import { BottomBar } from './BottomBar';
 import { TopBar } from './TopBar';
 import { AlignmentGuides } from './AlignmentGuides';
 import { CanvasMiniMap } from './CanvasMiniMap';
-import { TextFormatBar } from './TextFormatBar';
 import { SearchBar } from './SearchBar';
 import { ShortcutSheet } from './ShortcutSheet';
 import { CommandMenu } from './CommandMenu';
@@ -373,6 +372,9 @@ export function Canvas({
               const anchor = commentAnchorRef.current;
               if (anchor) useCommentStore.getState().beginCompose(anchor);
             }
+          : undefined,
+        startCommentOn: topBar
+          ? (anchor: CommentAnchor) => useCommentStore.getState().beginCompose(anchor)
           : undefined,
       },
     }),
@@ -1133,6 +1135,7 @@ export function Canvas({
   return (
     <div
       ref={wrapperRef}
+      data-canvas-root=""
       className="relative h-full w-full"
       onDoubleClick={onCanvasDoubleClick}
       onDragOver={onDragOver}
@@ -1302,8 +1305,7 @@ export function Canvas({
       {!readOnly && !presenting && (
         <>
           <LeftRail wirePickerOpen={wirePickerOpen} onWirePickerOpenChange={setWirePickerOpen} />
-          <FloatingToolbar />
-          <TextFormatBar />
+          <FloatingToolbar ctx={commandContext} onRunCommand={runCommand} />
         </>
       )}
       {!presenting && <BottomBar onRunCommand={runCommand} showTheme={!topBar} />}

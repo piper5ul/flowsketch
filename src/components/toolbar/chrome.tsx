@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import clsx from 'clsx';
 import { Tooltip } from '../Tooltip';
@@ -12,7 +12,7 @@ interface ToolButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 
   children: ReactNode;
 }
 
-/** Reserved for PR 2; PR 1 currently uses the shared popover chrome only. */
+/** Shared chrome button with one accessible name and consistent toolbar state. */
 export const ToolButton = forwardRef<HTMLButtonElement, ToolButtonProps>(function ToolButton(
   { label, shortcut, active, popover, className, children, type = 'button', ...buttonProps },
   ref,
@@ -44,6 +44,26 @@ interface ChromePopoverProps {
   children: ReactNode;
 }
 
+export function Separator() {
+  return <span aria-hidden="true" className="chrome-sep" />;
+}
+
+export function Segmented({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div role="group" aria-label={label} className={clsx('chrome-track', className)}>
+      {children}
+    </div>
+  );
+}
+
 /** The measured dark popover shell shared by toolbar pickers and controls. */
 export function ChromePopover({
   label,
@@ -53,6 +73,9 @@ export function ChromePopover({
   width,
   children,
 }: ChromePopoverProps) {
+  const editorRef = useRef<HTMLElement | null>(null);
+  const selectionRef = useRef<Range | null>(null);
+
   return (
     <Popover.Portal>
       <Popover.Content
@@ -60,14 +83,46 @@ export function ChromePopover({
         side={side}
         sideOffset={sideOffset}
         align="center"
+        tabIndex={-1}
         style={width === undefined ? undefined : { width }}
         className="chrome-pop z-50"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
-          if (!keepEditorFocus) {
+          if (keepEditorFocus) {
+            const active = document.activeElement;
+            editorRef.current = active instanceof HTMLElement && active.isContentEditable ? active : null;
+            const selection = window.getSelection();
+            selectionRef.current = editorRef.current && selection?.rangeCount
+              ? selection.getRangeAt(0).cloneRange()
+              : null;
+          } else {
             const content = event.currentTarget as HTMLElement;
-            content.querySelector<HTMLButtonElement>('[role="group"] button[tabindex="0"]')?.focus();
+            const activeGroupButton = content.querySelector<HTMLElement>(
+              '[role="group"] button[tabindex="0"], [role="group"] button[aria-pressed="true"]',
+            );
+            const firstFocusable = content.querySelector<HTMLElement>(
+              'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+            );
+            (activeGroupButton ?? firstFocusable ?? content).focus();
           }
+        }}
+        onCloseAutoFocus={(event) => {
+          if (keepEditorFocus) {
+            event.preventDefault();
+            const editor = editorRef.current;
+            if (editor?.isConnected) {
+              editor.focus();
+              const range = selectionRef.current;
+              if (range && editor.contains(range.startContainer) && editor.contains(range.endContainer)) {
+                const selection = window.getSelection();
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+              }
+            }
+          }
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== 'Escape') event.stopPropagation();
         }}
         onMouseDown={
           keepEditorFocus

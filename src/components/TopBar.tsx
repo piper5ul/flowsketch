@@ -43,7 +43,7 @@ export function TopBar({ beforeSignOut }: { beforeSignOut?: () => Promise<boolea
 
   return (
     <>
-    <div className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-center justify-between">
+    <div data-canvas-top-bar="" className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-center justify-between">
       <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-panel/95 py-1.5 pl-2 pr-2 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <Tooltip label="Back to dashboard" side="bottom">
           <button

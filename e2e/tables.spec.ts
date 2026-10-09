@@ -112,7 +112,7 @@ test('a pasted Markdown table becomes a table with a header row', async ({ page,
   await tableNode(page).click();
   await expect(
     page.getByRole('toolbar', { name: 'Selection toolbar' }).getByRole('button', { name: 'Header row' }),
-  ).toHaveClass(/bg-accent-500/);
+  ).toHaveAttribute('aria-pressed', 'true');
 });
 
 test('plain paste leaves a single HTML cell alone and falls back to text for unsupported table HTML', async ({ page }) => {

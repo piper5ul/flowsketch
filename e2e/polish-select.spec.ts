@@ -66,7 +66,7 @@ test('⌘-click reaches inside a group and selects the one shape it landed on', 
   // group has no shape to swap, and a rectangle does.
   const toolbar = page.getByRole('toolbar', { name: 'Selection toolbar' });
   await expect(toolbar).toBeVisible();
-  await expect(toolbar.getByRole('button', { name: 'Shape' })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'Change shape' })).toBeVisible();
 
   // The other half of the rule — that ⌘ keeps its multi-select meaning once
   // something else is selected — is `deepSelect.test.ts`'s: a held modifier

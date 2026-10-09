@@ -18,7 +18,6 @@ interface ColorPickerProps {
   extra?: ReactNode;
 }
 
-const EDGE_BUTTON = 'chrome-btn';
 export function ColorPicker({
   target,
   activeId,
@@ -56,7 +55,7 @@ export function ColorPicker({
               aria-label={label}
               aria-pressed={open}
               data-popover=""
-              className={clsx(EDGE_BUTTON, open && 'bg-[var(--color-chrome-hover)] text-white')}
+              className="chrome-btn"
             >
               {textTarget ? (
                 <>

@@ -250,6 +250,30 @@ describe('undo / redo', () => {
     expect(store().nodes).toHaveLength(0);
   });
 
+  it('does not record the default M size or resolved typography defaults for one shape', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    store().loadDiagram('test', 'Test', false, { nodes: store().nodes, edges: store().edges });
+
+    store().updateNodeData(id, {
+      fontSize: 14,
+      bold: false,
+      italic: false,
+      textAlign: 'center',
+      verticalAlign: 'middle',
+    });
+
+    expect(store().canUndo).toBe(false);
+  });
+
+  it('uses the text shape’s left alignment default when checking no-op typography', () => {
+    const id = store().addShape('text', { x: 0, y: 0 });
+    store().loadDiagram('test', 'Test', false, { nodes: store().nodes, edges: store().edges });
+
+    store().updateNodeData(id, { textAlign: 'left', verticalAlign: 'middle' });
+
+    expect(store().canUndo).toBe(false);
+  });
+
   it('reverts a connector label edit made through updateEdgeData', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
     store().addConnectedShape(a, 'right');
@@ -1553,6 +1577,15 @@ describe('updateEdgeData', () => {
     return store().edges[0].id;
   }
 
+  it('does not record the default M size or emphasis for a connector label', () => {
+    const id = edgeId();
+    store().loadDiagram('test', 'Test', false, { nodes: store().nodes, edges: store().edges });
+
+    store().updateEdgeData(id, { labelFontSize: 'medium', labelBold: false, labelItalic: false });
+
+    expect(store().canUndo).toBe(false);
+  });
+
   it('recolors the arrowheads when the stroke changes', () => {
     const id = edgeId();
     store().updateEdgeData(id, { stroke: '#FF0000' });
@@ -1881,6 +1914,19 @@ describe('updateSelectedNodesData', () => {
 
     store().undo();
     expect(store().nodes.every((n) => n.data.italic === undefined)).toBe(true);
+  });
+
+  it('does not record an inherited 14px size as a second history entry', () => {
+    const id = store().addShape('rectangle', { x: 0, y: 0 });
+    select(id);
+    store().updateSelectedNodesData({ bold: true });
+    store().updateSelectedNodesData({ fontSize: 14 });
+
+    expect(store().nodes.find((n) => n.id === id)!.data.fontSize).toBeUndefined();
+
+    store().undo();
+    expect(store().nodes.find((n) => n.id === id)!.data.bold).toBeUndefined();
+    expect(store().nodes.find((n) => n.id === id)!.data.fontSize).toBeUndefined();
   });
 
   it('carries the decorations and an explicit text colour', () => {

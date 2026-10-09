@@ -8,14 +8,13 @@
 import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import { Filter } from 'lucide-react';
-import clsx from 'clsx';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { filterOptions, isWireFilterKind, narrowedIds, wireComponentOfFilterKind } from '../lib/selectionFilter';
 import type { FilterKind } from '../lib/selectionFilter';
 import { SHAPE_ICONS, SHAPE_LABELS } from '../lib/shapeIcons';
 import { WIRE_ICONS } from '../lib/wireIcons';
 import { WIRE_LABELS } from '../lib/wireframe';
-import { Tooltip } from './Tooltip';
+import { ChromePopover, ToolButton } from './toolbar/chrome';
 
 /**
  * The icon and the name a bucket wears. Two tables rather than one, because a
@@ -28,9 +27,6 @@ function faceOf(kind: FilterKind): { Icon: React.ComponentType<{ size?: number }
   }
   return { Icon: SHAPE_ICONS[kind], label: SHAPE_LABELS[kind] };
 }
-
-const BUTTON_CLASS =
-  'flex h-8 w-8 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/10 hover:text-white';
 
 export function FilterSelectionMenu() {
   const [open, setOpen] = useState(false);
@@ -45,19 +41,13 @@ export function FilterSelectionMenu() {
 
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
-      <Tooltip label="Filter selection" side="top">
-        <Popover.Trigger asChild>
-          <button aria-label="Filter selection" className={clsx(BUTTON_CLASS, open && 'bg-white/10 text-white')}>
-            <Filter size={16} />
-          </button>
-        </Popover.Trigger>
-      </Tooltip>
-      <Popover.Portal>
-        <Popover.Content
-          side="bottom"
-          sideOffset={10}
-          className="panel-in z-50 flex w-56 flex-col gap-2 rounded-xl bg-ink-950 p-2 shadow-[0_16px_40px_-10px_rgba(10,10,25,0.55)]"
-        >
+      <Popover.Trigger asChild>
+        <ToolButton label="Filter selection" popover active={open}>
+          <Filter size={16} />
+        </ToolButton>
+      </Popover.Trigger>
+      <ChromePopover label="Filter selection" side="bottom" sideOffset={9} width={224}>
+        <div className="flex flex-col gap-2">
           <section>
             <h3 className="px-1 pb-1 text-[11px] font-medium text-white/50">By shape</h3>
             <ul className="flex flex-col">
@@ -67,7 +57,7 @@ export function FilterSelectionMenu() {
                   <li key={value}>
                     <button
                       onClick={() => pick({ shape: value })}
-                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[13px] text-white/85 hover:bg-white/10"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[13px] text-white/85 hover:bg-[var(--color-chrome-hover)]"
                     >
                       <Icon size={14} />
                       <span className="flex-1 text-left">{label}</span>
@@ -88,16 +78,15 @@ export function FilterSelectionMenu() {
                     aria-label={`Colour ${value} (${count})`}
                     title={`${count}`}
                     onClick={() => pick({ fill: value })}
-                    className="relative h-6 w-6 rounded-md ring-1 ring-white/20 transition hover:scale-110"
+                    className="relative h-6 w-6 rounded-md ring-1 ring-[var(--color-chrome-ring)] transition hover:scale-110"
                     style={{ backgroundColor: value }}
                   />
                 ))}
               </div>
             </section>
           )}
-          <Popover.Arrow className="fill-ink-950" />
-        </Popover.Content>
-      </Popover.Portal>
+        </div>
+      </ChromePopover>
     </Popover.Root>
   );
 }

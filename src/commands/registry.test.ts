@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createRegistry, formatShortcut } from './registry';
+import { createRegistry, formatShortcut, shortcutChips } from './registry';
 import { bindingsOf, commandDeclarations, commands, registry } from './commands';
 import { useViewPreferences } from '../store/useViewPreferences';
 import type { Command, CommandContext, Keybinding } from './types';
@@ -170,6 +170,19 @@ describe('formatShortcut', () => {
   it('returns an empty string when there is no binding', () => {
     expect(formatShortcut(undefined, 'mac')).toBe('');
     expect(formatShortcut([], 'mac')).toBe('');
+  });
+});
+
+describe('shortcutChips', () => {
+  it('returns one chip per modifier and key for Mac and other platforms', () => {
+    const binding = { key: 'c', meta: true, shift: true };
+    expect(shortcutChips(binding, 'mac')).toEqual(['⌘', '⇧', 'C']);
+    expect(shortcutChips(binding, 'other')).toEqual(['Ctrl', 'Shift', 'C']);
+  });
+
+  it('uses the first binding and returns no chips for an unbound command', () => {
+    expect(shortcutChips([{ key: 'Backspace' }, { key: 'Delete' }], 'mac')).toEqual(['⌫']);
+    expect(shortcutChips(undefined, 'mac')).toEqual([]);
   });
 });
 

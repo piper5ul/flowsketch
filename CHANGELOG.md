@@ -3,6 +3,38 @@
 FlowSketch is deployed continuously from `main`; releases are cut by date when a
 body of work lands. Newest first.
 
+## 2026.10.08 — Selection toolbar, text bar and overflow
+
+The selection toolbar now uses the measured dark slate chrome in both themes
+and sits 39 px above the selection when space allows. If that position would
+overlap the canvas top bar, it flips below the selection. Its shape, connector
+and text modes keep the controls relevant to each selection type reachable.
+Text swaps the bar in place; its size, emphasis, alignment, colour, link,
+underline and strikethrough controls remain available while editing.
+
+Arrange, Align, Lock, style actions and Delete moved into the command-backed
+More actions menu. Delete is no longer a bar button; Backspace and Delete still
+work, and the menu shows shortcut chips from the command registry. Connector
+line, arrowhead and reset-route controls now share the same toolbar chrome.
+
+### Under the hood
+
+- `toolbarModel.ts` owns the slot rules; `overflowMenu.ts` resolves menu items
+  against command `when` and `checked` metadata.
+- The colour picker opens on the current swatch, so Enter keeps the chosen
+  colour; Escape closes it without changing the selection. Text popovers keep
+  editor and caret focus only during live label editing. Finish commits the
+  label, and Link takes focus after the label blur.
+- Style sliders preview with transient store writes and commit through the
+  existing history boundary.
+
+### Tests
+
+- Toolbar metrics in both themes, top-bar flip placement, swatch focus and
+  Escape behavior, inline text editing, overflow shortcuts and checked Lock
+  state, connector controls, and the existing toolbar, selection, table,
+  wireframe, ink and arrangement browser flows.
+
 ## 2026.10.08 — Palette, fill looks and theme control
 
 The colour picker now has fifteen named colours and a custom hex choice. Fill,
