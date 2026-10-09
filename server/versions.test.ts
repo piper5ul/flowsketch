@@ -651,30 +651,13 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
-  it('409s when a stored collab document is not active in this process', async () => {
+  it('409s when a collab session owns the document', async () => {
     prismaMock.diagramDoc.findUnique.mockResolvedValueOnce({ diagramId: 'd1' });
 
     await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(409);
 
     expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
-  });
-
-  it('restores a live collaborative document from the response the client will re-seed', async () => {
-    const live = { version: 3, nodes: [{ id: 'live', type: 'shape', position: { x: 0, y: 0 }, data: {} }], edges: [] };
-    setLiveDiagramReader((diagramId) => (diagramId === 'd1' ? live : null));
-    onTestFinished(() => setLiveDiagramReader(null));
-    prismaMock.diagramDoc.findUnique.mockResolvedValueOnce({ diagramId: 'd1' });
-
-    const res = await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
-
-    expect(prismaMock.diagramVersion.create).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ data: live, label: RESTORE_SNAPSHOT_LABEL }) }),
-    );
-    expect(prismaMock.diagram.update).toHaveBeenCalledWith(expect.objectContaining({
-      data: { data: BEFORE, title: 'Then' },
-    }));
-    expect(res.body).toMatchObject({ id: 'd1', title: 'Then', data: BEFORE });
   });
 });
 

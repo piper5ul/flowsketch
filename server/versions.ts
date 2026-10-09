@@ -319,16 +319,15 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     return;
   }
 
-  // A stored collaborative document may be stale when nobody has it open, in
-  // which case updating only Diagram.data would be overwritten by the next
-  // socket fetch. While it is live in this process, the response is applied to
-  // the client's bound Y.Doc through `loadDiagram`; otherwise keep the guard.
-  const liveData = liveDiagramData(req.params.id);
+  // A collab session owns the document: writing `data` here would be
+  // overwritten by the store hook's next debounce. The client re-seeds the
+  // Yjs doc through `loadDiagram`, which is the correct path — but only if
+  // we do not also race against it from the row side.
   const liveDoc = await prisma.diagramDoc.findUnique({
     where: { diagramId: req.params.id },
     select: { diagramId: true },
   });
-  if (liveDoc && !liveData) {
+  if (liveDoc) {
     res.status(409).json({ error: 'Conflict', updatedAt: access.diagram.updatedAt });
     return;
   }
@@ -339,7 +338,7 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
   // would lose exactly the edits nobody meant to discard.
   await writeVersion({
     diagramId: req.params.id,
-    data: liveData ?? access.diagram.data,
+    data: liveDiagramData(req.params.id) ?? access.diagram.data,
     title: access.diagram.title,
     createdById: authedUser(req).id,
     ownerId: access.diagram.userId,
