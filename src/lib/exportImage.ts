@@ -144,14 +144,6 @@ export interface CaptureOptions {
    * that means the whole board instead (`CanvasPage` does).
    */
   nodeIds?: readonly string[];
-  /**
-   * Keeps the user's selection on screen during the capture. Clearing it is
-   * right for an export the user asked for, but a background capture (the
-   * dashboard thumbnail) must not make the selection ring and the floating
-   * toolbar blink mid-edit — a ring baked into a 480 px preview is the
-   * cheaper of the two costs.
-   */
-  preserveSelection?: boolean;
 }
 
 /** What an export subset needs to know about a connector: its two ends. */
@@ -270,8 +262,7 @@ async function captureDiagram(render: Renderer, options: CaptureOptions): Promis
   // export never costs the user an undo step.
   const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
   const selectedEdgeIds = new Set(edges.filter((e) => e.selected).map((e) => e.id));
-  const hadSelection =
-    !options.preserveSelection && (selectedNodeIds.size > 0 || selectedEdgeIds.size > 0);
+  const hadSelection = selectedNodeIds.size > 0 || selectedEdgeIds.size > 0;
 
   // Shapes transition their box-shadow, so a selection ring fades out over
   // several frames and would be captured mid-fade. Freeze transitions first,
@@ -320,6 +311,138 @@ async function captureDiagram(render: Renderer, options: CaptureOptions): Promis
 /** The diagram as a PNG data URL. */
 export function renderDiagramPng(options: CaptureOptions = {}): Promise<string | null> {
   return captureDiagram(toPng, options);
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const XHTML_NS = 'http://www.w3.org/1999/xhtml';
+
+/** Every same-origin stylesheet on the page, as one block of CSS text. */
+function pageCss(): string {
+  let css = '';
+  for (const sheet of Array.from(document.styleSheets)) {
+    try {
+      for (const rule of Array.from(sheet.cssRules)) css += `${rule.cssText}\n`;
+    } catch {
+      // A cross-origin sheet cannot be read; nothing on the board comes from one.
+    }
+  }
+  return css;
+}
+
+/**
+ * An uploaded image cannot load inside an SVG image, so each one is redrawn
+ * from the copy already on screen, at the size the card will show it. One a
+ * collaborator has only just added may still be downloading: it is waited for,
+ * or the card would be saved without it and nothing would ask for another.
+ * Every image on the board is `object-contain`, so it is drawn fitted and
+ * centred in its box rather than stretched to it.
+ */
+async function inlineImages(live: HTMLElement, clone: HTMLElement, zoom: number) {
+  const liveImgs = Array.from(live.querySelectorAll('img'));
+  await Promise.all(liveImgs.map((img) => (img.complete ? null : img.decode().catch(() => {}))));
+  clone.querySelectorAll('img').forEach((img, i) => {
+    const source = liveImgs[i];
+    if (!source?.complete || source.naturalWidth === 0) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(source.offsetWidth * zoom * 2));
+    canvas.height = Math.max(1, Math.ceil(source.offsetHeight * zoom * 2));
+    const fit = Math.min(canvas.width / source.naturalWidth, canvas.height / source.naturalHeight);
+    const w = source.naturalWidth * fit;
+    const h = source.naturalHeight * fit;
+    try {
+      canvas.getContext('2d')?.drawImage(source, (canvas.width - w) / 2, (canvas.height - h) / 2, w, h);
+      img.src = canvas.toDataURL();
+    } catch {
+      // A tainted image stays out of the card rather than failing it.
+    }
+  });
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+/**
+ * The dashboard thumbnail: the same framing as `renderDiagramPng`, but drawn
+ * by the browser rather than by `html-to-image`.
+ *
+ * `html-to-image` copies every computed style property of every element onto
+ * its clone, which on a 600-shape board was a single ~3 s freeze. A card does
+ * not need that: the board is cloned natively, the page's own stylesheets go
+ * in beside it, and the browser lays it out as an SVG image. The selection is
+ * left as it is (a background capture must not make it blink), and the
+ * picture is always the light theme, like every export.
+ */
+export async function renderThumbnailPng(
+  options: Pick<CaptureOptions, 'maxSide' | 'nodeIds'> = {},
+): Promise<string | null> {
+  const { nodes, edges } = useDiagramStore.getState();
+  const subset = exportSubset(nodes, edges, options.nodeIds ? { nodeIds: options.nodeIds } : {});
+  if (!subset.bounds) return null;
+  const viewportEl = document.querySelector('.react-flow__viewport') as HTMLElement | null;
+  const flowEl = viewportEl?.closest('.react-flow') as HTMLElement | null;
+  if (!viewportEl || !flowEl) return null;
+
+  const { width, height, viewport } = computeExportViewport(subset.bounds, {
+    padding: EXPORT_PADDING,
+    pixelRatio: 1,
+    maxSide: options.maxSide,
+  });
+
+  const clone = viewportEl.cloneNode(true) as HTMLElement;
+  await inlineImages(viewportEl, clone, viewport.zoom);
+  clone.querySelectorAll(EXCLUDED_SELECTORS.join(',')).forEach((el) => el.remove());
+  if (subset.nodes.length !== nodes.length) {
+    const nodeIds = new Set(subset.nodes.map((n) => n.id));
+    clone.querySelectorAll('.react-flow__node[data-id], .react-flow__edge[data-id]').forEach((el) => {
+      const id = el.getAttribute('data-id')!;
+      if (!(el.matches('.react-flow__node') ? nodeIds.has(id) : subset.edgeIds.has(id))) el.remove();
+    });
+  }
+  clone.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`;
+
+  // The React Flow container, emptied, so selectors and variables scoped to it
+  // still reach the board; `html` and `body` carry what the page's own do.
+  const flow = flowEl.cloneNode(false) as HTMLElement;
+  flow.setAttribute('style', `width:${width}px;height:${height}px;position:relative;overflow:hidden`);
+  flow.appendChild(clone);
+  const html = document.createElementNS(XHTML_NS, 'html');
+  html.setAttribute('data-theme', 'light');
+  const body = document.createElementNS(XHTML_NS, 'body');
+  body.setAttribute('style', 'margin:0;background:transparent');
+  body.appendChild(flow);
+  html.appendChild(body);
+
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('width', String(width));
+  svg.setAttribute('height', String(height));
+  // `:root` is this element inside the image: pin it to the light tokens.
+  svg.setAttribute('data-theme', 'light');
+  const style = document.createElementNS(SVG_NS, 'style');
+  // An image is a still: a transition or animation would be caught at its start.
+  style.textContent = `${pageCss()}\n* { transition: none !important; animation: none !important; }`;
+  const object = document.createElementNS(SVG_NS, 'foreignObject');
+  object.setAttribute('width', '100%');
+  object.setAttribute('height', '100%');
+  object.appendChild(html);
+  svg.append(style, object);
+
+  const markup = new XMLSerializer().serializeToString(svg);
+  const image = await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.fillStyle = DEFAULT_BACKGROUND;
+  ctx.fillRect(0, 0, width, height);
+  ctx.drawImage(image, 0, 0, width, height);
+  return canvas.toDataURL('image/png');
 }
 
 /** The data URL prefix `html-to-image`'s `toSvg` produces. */
