@@ -22,7 +22,7 @@ import { CONNECTOR_STANDOFF_PX, DEFAULT_END_ARROW, DEFAULT_START_ARROW } from '.
 import { markerDepthPx } from './edgeMarkers';
 import { isAnchorNode, isGroupNode } from './nodeKinds';
 import { absolutePosition } from './nodeTree';
-import { orthoRouteMemo, type RouteMemo, type RoutePoint } from './orthoRouter';
+import { obstacleIndex, orthoRouteMemo, type ObstacleIndex, type RouteMemo, type RoutePoint } from './orthoRouter';
 import type { ConnectorData, Direction, ShapeData } from '../types';
 
 /** What this module needs to know about a node. */
@@ -48,6 +48,14 @@ export interface BoardGeometry<N extends GeometryNode> {
    * arrow's anchor is not a shape, and a hidden node is not on the board.
    */
   obstacles: readonly { id: string; rect: Rect }[];
+  /**
+   * The obstacles' rects, and the router's index of them — built on first use
+   * and shared by every connector on this board, each of which names its own
+   * two ends as `ignore` (a node's rect is one object per board, so identity
+   * is enough).
+   */
+  obstacleRects: readonly Rect[];
+  routeIndex(): ObstacleIndex;
 }
 
 const boards = new WeakMap<readonly GeometryNode[], BoardGeometry<GeometryNode>>();
@@ -73,7 +81,10 @@ export function boardGeometry<N extends GeometryNode>(nodes: readonly N[]): Boar
   const obstacles = nodes
     .filter((n) => !n.hidden && !isAnchorNode(n.data) && !isGroupNode(n))
     .map((n) => ({ id: n.id, rect: rectOf(n) }));
-  const geometry: BoardGeometry<N> = { byId, rectOf, obstacles };
+  const obstacleRects = obstacles.map((o) => o.rect);
+  let index: ObstacleIndex | null = null;
+  const routeIndex = () => (index ??= obstacleIndex(obstacleRects));
+  const geometry: BoardGeometry<N> = { byId, rectOf, obstacles, obstacleRects, routeIndex };
   boards.set(nodes, geometry as unknown as BoardGeometry<GeometryNode>);
   return geometry;
 }
@@ -161,7 +172,11 @@ export function connectorGeometry<N extends GeometryNode>(
         target: t,
         targetSide: targetAnchor.side,
         targetRect,
-        obstacles: board.obstacles.filter((o) => o.id !== source && o.id !== target).map((o) => o.rect),
+        // Every shape but this connector's own two, which are `ignore`d by
+        // identity rather than filtered out, so the board's one index serves.
+        obstacles: board.obstacleRects,
+        ignore: [sourceRect, targetRect],
+        index: board.routeIndex(),
         vertices: data?.waypoints ?? [],
       },
       memo.current,

@@ -28,17 +28,21 @@ export function VoteBadge({ nodeId }: { nodeId: string }) {
   const viewerId = useDiagramStore((s) => s.viewerId);
   const readOnly = useDiagramStore((s) => s.readOnly);
   // Numbers, never the node: a fresh object per call would re-render every
-  // shape on every store update. A board with no round pays two lookups.
+  // shape on every store update. These run for every shape on every update —
+  // every frame of a drag — so a board with no round pays nothing, and one in
+  // a round pays a lookup by id rather than a scan of the board per shape.
   const mine = useDiagramStore((s) => {
-    const node = s.nodes.find((n) => n.id === nodeId);
+    // Your dots are drawn only while a round is open.
+    if (!s.voting?.active) return 0;
+    const node = nodeById(s.nodes, nodeId);
     return node ? votesBy(node, s.viewerId) : 0;
   });
   const total = useDiagramStore((s) => {
     if (!s.voting?.revealed) return 0;
-    const node = s.nodes.find((n) => n.id === nodeId);
+    const node = nodeById(s.nodes, nodeId);
     return node ? voteCount(node) : 0;
   });
-  const canAdd = useDiagramStore((s) => canVote(s.voting, s.nodes, s.viewerId));
+  const canAdd = useDiagramStore((s) => canVoteShared(s.voting, s.nodes, s.viewerId));
 
   if (!voting) return null;
 
@@ -85,6 +89,32 @@ export function VoteBadge({ nodeId }: { nodeId: string }) {
       </VoteAffordance>
     </div>
   );
+}
+
+type BoardNodes = ReturnType<typeof useDiagramStore.getState>['nodes'];
+
+/** Each node array's nodes by id, built once per array (the first of an id wins, as `find` did). */
+const byIdCache = new WeakMap<BoardNodes, Map<string, BoardNodes[number]>>();
+function nodeById(nodes: BoardNodes, id: string) {
+  let byId = byIdCache.get(nodes);
+  if (!byId) {
+    byId = new Map();
+    for (const n of nodes) if (!byId.has(n.id)) byId.set(n.id, n);
+    byIdCache.set(nodes, byId);
+  }
+  return byId.get(id);
+}
+
+/**
+ * `canVote`, asked once per board state rather than once per shape: every
+ * badge asks the same question of the same arguments.
+ */
+let lastCanVote: { args: Parameters<typeof canVote>; value: boolean } | null = null;
+function canVoteShared(...args: Parameters<typeof canVote>): boolean {
+  if (lastCanVote && lastCanVote.args.every((a, i) => a === args[i])) return lastCanVote.value;
+  const value = canVote(...args);
+  lastCanVote = { args, value };
+  return value;
 }
 
 function VoteAffordance({

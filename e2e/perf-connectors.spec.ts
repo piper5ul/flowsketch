@@ -1,7 +1,9 @@
 /**
- * Frame-time benchmark for the three gestures that move connectors on a big
- * board: dragging a connected shape, drawing a connector with the connector
- * tool, and dragging a connector's end across other shapes.
+ * Frame-time benchmark for the gestures that hurt on a big board: dragging a
+ * connected shape, drawing a connector with the connector tool, dragging a
+ * connector's end across other shapes, dragging a shape along a row with the
+ * alignment guides firing, box-selecting and dragging a block of shapes, and
+ * panning and zooming with the wheel.
  *
  * It is a measurement, not an assertion, so it is **skipped unless `PERF=1`**
  * — the normal `npm run test:e2e` and CI never run it:
@@ -9,20 +11,32 @@
  *     PERF=1 npx playwright test e2e/perf-connectors.spec.ts
  *
  * The board is 150 rectangles in a grid with 100 elbow connectors between
- * neighbours, written through `POST /api/diagrams` before it is first opened
+ * neighbours (`PERF_SIZE=large`: 600 rectangles and 450 connectors), written through `POST /api/diagrams` before it is first opened
  * (so it is seeded into its document exactly as any stored diagram is). Each
  * gesture is 60 pointer moves, one per animation frame — the cadence a real
  * pointer is delivered at — while a `requestAnimationFrame` sampler records
  * frame intervals and a `longtask` observer counts tasks over 50 ms. Results
- * go to stdout and to `test-results/perf-connectors.json`.
+ * go to stdout and to `test-results/perf-connectors[-large].json`.
+ *
+ * `PERF_PROFILE=1` also records a CPU profile of every gesture through the
+ * DevTools protocol and prints the functions with the most self time (the
+ * profiler slows the page, so frame times from such a run are not comparable
+ * with a plain one).
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type CDPSession, type Page } from '@playwright/test';
 
 test.skip(!process.env.PERF, 'benchmark: run with PERF=1');
+// The config's `retain-on-failure` trace snapshots the whole DOM after every
+// pointer move — on the large board that alone was ~1.8 s of main-thread work
+// per gesture, and none of it the app's.
+test.use({ trace: 'off', screenshot: 'off' });
 
-const COLS = 15;
-const ROWS = 10;
+const LARGE = process.env.PERF_SIZE === 'large';
+const COLS = LARGE ? 30 : 15;
+const ROWS = LARGE ? 20 : 10;
+const EDGES = LARGE ? 450 : 100;
+const PROFILE = !!process.env.PERF_PROFILE;
 const STEP_X = 200;
 const STEP_Y = 130;
 const W = 120;
@@ -73,7 +87,7 @@ function board() {
   for (let c = 1; c < COLS; c += 3) {
     for (let r = 0; r < ROWS - 1; r++) vertical.push(edge(`v-${r}-${c}`, nodeId(r, c), nodeId(r + 1, c), 'bottom', 'top'));
   }
-  const edges = [...horizontal, ...vertical].slice(0, 100);
+  const edges = [...horizontal, ...vertical].slice(0, EDGES);
   return { version: 3, nodes, edges, viewport: { x: 40, y: 120, zoom: 0.4 } };
 }
 
@@ -156,8 +170,52 @@ async function centreOf(page: Page, id: string) {
   return { x: box.x + box.width / 2, y: box.y + box.height / 2, box };
 }
 
-test('connector gestures on a 150-shape, 100-connector board', async ({ page }) => {
-  test.setTimeout(180_000);
+interface ProfileNode {
+  id: number;
+  callFrame: { functionName: string; url: string; lineNumber: number };
+}
+
+/** The functions with the most self time in a CDP CPU profile, in ms. */
+function topSelf(profile: { nodes: ProfileNode[]; samples: number[]; timeDeltas: number[] }, n = 12) {
+  const byNode = new Map(profile.nodes.map((node) => [node.id, node]));
+  const self = new Map<string, number>();
+  let total = 0;
+  profile.samples.forEach((id, i) => {
+    const dt = (profile.timeDeltas[i + 1] ?? 0) / 1000;
+    const { functionName, url, lineNumber } = byNode.get(id)!.callFrame;
+    const file = url.replace(/^.*\/(src|node_modules\/\.vite\/deps)\//, '').replace(/\?.*$/, '');
+    const key = `${functionName || '(anonymous)'} ${file ? `${file}:${lineNumber + 1}` : ''}`.trim();
+    self.set(key, (self.get(key) ?? 0) + dt);
+    if (functionName !== '(idle)' && functionName !== '(program)') total += dt;
+  });
+  return {
+    busyMs: Math.round(total),
+    top: [...self.entries()]
+      .filter(([k]) => !k.startsWith('(idle)'))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map(([k, ms]) => `${ms.toFixed(1).padStart(7)} ms  ${k}`),
+  };
+}
+
+/** Measures one gesture: frame times always, a CPU profile with `PERF_PROFILE`. */
+async function measure(page: Page, cdp: CDPSession | null, profiles: Record<string, unknown>, name: string, gesture: () => Promise<void>) {
+  if (cdp) await cdp.send('Profiler.start');
+  await startSampler(page);
+  await gesture();
+  const stats = await stopSampler(page);
+  if (cdp) {
+    const { profile } = await cdp.send('Profiler.stop');
+    profiles[name] = topSelf(profile as never);
+    // The whole profile too, for DevTools' Performance panel.
+    mkdirSync('test-results/profiles', { recursive: true });
+    writeFileSync(`test-results/profiles/${name}${LARGE ? '-large' : ''}.cpuprofile`, JSON.stringify(profile));
+  }
+  return stats;
+}
+
+test('connector gestures on a big board', async ({ page }) => {
+  test.setTimeout(LARGE ? 600_000 : 180_000);
   await page.setViewportSize({ width: 1400, height: 800 });
   await signUp(page);
   const data = board();
@@ -175,9 +233,16 @@ test('connector gestures on a 150-shape, 100-connector board', async ({ page }) 
   await expect(page.locator('.react-flow__edge')).toHaveCount(data.edges.length);
   await expect(page.locator('[data-collab-sync="synced"]')).toBeVisible();
   // Let the opening work (binding, thumbnail, fonts) settle.
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(LARGE ? 3000 : 1500);
 
   const results: Record<string, GestureStats> = {};
+  const profiles: Record<string, unknown> = {};
+  let cdp: CDPSession | null = null;
+  if (PROFILE) {
+    cdp = await page.context().newCDPSession(page);
+    await cdp.send('Profiler.enable');
+    await cdp.send('Profiler.setSamplingInterval', { interval: 100 });
+  }
 
   // (a) Drag one connected shape across the board.
   {
@@ -185,9 +250,7 @@ test('connector gestures on a 150-shape, 100-connector board', async ({ page }) 
     const to = { x: from.x + 360, y: from.y + 170 };
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    await startSampler(page);
-    await glide(page, from, to);
-    results.dragShape = await stopSampler(page);
+    results.dragShape = await measure(page, cdp, profiles, 'dragShape', () => glide(page, from, to));
     await page.mouse.up();
     await page.keyboard.press('Escape');
     await page.waitForTimeout(800);
@@ -200,9 +263,7 @@ test('connector gestures on a 150-shape, 100-connector board', async ({ page }) 
     const to = await centreOf(page, nodeId(8, 12));
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    await startSampler(page);
-    await glide(page, from, to);
-    results.drawConnector = await stopSampler(page);
+    results.drawConnector = await measure(page, cdp, profiles, 'drawConnector', () => glide(page, from, to));
     await page.mouse.up();
     await expect(page.locator('.react-flow__edge')).toHaveCount(data.edges.length + 1);
     await page.keyboard.press('Escape');
@@ -223,9 +284,7 @@ test('connector gestures on a 150-shape, 100-connector board', async ({ page }) 
     const to = await centreOf(page, nodeId(7, 11));
     await page.mouse.move(from.x, from.y);
     await page.mouse.down();
-    await startSampler(page);
-    await glide(page, from, to);
-    results.dragConnectorEnd = await stopSampler(page);
+    results.dragConnectorEnd = await measure(page, cdp, profiles, 'dragConnectorEnd', () => glide(page, from, to));
     await page.mouse.up();
     // The end really travelled: it is pinned to the shape it was released on.
     const moved = (await page.locator('.connector-joint--endpoint').nth(1).boundingBox())!;
@@ -234,12 +293,95 @@ test('connector gestures on a 150-shape, 100-connector board', async ({ page }) 
     expect(moved.x + moved.width / 2).toBeLessThan(box.x + box.width + 20);
     expect(moved.y + moved.height / 2).toBeGreaterThan(box.y - 20);
     expect(moved.y + moved.height / 2).toBeLessThan(box.y + box.height + 20);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(800);
+  }
+
+  // (d) Drag a shape along a row with the alignment guides firing: its top,
+  // centre and bottom stay level with the row's, so every frame snaps.
+  {
+    const from = await centreOf(page, nodeId(9, 3));
+    const to = { x: from.x + 420, y: from.y + 2 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    let sawGuide = false;
+    results.dragWithGuides = await measure(page, cdp, profiles, 'dragWithGuides', async () => {
+      await glide(page, from, to);
+      sawGuide = (await page.locator('.alignment-guide').count()) > 0;
+    });
+    await page.mouse.up();
+    expect(sawGuide).toBe(true);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(800);
+  }
+
+  // (e) Box-select a 4×5 block of shapes and drag the block.
+  {
+    const tl = await centreOf(page, nodeId(5, 1));
+    const br = await centreOf(page, nodeId(8, 5));
+    // From empty board above-left of the block to past its far corner.
+    const start = { x: tl.box.x - 12, y: tl.box.y - 12 };
+    const end = { x: br.box.x + br.box.width + 12, y: br.box.y + br.box.height + 12 };
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move((start.x + end.x) / 2, (start.y + end.y) / 2, { steps: 4 });
+    await page.mouse.move(end.x, end.y, { steps: 4 });
+    await page.mouse.up();
+    await expect(page.locator('.react-flow__node.selected')).toHaveCount(20);
+    const from = await centreOf(page, nodeId(6, 3));
+    const to = { x: from.x + 300, y: from.y + 140 };
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    results.dragSelection = await measure(page, cdp, profiles, 'dragSelection', () => glide(page, from, to));
+    await page.mouse.up();
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(800);
+  }
+
+  // The dashboard thumbnail: the edits above leave it due, and once the board
+  // has been quiet it is captured on an idle turn — measured on its own so it
+  // does not land inside whichever gesture happens to follow it.
+  {
+    const saved = page.waitForResponse(
+      (r) => r.request().method() === 'PUT' && r.url().endsWith(`/api/diagrams/${id}`) &&
+        (r.request().postData() ?? '').includes('"thumbnail"'),
+      { timeout: 45_000 },
+    );
+    results.thumbnail = await measure(page, cdp, profiles, 'thumbnail', async () => {
+      await saved;
+    });
+    await page.waitForTimeout(500);
+  }
+
+  // (f) Pan across the board with the wheel, then zoom in and out (⌃ + wheel
+  // is the browser's pinch).
+  {
+    const pane = page.locator('.react-flow__pane');
+    const box = (await pane.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    results.panZoom = await measure(page, cdp, profiles, 'panZoom', async () => {
+      for (let i = 0; i < STEPS; i++) {
+        const k = i < STEPS / 2 ? 1 : -1;
+        await page.mouse.wheel(28 * k, 14 * k);
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+      }
+      await page.keyboard.down('Control');
+      for (let i = 0; i < STEPS; i++) {
+        await page.mouse.wheel(0, i < STEPS / 2 ? -6 : 6);
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(r)));
+      }
+      await page.keyboard.up('Control');
+    });
   }
 
   const label = process.env.PERF_LABEL ?? 'run';
-  const report = { label, at: new Date().toISOString(), board: { shapes: ROWS * COLS, connectors: data.edges.length }, results };
-  console.log(`\nperf-connectors (${label})`);
+  const report = { label, at: new Date().toISOString(), board: { shapes: ROWS * COLS, connectors: data.edges.length }, results, profiles };
+  console.log(`\nperf-connectors (${label}, ${ROWS * COLS} shapes, ${data.edges.length} connectors)`);
   console.table(results);
+  for (const [name, p] of Object.entries(profiles)) {
+    const { busyMs, top } = p as { busyMs: number; top: string[] };
+    console.log(`\n${name}: ${busyMs} ms busy\n${top.join('\n')}`);
+  }
   mkdirSync('test-results', { recursive: true });
-  writeFileSync('test-results/perf-connectors.json', JSON.stringify(report, null, 2));
+  writeFileSync(`test-results/perf-connectors${LARGE ? '-large' : ''}${PROFILE ? '-profile' : ''}.json`, JSON.stringify(report, null, 2));
 });
