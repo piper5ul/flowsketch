@@ -63,6 +63,7 @@ type MarkerSource = Pick<ConnectorData, 'stroke' | 'startArrowStyle' | 'endArrow
  * inherited via `context-stroke`, which Safari does not implement for markers.
  */
 export function markerId(style: VisibleArrowStyle, color: string, size: number): string {
+  // Not one-to-one: `rgb(1, 23, 4)` and `rgb(12, 3, 4)` share an id. The picker only writes hex, and stored Yjs edges carry these ids verbatim, so the format stays.
   return `fs-${style}-${color.replace(/[^a-zA-Z0-9]/g, '')}-${size}`;
 }
 
@@ -104,7 +105,9 @@ export function computeMarkers(data: MarkerSource): { markerStart?: string; mark
  */
 export const SELECTION_MARKER_COLOR = '#7c5cff';
 
-export function markerDefsForEdges(edges: { data?: ConnectorData; selected?: boolean }[]): MarkerDef[] {
+type MarkerEdge = { data?: ConnectorData; selected?: boolean };
+
+export function markerDefsForEdges(edges: readonly MarkerEdge[]): MarkerDef[] {
   const byId = new Map<string, MarkerDef>();
 
   for (const edge of edges) {
@@ -122,4 +125,35 @@ export function markerDefsForEdges(edges: { data?: ConnectorData; selected?: boo
   }
 
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * One object per distinct head, so the list of defs can be compared shallowly
+ * and re-renders only when the set of heads on the board changes, not on every
+ * frame an end or a bend is dragged. Keyed on the full (style, colour, size)
+ * tuple and never on the id: two colours can share an id (see `markerId`), and
+ * keying on it would hand one diagram's colour to another's def.
+ *
+ * The cache only buys reference equality, so it is bounded crudely: past
+ * `MAX_CACHED_DEFS` distinct heads (a long session through many boards with
+ * custom colours) it is emptied, which costs one re-render of the defs.
+ */
+const MAX_CACHED_DEFS = 512;
+const defsByHead = new Map<string, MarkerDef>();
+const defsByEdges = new WeakMap<readonly MarkerEdge[], MarkerDef[]>();
+
+export function stableMarkerDefs(edges: readonly MarkerEdge[]): MarkerDef[] {
+  let defs = defsByEdges.get(edges);
+  if (!defs) {
+    defs = markerDefsForEdges(edges).map((def) => {
+      const head = `${def.style}\u0000${def.color}\u0000${def.size}`;
+      const known = defsByHead.get(head);
+      if (known) return known;
+      if (defsByHead.size >= MAX_CACHED_DEFS) defsByHead.clear();
+      defsByHead.set(head, def);
+      return def;
+    });
+    defsByEdges.set(edges, defs);
+  }
+  return defs;
 }

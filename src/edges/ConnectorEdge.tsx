@@ -1,12 +1,6 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from '@xyflow/react';
-import {
-  anchorToPoint,
-  floatingEdgeSides,
-  standoff,
-  type EdgeAnchor,
-  type Rect,
-} from '../lib/edgeGeometry';
+import { useShallow } from 'zustand/react/shallow';
 import {
   buildConnectorPath,
   estimateLabelWidth,
@@ -15,14 +9,16 @@ import {
   type PathSegment,
   type Point,
 } from '../lib/connectorPath';
-import { orthoRoute } from '../lib/orthoRouter';
-import { anchorFor, freeEndSide, nodeAtPoint, snapToFreeEndGrid } from '../lib/connectorGesture';
-import { absolutePosition } from '../lib/nodeTree';
-import { CONNECTOR_STANDOFF_PX, CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
-import { markerDepthPx, markerId, MARKER_SIZE_PX, SELECTION_MARKER_COLOR } from '../lib/edgeMarkers';
-import { isAnchorNode, isFloatingArrowEdge, isGroupNode } from '../lib/nodeKinds';
-import type { ConnectorEdge as ConnectorEdgeType, ShapeNode } from '../store/useDiagramStore';
+import { anchorFor, lookupOf, nodeAtPoint, snapToFreeEndGrid } from '../lib/connectorGesture';
+import { connectorGeometry, type ConnectorGeometry } from '../lib/connectorGeometry';
+import type { RouteMemo } from '../lib/orthoRouter';
+import { followPointer } from '../lib/followPointer';
+import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from '../lib/defaults';
+import { markerId, MARKER_SIZE_PX, SELECTION_MARKER_COLOR } from '../lib/edgeMarkers';
+import { isAnchorNode, isFloatingArrowEdge } from '../lib/nodeKinds';
+import type { ConnectorEdge as ConnectorEdgeType, DiagramState, ShapeNode } from '../store/useDiagramStore';
 import { useDiagramStore } from '../store/useDiagramStore';
+import { trackEdgeDrag } from '../store/edgeDrags';
 import { EditableLabel } from '../components/EditableLabel';
 import { useSearchHighlight } from '../store/useSearchStore';
 import type { FontSize } from '../types';
@@ -35,30 +31,10 @@ const DASH_ARRAYS: Record<string, string | undefined> = {
   dotted: '1.5 7',
 };
 
-/**
- * A node's box in board coordinates. A child of a group or frame stores its
- * position relative to that parent, so the edge geometry must resolve it
- * through the parent chain — otherwise every connector inside a frame is
- * drawn offset by the frame's origin.
- */
-function rectOfNode(n: ShapeNode, byId: ReadonlyMap<string, ShapeNode>): Rect {
-  const { x, y } = absolutePosition(n, byId);
-  return {
-    x,
-    y,
-    width: n.width ?? n.measured?.width ?? 0,
-    height: n.height ?? n.measured?.height ?? 0,
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Polyline helpers for label positioning (`interpolatePolyline`, the other half
 // of this pair, lives next to the geometry it measures).
 // ---------------------------------------------------------------------------
-
-function centreOf(r: Rect): Point {
-  return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-}
 
 function nearestTOnPolyline(
   pts: { x: number; y: number }[],
@@ -159,9 +135,35 @@ function historyOnce(): () => void {
   };
 }
 
+/**
+ * This connector's geometry, re-rendering only when it changes. The store
+ * changes on every frame of a drag anywhere on the board; a connector whose
+ * ends, sides and route all come out the same keeps its last render. The
+ * selector is cached on the node array and the props it reads, so React's
+ * repeated snapshot reads cost nothing.
+ */
+function useConnectorGeometry(source: string, target: string, data: ConnectorEdgeType['data']) {
+  const memo = useRef<{ current: RouteMemo | null }>({ current: null });
+  const last = useRef<{
+    nodes: ShapeNode[];
+    source: string;
+    target: string;
+    data: ConnectorEdgeType['data'];
+    value: ConnectorGeometry<ShapeNode> | null;
+  } | null>(null);
+  return useDiagramStore(
+    useShallow((s: DiagramState) => {
+      const l = last.current;
+      if (l && l.nodes === s.nodes && l.source === source && l.target === target && l.data === data) return l.value;
+      const value = connectorGeometry(s.nodes, source, target, data, memo.current);
+      last.current = { nodes: s.nodes, source, target, data, value };
+      return value;
+    }),
+  );
+}
+
 export function ConnectorEdge({ id, source, target, data, selected, markerStart, markerEnd }: EdgeProps<ConnectorEdgeType>) {
-  const nodes = useDiagramStore((s) => s.nodes);
-  const byId = useMemo(() => new Map(nodes.map((n) => [n.id, n] as const)), [nodes]);
+  const geometry = useConnectorGeometry(source, target, data);
   const updateEdgeData = useDiagramStore((s) => s.updateEdgeData);
   const updateEdgeDataTransient = useDiagramStore((s) => s.updateEdgeDataTransient);
   const moveNodesTransient = useDiagramStore((s) => s.moveNodesTransient);
@@ -186,16 +188,22 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     if (useDiagramStore.getState().editingEdgeId === id) setEditingEdgeId(null);
   }, [id, updateEdgeData, setEditingEdgeId]);
 
+  // A drag is owned by `edgeDrags` (by this edge's id), not by this
+  // component: React Flow can remount the edge mid-drag, and the drag must
+  // still be cancelled if the edge is deleted after that.
+  const follow = useCallback((onMove: (ev: PointerEvent) => void, onEnd?: () => void) => {
+    trackEdgeDrag(id, (release) =>
+      followPointer(onMove, () => {
+        release();
+        onEnd?.();
+      }),
+    );
+  }, [id]);
+
   /** Follows the pointer for as long as a drag lasts, then tidies up after it. */
   const trackPointer = useCallback((onMove: (flow: Point) => void) => {
-    const move = (ev: PointerEvent) => onMove(screenToFlowPosition({ x: ev.clientX, y: ev.clientY }));
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  }, [screenToFlowPosition]);
+    follow((ev) => onMove(screenToFlowPosition({ x: ev.clientX, y: ev.clientY })));
+  }, [screenToFlowPosition, follow]);
 
   /** Drags the bend at `index`; the pointer is where the bend goes. */
   const onBendPointerDown = useCallback(
@@ -255,31 +263,31 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       const otherId = end === 'source' ? target : source;
       const begin = historyOnce();
       const store = useDiagramStore.getState;
-      const onMove = (ev: PointerEvent) => {
-        begin();
-        store().setConnectorDragging(true);
-        const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
-        const { nodes: current } = store();
-        const over = nodeAtPoint(current, flow, (n) => isAnchorNode(n.data) || n.id === otherId);
-        const anchor = over ? anchorFor(over, new Map(current.map((n) => [n.id, n] as const)), flow) : null;
-        if (over && anchor) {
-          reconnectEdgeEndpoint(id, end, over.id, anchor);
-          store().setConnectTarget(over.id);
-        } else {
-          freeEdgeEndpoint(id, end, snapToFreeEndGrid(flow));
+      follow(
+        (ev) => {
+          begin();
+          store().setConnectorDragging(true);
+          const flow = screenToFlowPosition({ x: ev.clientX, y: ev.clientY });
+          // Read at the moment of the move, not subscribed to: the board can
+          // change under a drag, and nothing here needs a render when it does.
+          const { nodes: current } = store();
+          const over = nodeAtPoint(current, flow, (n) => isAnchorNode(n.data) || n.id === otherId);
+          const anchor = over ? anchorFor(over, lookupOf(current), flow) : null;
+          if (over && anchor) {
+            reconnectEdgeEndpoint(id, end, over.id, anchor);
+            store().setConnectTarget(over.id);
+          } else {
+            freeEdgeEndpoint(id, end, snapToFreeEndGrid(flow));
+            store().setConnectTarget(null);
+          }
+        },
+        () => {
           store().setConnectTarget(null);
-        }
-      };
-      const onUp = () => {
-        window.removeEventListener('pointermove', onMove);
-        window.removeEventListener('pointerup', onUp);
-        store().setConnectTarget(null);
-        store().setConnectorDragging(false);
-      };
-      window.addEventListener('pointermove', onMove);
-      window.addEventListener('pointerup', onUp);
+          store().setConnectorDragging(false);
+        },
+      );
     },
-    [id, source, target, screenToFlowPosition, reconnectEdgeEndpoint, freeEdgeEndpoint],
+    [id, source, target, screenToFlowPosition, reconnectEdgeEndpoint, freeEdgeEndpoint, follow],
   );
 
   const onLabelPointerDown = useCallback(
@@ -309,8 +317,8 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     [id, editing, screenToFlowPosition, updateEdgeDataTransient],
   );
 
-  const sourceNode = nodes.find((n) => n.id === source);
-  const targetNode = nodes.find((n) => n.id === target);
+  const sourceNode = geometry?.sourceNode;
+  const targetNode = geometry?.targetNode;
 
   // Primitive deps so the hook can be declared unconditionally (rules-of-hooks)
   // even when one endpoint node is missing during a delete/undo transition.
@@ -349,40 +357,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     [source, target, srcX, srcY, tgtX, tgtY, screenToFlowPosition, moveNodesTransient],
   );
 
-  if (!sourceNode || !targetNode) return null;
+  if (!geometry || !sourceNode || !targetNode) return null;
 
   const isFloatingArrow = isFloatingArrowEdge({ data }, sourceNode.data, targetNode.data);
-
-  const floating = floatingEdgeSides(rectOfNode(sourceNode, byId), rectOfNode(targetNode, byId));
-  let sourceAnchor: EdgeAnchor = data?.sourceAnchor ?? { side: floating.sourcePos, t: 0.5 };
-  let targetAnchor: EdgeAnchor = data?.targetAnchor ?? { side: floating.targetPos, t: 0.5 };
-  // A free end (one end on a shape, the other on an invisible anchor) is
-  // approached along the axis the attached end leaves on — see `freeEndSide`.
-  // It is decided here, per render, rather than stored: it changes as the end
-  // is dragged round, and nothing else needs to know it.
-  const sourceFree = isAnchorNode(sourceNode.data);
-  const targetFree = isAnchorNode(targetNode.data);
-  if (targetFree && !sourceFree) {
-    const point = anchorToPoint(sourceAnchor, rectOfNode(sourceNode, byId));
-    targetAnchor = { side: freeEndSide({ point, side: sourceAnchor.side }, centreOf(rectOfNode(targetNode, byId))), t: 0.5 };
-  } else if (sourceFree && !targetFree) {
-    const point = anchorToPoint(targetAnchor, rectOfNode(targetNode, byId));
-    sourceAnchor = { side: freeEndSide({ point, side: targetAnchor.side }, centreOf(rectOfNode(sourceNode, byId))), t: 0.5 };
-  }
-  // The line stops a few px clear of each shape (see `CONNECTOR_STANDOFF_PX`)
-  // — a floating arrow's ends are anchors with no shape to stand clear of —
-  // and then a head's depth short of that, so the head's tip, not the line's
-  // round-capped end, is what reaches the standoff (see `MARKER_GEOMETRY`).
-  const { x: sx, y: sy } = standoff(
-    anchorToPoint(sourceAnchor, rectOfNode(sourceNode, byId)),
-    sourceAnchor.side,
-    (isAnchorNode(sourceNode.data) ? 0 : CONNECTOR_STANDOFF_PX) + markerDepthPx(data?.startArrowStyle ?? DEFAULT_START_ARROW, data?.strokeWidth),
-  );
-  const { x: tx, y: ty } = standoff(
-    anchorToPoint(targetAnchor, rectOfNode(targetNode, byId)),
-    targetAnchor.side,
-    (isAnchorNode(targetNode.data) ? 0 : CONNECTOR_STANDOFF_PX) + markerDepthPx(data?.endArrowStyle ?? DEFAULT_END_ARROW, data?.strokeWidth),
-  );
+  const { sx, sy, tx, ty, routed } = geometry;
 
   const stroke = data?.stroke ?? DEFAULT_EDGE_STROKE;
   const strokeStyle = data?.strokeStyle ?? 'solid';
@@ -399,31 +377,11 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   // Selection thickens the line by a hair on top of whatever width it is set to.
   const strokeWidth = CONNECTOR_STROKE_PX[data?.strokeWidth ?? DEFAULT_STROKE_WIDTH] + (selected ? 0.5 : 0);
 
-  // Only an elbow is routed around the other shapes; the other two kinds run
-  // straight from anchor to anchor and need nothing from the router. A frame
-  // is drawn, so it is walked round like a shape (one that holds either end is
-  // exempt — the router lets a route out of the box it starts in); a group is
-  // an invisible handle on its members, and they are the obstacles.
-  const routed = connectorType === 'elbow'
-    ? orthoRoute({
-        source: { x: sx, y: sy },
-        sourceSide: sourceAnchor.side,
-        sourceRect: rectOfNode(sourceNode, byId),
-        target: { x: tx, y: ty },
-        targetSide: targetAnchor.side,
-        targetRect: rectOfNode(targetNode, byId),
-        obstacles: nodes
-          .filter((n) => n.id !== source && n.id !== target && !n.hidden && !isAnchorNode(n.data) && !isGroupNode(n))
-          .map((n) => rectOfNode(n, byId)),
-        vertices: waypoints,
-      })
-    : undefined;
-
   const { d: svgPathString, points: pathPoints, segments } = buildConnectorPath(connectorType, {
     source: { x: sx, y: sy },
     target: { x: tx, y: ty },
-    sourceSide: sourceAnchor.side,
-    targetSide: targetAnchor.side,
+    sourceSide: geometry.sourceSide,
+    targetSide: geometry.targetSide,
     waypoints,
     routed,
   });

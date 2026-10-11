@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -58,6 +58,8 @@ import { usePresentStore } from '../store/usePresentStore';
 import { CommentPins } from './CommentPins';
 import { PresenceCursors } from './PresenceCursors';
 import { LeftRail } from './LeftRail';
+import { ConnectorDraftLine } from './ConnectorDraftLine';
+import { createConnectorDraftStore } from '../lib/connectorDraft';
 import { FloatingToolbar } from './FloatingToolbar';
 import { BottomBar } from './BottomBar';
 import { TopBar } from './TopBar';
@@ -133,6 +135,17 @@ function commitOpenLabel(target: EventTarget | null) {
   state.updateNodeData(state.editingNodeId, { label: target.innerText });
 }
 
+/*
+ * The chrome, memoised: `Canvas` re-renders on every frame of a drag (it hands
+ * the node array to React Flow), and none of these takes a prop that changes
+ * with the board — each reads what it needs from the stores itself.
+ */
+const MemoTopBar = memo(TopBar);
+const MemoLeftRail = memo(LeftRail);
+const MemoFloatingToolbar = memo(FloatingToolbar);
+const MemoBottomBar = memo(BottomBar);
+const MemoSearchBar = memo(SearchBar);
+
 /**
  * The board.
  *
@@ -202,9 +215,11 @@ export function Canvas({
     sourceId: string; anchor: EdgeAnchor; from: Point; start: Point; moved: boolean;
     stroke: string; strokePx: number; endArrow: boolean;
   } | null>(null);
-  const [connectDraft, setConnectDraft] = useState<{
-    from: Point; to: Point; stroke: string; strokePx: number; endArrow: boolean;
-  } | null>(null);
+  const [draftStore] = useState(createConnectorDraftStore);
+  // How to end a connector gesture still in flight — called on unmount, so a
+  // canvas torn down mid-drag leaves no listener or queued frame behind.
+  const finishGestureRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => finishGestureRef.current?.(), []);
   // A handle drag is React Flow's gesture, so its target comes from React Flow:
   // the same outline as the connector tool's, for the same reason.
   // A handle within React Flow's radius names the target; otherwise it is the
@@ -829,12 +844,35 @@ export function Canvas({
         gestureRef.current = { sourceId: '', anchor: { side: 'right' as const, t: 0.5 }, from: start, start, moved: false, ...draftStyle };
       }
 
+      // What a move shows — the draft line and the outlined target — is drawn
+      // at most once a frame, from the latest pointer position; whether the
+      // press has become a drag is decided on every move, since a release in
+      // the same frame still has to know it.
+      let frame: number | null = null;
+      let latest: Point | null = null;
+      const draw = () => {
+        frame = null;
+        const g = gestureRef.current;
+        const to = latest;
+        if (!g || !to) return;
+        useDiagramStore.getState().setConnectorDragging(true);
+        draftStore.setState({ draft: { from: g.from, to, stroke: g.stroke, strokePx: g.strokePx, endArrow: g.endArrow } });
+        if (onShape) {
+          const state = useDiagramStore.getState();
+          const over = nodeAtPoint(state.nodes, to, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
+          state.setConnectTarget(over?.id ?? null);
+        }
+      };
       const finish = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', finish);
         window.removeEventListener('keydown', onKey);
+        if (finishGestureRef.current === finish) finishGestureRef.current = null;
+        if (frame !== null) cancelAnimationFrame(frame);
+        frame = null;
         gestureRef.current = null;
-        setConnectDraft(null);
+        draftStore.setState({ draft: null });
         useDiagramStore.getState().setConnectTarget(null);
         useDiagramStore.getState().setConnectorDragging(false);
       };
@@ -844,13 +882,8 @@ export function Canvas({
         const to = screenToFlowPosition({ x: e.clientX, y: e.clientY });
         if (!g.moved && Math.hypot(to.x - g.start.x, to.y - g.start.y) < DRAG_THRESHOLD_PX) return;
         g.moved = true;
-        useDiagramStore.getState().setConnectorDragging(true);
-        setConnectDraft({ from: g.from, to, stroke: g.stroke, strokePx: g.strokePx, endArrow: g.endArrow });
-        if (onShape) {
-          const state = useDiagramStore.getState();
-          const over = nodeAtPoint(state.nodes, to, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
-          state.setConnectTarget(over?.id ?? null);
-        }
+        latest = to;
+        if (frame === null) frame = requestAnimationFrame(draw);
       };
       const onUp = (e: PointerEvent) => {
         const g = gestureRef.current;
@@ -893,9 +926,11 @@ export function Canvas({
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', finish);
       window.addEventListener('keydown', onKey);
+      finishGestureRef.current = finish;
     },
-    [tool, readOnly, screenToFlowPosition, addConnector, connectTowards, setTool, setEditingEdgeId],
+    [tool, readOnly, screenToFlowPosition, addConnector, connectTowards, setTool, setEditingEdgeId, draftStore],
   );
 
   /**
@@ -1260,48 +1295,7 @@ export function Canvas({
         {canComment && !presenting && <PresenceCursors />}
         {!presenting && <AlignmentGuides />}
         {!presenting && measureFrom && hoveredNodeId && <MeasureOverlay fromId={measureFrom} toId={hoveredNodeId} />}
-        {connectDraft && (
-          <ViewportPortal>
-            <svg
-              aria-hidden="true"
-              data-testid="connector-draft"
-              style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible', pointerEvents: 'none' }}
-            >
-              {connectDraft.endArrow && (
-                <defs>
-                  <marker
-                    id="connector-draft-arrow"
-                    viewBox="0 0 10 10"
-                    refX={2}
-                    refY={5}
-                    markerWidth={13}
-                    markerHeight={13}
-                    orient="auto-start-reverse"
-                    markerUnits="userSpaceOnUse"
-                  >
-                    <path
-                      d="M 2.5 0.5 L 9.5 5 L 2.5 9.5 Z"
-                      fill={connectDraft.stroke}
-                      stroke={connectDraft.stroke}
-                      strokeWidth={1}
-                      strokeLinejoin="round"
-                    />
-                  </marker>
-                </defs>
-              )}
-              <line
-                x1={connectDraft.from.x}
-                y1={connectDraft.from.y}
-                x2={connectDraft.to.x}
-                y2={connectDraft.to.y}
-                stroke={connectDraft.stroke}
-                strokeWidth={connectDraft.strokePx}
-                strokeLinecap="round"
-                markerEnd={connectDraft.endArrow ? 'url(#connector-draft-arrow)' : undefined}
-              />
-            </svg>
-          </ViewportPortal>
-        )}
+        <ConnectorDraftLine store={draftStore} />
         {/* The stroke under the pointer, drawn in board coordinates through the
             viewport portal — the same place the connector's draft line and the
             comment pins live, so it pans and zooms with what it is being drawn
@@ -1332,17 +1326,17 @@ export function Canvas({
       {/* Every piece of chrome goes while a slide is up: the top bar, the rail,
           both floating toolbars, the bottom bar and the find bar. What is left
           on screen is the frame and what is inside it. */}
-      {topBar && !presenting && <TopBar beforeSignOut={beforeSignOut} />}
+      {topBar && !presenting && <MemoTopBar beforeSignOut={beforeSignOut} />}
       {!readOnly && !presenting && (
         <>
-          <LeftRail wirePickerOpen={wirePickerOpen} onWirePickerOpenChange={setWirePickerOpen} />
-          <FloatingToolbar ctx={commandContext} onRunCommand={runCommand} />
+          <MemoLeftRail wirePickerOpen={wirePickerOpen} onWirePickerOpenChange={setWirePickerOpen} />
+          <MemoFloatingToolbar ctx={commandContext} onRunCommand={runCommand} />
         </>
       )}
-      {!presenting && <BottomBar onRunCommand={runCommand} showTheme={!topBar} />}
+      {!presenting && <MemoBottomBar onRunCommand={runCommand} showTheme={!topBar} />}
       {/* Rendered whether or not the board can be edited: ⌘F is a way of
           reading a diagram, and the public share page mounts this too. */}
-      {!presenting && <SearchBar belowTopBar={topBar} />}
+      {!presenting && <MemoSearchBar belowTopBar={topBar} />}
       {presenting && <PresentMode />}
 
       {contextMenu && !presenting && (

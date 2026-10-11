@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { MARKER_GEOMETRY, computeMarkers, markerDepthPx, markerDefsForEdges } from './edgeMarkers';
-import { CONNECTOR_STROKE_PX, DEFAULT_STROKE_WIDTH } from './defaults';
+import { MARKER_GEOMETRY, computeMarkers, markerDepthPx, markerDefsForEdges, markerId, stableMarkerDefs } from './edgeMarkers';
+import { CONNECTOR_STROKE_PX, DEFAULT_STROKE_WIDTH, makeEdgeData } from './defaults';
 import type { ArrowStyle, ConnectorData } from '../types';
 
 /** The fields every case needs, so each test states only its subject. */
@@ -124,5 +124,38 @@ describe('markerDepthPx', () => {
       expect(g.refX + g.depth * 10, style).toBeLessThanOrEqual(10);
       expect(g.refX, style).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe('stableMarkerDefs', () => {
+  it('is markerDefsForEdges, with one object per def id across edge arrays', () => {
+    const a = [{ data: makeEdgeData('elbow') }, { data: { ...makeEdgeData('elbow'), stroke: '#FF0000' } }];
+    const first = stableMarkerDefs(a);
+    expect(first).toEqual(markerDefsForEdges(a));
+    // A new array with the same heads (an end dragged, say) yields the same objects.
+    const second = stableMarkerDefs(a.map((e) => ({ ...e, data: { ...e.data, waypoints: [{ x: 1, y: 2 }] } })));
+    expect(second).not.toBe(first);
+    second.forEach((def, i) => expect(def).toBe(first[i]));
+    // Selecting one adds its selection-coloured head.
+    const third = stableMarkerDefs([{ ...a[0], selected: true }, a[1]]);
+    expect(third.length).toBe(first.length + 1);
+  });
+});
+
+describe('markerId', () => {
+  it('produces the ids stored diagrams and Yjs documents already carry', () => {
+    expect(markerId('circle', '#123456', 10)).toBe('fs-circle-123456-10');
+    expect(markerId('arrow', '#788896', 13)).toBe('fs-arrow-788896-13');
+  });
+
+  it('never lets the def cache hand one colour another colour\'s def, even when the ids clash', () => {
+    const a = { data: { ...makeEdgeData('elbow'), stroke: 'rgb(1, 23, 4)' } };
+    const b = { data: { ...makeEdgeData('elbow'), stroke: 'rgb(12, 3, 4)' } };
+    expect(markerId('arrow', 'rgb(1, 23, 4)', 13)).toBe(markerId('arrow', 'rgb(12, 3, 4)', 13));
+    const [first] = stableMarkerDefs([a]);
+    const [second] = stableMarkerDefs([b]);
+    expect(first.color).toBe('rgb(1, 23, 4)');
+    expect(second.color).toBe('rgb(12, 3, 4)');
+    expect(stableMarkerDefs([{ ...a }])[0]).toBe(first);
   });
 });

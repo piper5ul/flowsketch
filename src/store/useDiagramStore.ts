@@ -2930,29 +2930,42 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     pushHistory(get());
   },
 
+  // Every transient action below hands back the state it was given when the
+  // frame would change nothing — a pointer that moved within the same cell, an
+  // end still over the same point of the same shape — so a no-op frame costs no
+  // new arrays, no `transientSeq` bump and no work for anything subscribed.
   updateEdgeDataTransient: (id, data) => {
-    set((s) => ({
-      edges: s.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, ...data } } : e)),
-      transientSeq: s.transientSeq + 1,
-    }));
+    set((s) => {
+      const edge = s.edges.find((e) => e.id === id);
+      if (!edge) return s;
+      const current = (edge.data ?? {}) as Record<string, unknown>;
+      if ((Object.keys(data) as (keyof typeof data)[]).every((k) => Object.is(current[k], data[k]))) return s;
+      return {
+        edges: s.edges.map((e) => (e.id === id ? { ...e, data: { ...e.data!, ...data } } : e)),
+        transientSeq: s.transientSeq + 1,
+      };
+    });
   },
 
   // Mid-drag: the one bend under the pointer moves and the rest stay put. The
   // entry the drag is worth was pushed before it started — by `beginInteraction`
   // for a bend that was already there, or by the insert that created one.
   setEdgeWaypointTransient: (id, index, point) => {
-    set((s) => ({
-      edges: s.edges.map((e) => {
-        if (e.id !== id) return e;
-        const waypoints = e.data?.waypoints ?? [];
-        if (index < 0 || index >= waypoints.length) return e;
-        return {
-          ...e,
-          data: { ...e.data!, waypoints: waypoints.map((w, i) => (i === index ? point : w)) },
-        };
-      }),
-      transientSeq: s.transientSeq + 1,
-    }));
+    set((s) => {
+      const edge = s.edges.find((e) => e.id === id);
+      const waypoints = edge?.data?.waypoints ?? [];
+      if (!edge || index < 0 || index >= waypoints.length) return s;
+      const current = waypoints[index];
+      if (current.x === point.x && current.y === point.y) return s;
+      return {
+        edges: s.edges.map((e) =>
+          e.id === id
+            ? { ...e, data: { ...e.data!, waypoints: waypoints.map((w, i) => (i === index ? point : w)) } }
+            : e,
+        ),
+        transientSeq: s.transientSeq + 1,
+      };
+    });
   },
 
   moveNodesTransient: (positions) => {
@@ -2981,6 +2994,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       const edge = s.edges.find((e) => e.id === edgeId);
       if (!edge) return s;
       const previous = edge[end];
+      const pinned = end === 'source' ? edge.data?.sourceAnchor : edge.data?.targetAnchor;
+      if (previous === nodeId && pinned && pinned.side === anchor.side && pinned.t === anchor.t) return s;
       const edges = s.edges.map((e) =>
         e.id === edgeId
           ? {

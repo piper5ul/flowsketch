@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DRAG_THRESHOLD_PX, anchorFor, anchorNodeAt, isDotClick, boardRect, facingSide, freeEndSide, nodeAtPoint, sideAnchor, snapToFreeEndGrid, OPPOSITE_SIDE } from './connectorGesture';
+import { DRAG_THRESHOLD_PX, anchorFor, anchorNodeAt, isDotClick, boardRect, lookupOf, facingSide, freeEndSide, nodeAtPoint, sideAnchor, snapToFreeEndGrid, OPPOSITE_SIDE } from './connectorGesture';
 
 const frame = { id: 'f', position: { x: 100, y: 100 }, width: 600, height: 400 };
 const child = { id: 'c', parentId: 'f', position: { x: 50, y: 50 }, width: 200, height: 100 };
@@ -93,5 +93,16 @@ describe('isDotClick', () => {
   it('is a drag past it — even when the release came back to the dot', () => {
     expect(isDotClick(DRAG_THRESHOLD_PX + 0.01)).toBe(false);
     expect(isDotClick(120)).toBe(false);
+  });
+});
+
+describe('lookupOf', () => {
+  it('is built once per node array, and afresh for a new one', () => {
+    const nodes = [{ id: 'a', position: { x: 0, y: 0 } }, { id: 'b', position: { x: 5, y: 5 } }];
+    const byId = lookupOf(nodes);
+    expect(byId.get('b')).toBe(nodes[1]);
+    expect(lookupOf(nodes)).toBe(byId);
+    const moved = [nodes[0], { ...nodes[1], position: { x: 9, y: 9 } }];
+    expect(lookupOf(moved).get('b')).toBe(moved[1]);
   });
 });

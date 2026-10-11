@@ -4670,3 +4670,55 @@ describe('free connector ends', () => {
     expect(store().nodes.map((n) => n.id)).toEqual(['a', 'b']);
   });
 });
+
+describe('transient connector actions on a frame that changes nothing', () => {
+  const box = (id: string, x: number) => ({
+    id, type: 'shape' as const, position: { x, y: 0 }, width: 100, height: 60,
+    data: { label: id, shape: 'rectangle' as const, fill: '#fff', stroke: '#000' },
+  });
+  const edge = {
+    id: 'e', source: 'a', target: 'b', type: 'connector' as const,
+    data: {
+      sourceAnchor: { side: 'right' as const, t: 0.5 },
+      targetAnchor: { side: 'left' as const, t: 0.5 },
+      waypoints: [{ x: 150, y: 30 }],
+      labelT: 0.4,
+    },
+  };
+  const load = () =>
+    store().loadDiagram('test', 'Test', false, { nodes: [box('a', 0), box('b', 300)], edges: [edge] });
+
+  it('hands back the same state object, with no transientSeq bump', () => {
+    load();
+    const before = useDiagramStore.getState();
+    store().reconnectEdgeEndpoint('e', 'target', 'b', { side: 'left', t: 0.5 });
+    store().setEdgeWaypointTransient('e', 0, { x: 150, y: 30 });
+    store().setEdgeWaypointTransient('e', 5, { x: 1, y: 1 });
+    store().setEdgeWaypointTransient('nope', 0, { x: 1, y: 1 });
+    store().updateEdgeDataTransient('e', { labelT: 0.4 });
+    store().updateEdgeDataTransient('nope', { labelT: 0.9 });
+    expect(useDiagramStore.getState()).toBe(before);
+  });
+
+  it('hands back the same state for a free end that would land on the dot it is on', () => {
+    load();
+    store().freeEdgeEndpoint('e', 'target', { x: 500, y: 200 });
+    const before = useDiagramStore.getState();
+    store().freeEdgeEndpoint('e', 'target', { x: 500, y: 200 });
+    expect(useDiagramStore.getState()).toBe(before);
+  });
+
+  it('still writes a frame that does change something', () => {
+    load();
+    const seq = store().transientSeq;
+    store().reconnectEdgeEndpoint('e', 'target', 'b', { side: 'left', t: 0.25 });
+    store().setEdgeWaypointTransient('e', 0, { x: 160, y: 30 });
+    store().updateEdgeDataTransient('e', { labelT: 0.6 });
+    expect(store().transientSeq).toBe(seq + 3);
+    expect(store().edges[0].data).toMatchObject({
+      targetAnchor: { side: 'left', t: 0.25 },
+      waypoints: [{ x: 160, y: 30 }],
+      labelT: 0.6,
+    });
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { orthoRoute, ROUTE_MARGIN, type OrthoRouteInput, type RoutePoint, type RouteRect } from './orthoRouter';
+import { orthoRoute, orthoRouteMemo, ROUTE_MARGIN, type OrthoRouteInput, type RouteMemo, type RoutePoint, type RouteRect } from './orthoRouter';
 import type { Direction } from '../types';
 
 const A: RouteRect = { x: 100, y: 100, width: 200, height: 100 };
@@ -173,4 +173,138 @@ describe('orthoRoute obstacles', () => {
     const points = path({ ...ends, obstacles: [wall] });
     expect(clearOf(points, wall)).toBe(true);
   });
+});
+
+describe('orthoRouteMemo', () => {
+  /** A small deterministic PRNG, so a failure names a board that can be replayed. */
+  function rng(seed: number) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const SIDES: Direction[] = ['top', 'right', 'bottom', 'left'];
+  const pick = <T,>(r: () => number, xs: readonly T[]) => xs[Math.floor(r() * xs.length)];
+  const anchorOn = (rect: RouteRect, side: Direction): RoutePoint => {
+    switch (side) {
+      case 'top': return { x: rect.x + rect.width / 2, y: rect.y - 6 };
+      case 'bottom': return { x: rect.x + rect.width / 2, y: rect.y + rect.height + 6 };
+      case 'left': return { x: rect.x - 6, y: rect.y + rect.height / 2 };
+      case 'right': return { x: rect.x + rect.width + 6, y: rect.y + rect.height / 2 };
+    }
+  };
+
+  it('answers exactly what orthoRoute answers, through any sequence of moves', () => {
+    let reused = 0;
+    let fallbacks = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      const r = rng(seed);
+      const box = (): RouteRect => ({
+        x: Math.round(r() * 1400) - 200,
+        y: Math.round(r() * 1000) - 200,
+        width: 40 + Math.round(r() * 160),
+        height: 30 + Math.round(r() * 120),
+      });
+      const sourceRect = { x: 100, y: 300, width: 120, height: 60 };
+      let targetRect = { x: 700, y: 400, width: 120, height: 60 };
+      // Some boards carry walls tall enough to push the route past the first
+      // region, or to wall it in, so every fallback is exercised.
+      const obstacles: RouteRect[] = Array.from({ length: 20 }, box);
+      if (seed % 3 === 0) obstacles.push({ x: 420, y: -1500, width: 60, height: 3500 });
+      if (seed % 5 === 0) obstacles.push({ x: 60, y: 200, width: 40, height: 400 }, { x: 240, y: 200, width: 40, height: 400 });
+      const sourceSide = pick(r, SIDES);
+      let targetSide = pick(r, SIDES);
+      const vertices: RoutePoint[] = seed % 4 === 0 ? [{ x: 450, y: 150 + Math.round(r() * 400) }] : [];
+      let memo: RouteMemo | null = null;
+      let previous: RoutePoint[] | null = null;
+      for (let step = 0; step < 25; step++) {
+        const roll = r();
+        if (roll < 0.6) {
+          obstacles[Math.floor(r() * obstacles.length)] = box();
+        } else if (roll < 0.75) {
+          // A move that changes nothing at all.
+        } else if (roll < 0.9) {
+          targetRect = { ...targetRect, x: targetRect.x + Math.round(r() * 80 - 40), y: targetRect.y + Math.round(r() * 80 - 40) };
+        } else {
+          targetSide = pick(r, SIDES);
+        }
+        const input: OrthoRouteInput = {
+          source: anchorOn(sourceRect, sourceSide),
+          sourceSide,
+          sourceRect,
+          target: anchorOn(targetRect, targetSide),
+          targetSide,
+          targetRect,
+          obstacles: [...obstacles],
+          vertices,
+        };
+        const result = orthoRouteMemo(input, memo);
+        expect(result.points, `seed ${seed}, step ${step}`).toEqual(orthoRoute(input));
+        if (previous && result.points === previous) reused++;
+        if (!result.memo.usedNear) fallbacks++;
+        memo = result.memo;
+        previous = result.points;
+      }
+    }
+    // Both halves of the rule were actually exercised.
+    expect(reused).toBeGreaterThan(40);
+    expect(fallbacks).toBeGreaterThan(5);
+  }, 20_000);
+
+  it('hands back the same array when the route has not changed', () => {
+    const input: OrthoRouteInput = {
+      source: { x: 306, y: 150 }, sourceSide: 'right', sourceRect: A,
+      target: { x: 594, y: 450 }, targetSide: 'left', targetRect: { x: 600, y: 400, width: 200, height: 100 },
+      obstacles: [{ x: 2000, y: 2000, width: 50, height: 50 }],
+    };
+    const first = orthoRouteMemo(input, null);
+    // A far shape moved: the route cannot have.
+    const second = orthoRouteMemo({ ...input, obstacles: [{ x: 2100, y: 2000, width: 50, height: 50 }] }, first.memo);
+    expect(second.points).toBe(first.points);
+    // A shape moved onto the route: it has.
+    const third = orthoRouteMemo({ ...input, obstacles: [{ x: 420, y: 250, width: 60, height: 100 }] }, second.memo);
+    expect(third.points).not.toBe(first.points);
+    expect(third.points).toEqual(orthoRoute({ ...input, obstacles: [{ x: 420, y: 250, width: 60, height: 100 }] }));
+  });
+
+  it('matches orthoRoute on every frame of a shape dragged across a board of connectors', () => {
+    const r = rng(2026);
+    const cell = (c: number, row: number): RouteRect => ({ x: c * 200, y: row * 130, width: 120, height: 60 });
+    for (let trial = 0; trial < 6; trial++) {
+      const shapes: RouteRect[] = [];
+      for (let row = 0; row < 5; row++) for (let c = 0; c < 6; c++) shapes.push(cell(c, row));
+      // Connectors between grid neighbours, each with a memo of its own.
+      const links = Array.from({ length: 10 }, () => {
+        const i = Math.floor(r() * shapes.length);
+        const across = r() < 0.5 && i % 6 < 5;
+        const j = across ? i + 1 : Math.min(shapes.length - 1, i + 6);
+        return { i, j, sides: (across ? ['right', 'left'] : ['bottom', 'top']) as [Direction, Direction], memo: null as RouteMemo | null };
+      }).filter((l) => l.i !== l.j);
+      const dragged = Math.floor(r() * shapes.length);
+      for (let frame = 0; frame < 40; frame++) {
+        const s0 = shapes[dragged];
+        shapes[dragged] = { ...s0, x: s0.x + Math.round(r() * 40 - 12), y: s0.y + Math.round(r() * 30 - 10) };
+        for (const link of links) {
+          const sourceRect = shapes[link.i];
+          const targetRect = shapes[link.j];
+          const input: OrthoRouteInput = {
+            source: anchorOn(sourceRect, link.sides[0]),
+            sourceSide: link.sides[0],
+            sourceRect,
+            target: anchorOn(targetRect, link.sides[1]),
+            targetSide: link.sides[1],
+            targetRect,
+            obstacles: shapes.filter((_, k) => k !== link.i && k !== link.j),
+          };
+          const result = orthoRouteMemo(input, link.memo);
+          expect(result.points, `trial ${trial}, frame ${frame}`).toEqual(orthoRoute(input));
+          link.memo = result.memo;
+        }
+      }
+    }
+  }, 20_000);
 });

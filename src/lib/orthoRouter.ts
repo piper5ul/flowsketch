@@ -302,7 +302,97 @@ function nearby(boxes: readonly Box[], region: Box): Box[] {
  * **not** including those two points — `buildConnectorPath` puts them on.
  */
 export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
-  const vertices = input.vertices ?? [];
+  return orthoRouteMemo(input, null).points;
+}
+
+/**
+ * What one `orthoRouteMemo` call remembers so the next can skip the search.
+ * Opaque outside this module: hand back whatever the last call returned.
+ */
+export interface RouteMemo {
+  readonly ends: EndsKey;
+  readonly near: readonly Box[];
+  readonly all: readonly Box[];
+  /** The route searched among the near shapes alone (`null`: there was none). */
+  readonly nearRoute: RoutePoint[] | null;
+  /** Whether the answer was that near route rather than a fallback. */
+  readonly usedNear: boolean;
+  readonly points: RoutePoint[];
+}
+
+/** Everything about a route but the obstacles. */
+interface EndsKey {
+  source: RoutePoint;
+  sourceSide: Direction;
+  sourceRect: RouteRect;
+  target: RoutePoint;
+  targetSide: Direction;
+  targetRect: RouteRect;
+  vertices: readonly RoutePoint[];
+}
+
+const samePoint = (a: RoutePoint, b: RoutePoint) => a.x === b.x && a.y === b.y;
+const sameRect = (a: RouteRect, b: RouteRect) =>
+  a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+
+function sameEnds(a: EndsKey, b: EndsKey): boolean {
+  return (
+    a.sourceSide === b.sourceSide &&
+    a.targetSide === b.targetSide &&
+    samePoint(a.source, b.source) &&
+    samePoint(a.target, b.target) &&
+    sameRect(a.sourceRect, b.sourceRect) &&
+    sameRect(a.targetRect, b.targetRect) &&
+    a.vertices.length === b.vertices.length &&
+    a.vertices.every((v, i) => samePoint(v, b.vertices[i]))
+  );
+}
+
+function sameBoxes(a: readonly Box[], b: readonly Box[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (x.l !== y.l || x.t !== y.t || x.r !== y.r || x.b !== y.b) return false;
+  }
+  return true;
+}
+
+function samePoints(a: readonly RoutePoint[], b: readonly RoutePoint[]): boolean {
+  return a.length === b.length && a.every((p, i) => samePoint(p, b[i]));
+}
+
+/**
+ * `orthoRoute`, remembering enough of the last answer to skip the search when
+ * nothing that decides it has changed — which, while one shape is dragged
+ * across a big board, is every connector but the few near it.
+ *
+ * The answer is exactly `orthoRoute`'s, never an approximation of it, and
+ * that is what the rule below is built from. With the ends and the shapes in
+ * the first region (`nearby`) unchanged, the near search would find the same
+ * route, so it is not run again; what *can* still change it is a shape
+ * further away, through the two places the whole board is read — the check
+ * that the near route clears every shape, and the fallbacks behind it. So:
+ *
+ * - near route kept last time, and it still clears the board → same answer;
+ * - a fallback answered last time and not one box on the board moved → same;
+ * - anything else → searched again (the near route reused when it can be).
+ *
+ * The returned `points` is the previous array itself whenever the route is
+ * unchanged, so a caller can compare by reference.
+ */
+export function orthoRouteMemo(input: OrthoRouteInput, memo: RouteMemo | null): { points: RoutePoint[]; memo: RouteMemo } {
+  const ends: EndsKey = {
+    source: input.source,
+    sourceSide: input.sourceSide,
+    sourceRect: input.sourceRect,
+    target: input.target,
+    targetSide: input.targetSide,
+    targetRect: input.targetRect,
+    vertices: input.vertices ?? [],
+  };
+  const vertices = ends.vertices;
   let [lenS, lenT] = stubLengths(input);
   // A bend the user dragged to inside a stub's length would have the route
   // overshoot it and double back along itself; the stub stops level with it.
@@ -325,6 +415,26 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
   const allObstacles = input.obstacles.map((o) => boxOf(o, ROUTE_MARGIN));
   const nearObstacles = nearby(allObstacles, region);
 
+  const stops = [s1, ...vertices, t1];
+  // A shape that holds one of the route's own stops is exempt, as it is in
+  // the search.
+  const avoidable = allObstacles.filter((b) => !stops.some((p) => inside(p, b)));
+  const clearOfAll = (points: RoutePoint[] | null) =>
+    points && !points.some((p, i) => i > 0 && avoidable.some((b) => crosses(points[i - 1], p, b) || inside(p, b)))
+      ? points
+      : null;
+
+  const sameNear = memo !== null && sameEnds(memo.ends, ends) && sameBoxes(memo.near, nearObstacles);
+  if (sameNear) {
+    if (memo.usedNear) {
+      // The same near route; the question is only whether it is still kept.
+      const kept = nearObstacles.length === allObstacles.length ? memo.nearRoute : clearOfAll(memo.nearRoute);
+      if (kept) return { points: memo.points, memo: { ...memo, all: allObstacles } };
+    } else if (sameBoxes(memo.all, allObstacles)) {
+      return { points: memo.points, memo };
+    }
+  }
+
   // The midlines: halfway across the gap between the two shapes, and halfway
   // between the two stubs, on each axis. A Z lands on one of these.
   const midX: number[] = [(s1.x + t1.x) / 2];
@@ -336,7 +446,6 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
   if (s0.b <= t0.t) midY.push((s0.b + t0.t) / 2);
   if (t0.b <= s0.t) midY.push((t0.b + s0.t) / 2);
 
-  const stops = [s1, ...vertices, t1];
   const route = (obstacleBoxes: readonly Box[]): RoutePoint[] | null => {
     let heads = new Map<Dir, Arrival>([[OUTWARD[input.sourceSide], { cost: 0, points: [s1] }]]);
     for (let k = 1; k < stops.length; k++) {
@@ -371,18 +480,17 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
   // not drawn is worse than one that crosses a shape.
   // A route found among the near shapes can still detour out past one that
   // was left out, so it is checked against all of them before it is kept.
-  // A shape that holds one of the route's own stops is exempt, as it is in
-  // the search.
-  const avoidable = allObstacles.filter((b) => !stops.some((p) => inside(p, b)));
-  const clearOfAll = (points: RoutePoint[] | null) =>
-    points && !points.some((p, i) => i > 0 && avoidable.some((b) => crosses(points[i - 1], p, b) || inside(p, b)))
-      ? points
-      : null;
-  const near = route(nearObstacles);
+  const near = sameNear ? memo.nearRoute : route(nearObstacles);
+  const kept = nearObstacles.length === allObstacles.length ? near : clearOfAll(near);
   const points =
-    (nearObstacles.length === allObstacles.length ? near : clearOfAll(near)) ??
+    kept ??
     (nearObstacles.length < allObstacles.length ? route(allObstacles) : null) ??
     route([]) ??
     [s1, { x: s1.x, y: t1.y }, t1];
-  return simplify([input.source, ...points, input.target]).slice(1, -1);
+  let result = simplify([input.source, ...points, input.target]).slice(1, -1);
+  if (memo && samePoints(memo.points, result)) result = memo.points;
+  return {
+    points: result,
+    memo: { ends, near: nearObstacles, all: allObstacles, nearRoute: near, usedNear: kept !== null, points: result },
+  };
 }
