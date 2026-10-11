@@ -28,6 +28,20 @@
  *
  * User bends (`vertices`) are visited in order: the route is searched leg by
  * leg, each leg setting off in the direction the last one arrived in.
+ *
+ * **Big boards.** Everything that reads the whole board goes through an
+ * `ObstacleIndex` — every shape's grown box plus a coarse grid of which boxes
+ * touch which cell — so asking "which shapes are near this connector?" or
+ * "does this route clear every shape?" costs the shapes in the cells it
+ * covers, not every shape on the board. A caller routing many connectors over
+ * one board builds the index once (`obstacleIndex`) and passes it with each
+ * connector's `ignore` list. Inside a search, which grid points lie inside a
+ * box and which grid runs cross one are worked out once per search
+ * (`rasterize`) instead of once per step. None of it changes an answer: each
+ * shortcut only narrows the boxes a predicate is asked about to a set that
+ * provably contains every box it could say yes to, and the predicates are the
+ * same functions as before (`orthoRouter.test.ts` checks the router against
+ * the implementation this replaced, kept in `orthoRouterReference.ts`).
  */
 import type { Direction } from '../types';
 
@@ -53,6 +67,19 @@ export interface OrthoRouteInput {
   targetRect: RouteRect;
   /** Every other shape on the board. */
   obstacles: readonly RouteRect[];
+  /**
+   * Rects in `obstacles` to leave out, by identity — so a caller routing many
+   * connectors over one board can pass the same array (and index) to all of
+   * them and name each connector's own two shapes here, instead of copying
+   * the board without them per connector.
+   */
+  ignore?: readonly RouteRect[];
+  /**
+   * `obstacleIndex(obstacles)`, built once by a caller that routes many
+   * connectors over the same board. Must have been built from this very
+   * `obstacles` array, unchanged since; without it the router builds its own.
+   */
+  index?: ObstacleIndex;
   /** User bends, visited in order. */
   vertices?: readonly RoutePoint[];
 }
@@ -121,39 +148,57 @@ function clearance(p: RoutePoint, side: Direction, rect: RouteRect): number {
   }
 }
 
-/** A minimal binary heap of [cost, state]. */
+/**
+ * A minimal binary heap of (cost, state), kept in two parallel arrays. The
+ * sift rules are exactly those of the tuple heap it replaced — equal costs
+ * leave the heap in the same order — so the search pops states in the same
+ * order and breaks ties the same way.
+ */
 class Heap {
-  private items: [number, number][] = [];
-  get size() { return this.items.length; }
+  private costs: number[] = [];
+  private states: number[] = [];
+  /** The cost of the entry the last `pop` returned. */
+  topCost = 0;
+  get size() { return this.costs.length; }
   push(cost: number, state: number) {
-    const a = this.items;
-    a.push([cost, state]);
-    let i = a.length - 1;
+    const c = this.costs;
+    const s = this.states;
+    c.push(cost);
+    s.push(state);
+    let i = c.length - 1;
     while (i > 0) {
       const p = (i - 1) >> 1;
-      if (a[p][0] <= a[i][0]) break;
-      [a[p], a[i]] = [a[i], a[p]];
+      if (c[p] <= c[i]) break;
+      const tc = c[p]; c[p] = c[i]; c[i] = tc;
+      const ts = s[p]; s[p] = s[i]; s[i] = ts;
       i = p;
     }
   }
-  pop(): [number, number] {
-    const a = this.items;
-    const top = a[0];
-    const last = a.pop()!;
-    if (a.length > 0) {
-      a[0] = last;
+  /** Pops the cheapest entry and returns its state; its cost is left in `topCost`. */
+  pop(): number {
+    const c = this.costs;
+    const s = this.states;
+    const topCost = c[0];
+    const top = s[0];
+    const lastCost = c.pop()!;
+    const last = s.pop()!;
+    if (c.length > 0) {
+      c[0] = lastCost;
+      s[0] = last;
       let i = 0;
       for (;;) {
         const l = 2 * i + 1;
         const r = l + 1;
         let m = i;
-        if (l < a.length && a[l][0] < a[m][0]) m = l;
-        if (r < a.length && a[r][0] < a[m][0]) m = r;
+        if (l < c.length && c[l] < c[m]) m = l;
+        if (r < c.length && c[r] < c[m]) m = r;
         if (m === i) break;
-        [a[m], a[i]] = [a[i], a[m]];
+        const tc = c[m]; c[m] = c[i]; c[i] = tc;
+        const ts = s[m]; s[m] = s[i]; s[i] = ts;
         i = m;
       }
     }
+    this.topCost = topCost;
     return top;
   }
 }
@@ -185,6 +230,125 @@ interface Leg {
   midY: number[];
 }
 
+/** The first index in ascending `values` that is `>= v` (`values.length` if none). */
+function lowerBound(values: readonly number[], v: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (values[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/** The last index in ascending `values` that is `<= v` (-1 if none). */
+function upperIndex(values: readonly number[], v: number): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (values[mid] <= v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
+/**
+ * Which grid points are inside a blocking box (`node`), and which runs between
+ * neighbouring grid points cross one — `right[j * W + i]` for the run from
+ * column `i` to `i + 1` on row `j`, `down[j * W + i]` for row `j` to `j + 1` in
+ * column `i`. The search used to ask every box at every step; this asks each
+ * box only about the grid points within a pixel of it (binary-searched), and
+ * asks with the very same `inside` / `crosses`. A point or run further out
+ * than that cannot be inside the box or cross it — both need the box's open
+ * interior, `EPS` in from its edges — so the answers are the same answers.
+ */
+function rasterize(xs: readonly number[], ys: readonly number[], blocking: readonly Box[]) {
+  const W = xs.length;
+  const H = ys.length;
+  const node = new Uint8Array(W * H);
+  const right = new Uint8Array(W * H);
+  const down = new Uint8Array(W * H);
+  const a: RoutePoint = { x: 0, y: 0 };
+  const b: RoutePoint = { x: 0, y: 0 };
+  for (const box of blocking) {
+    const i0 = lowerBound(xs, box.l - 1);
+    const i1 = upperIndex(xs, box.r + 1);
+    const j0 = lowerBound(ys, box.t - 1);
+    const j1 = upperIndex(ys, box.b + 1);
+    if (i0 > i1 || j0 > j1) continue;
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        a.x = xs[i]; a.y = ys[j];
+        if (inside(a, box)) node[j * W + i] = 1;
+      }
+    }
+    // A run from column i to i + 1 can only meet the box if it ends past the
+    // box's left edge and starts before its right one: i from i0 - 1 to i1.
+    for (let j = j0; j <= j1; j++) {
+      for (let i = Math.max(0, i0 - 1); i <= Math.min(W - 2, i1); i++) {
+        const k = j * W + i;
+        if (right[k]) continue;
+        a.x = xs[i]; a.y = ys[j];
+        b.x = xs[i + 1]; b.y = ys[j];
+        if (crosses(a, b, box)) right[k] = 1;
+      }
+    }
+    for (let j = Math.max(0, j0 - 1); j <= Math.min(H - 2, j1); j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = j * W + i;
+        if (down[k]) continue;
+        a.x = xs[i]; a.y = ys[j];
+        b.x = xs[i]; b.y = ys[j + 1];
+        if (crosses(a, b, box)) down[k] = 1;
+      }
+    }
+  }
+  return { node, right, down };
+}
+
+/**
+ * The most search states (grid points × 4 headings) a search keeps in dense
+ * typed arrays. Up to it, per-state cost and parent live in arrays reused from
+ * search to search (a state's entries are live only while its `seen` stamp is
+ * the current search's, so nothing is cleared between searches), and blocked
+ * points and runs are rasterized up front — at most 16 MB for the pool and
+ * 3 MB for the raster. Past it — only a whole-board fallback over thousands of
+ * scattered shapes gets there; a 600-shape grid board's whole-board grid is
+ * about 12,000 states — the search runs sparse, exactly as the reference
+ * router did: `Map`s for the states it reaches and every box asked at every
+ * step, so memory follows what the search visits rather than the grid's area.
+ * Both paths give identical answers.
+ */
+const DENSE_STATES = 1 << 20;
+const pool = { cost: new Float64Array(0), parent: new Int32Array(0), seen: new Uint32Array(0), generation: 0 };
+
+function searchArrays(states: number) {
+  if (pool.cost.length < states) {
+    const size = Math.min(DENSE_STATES, Math.max(states, pool.cost.length * 2, 4096));
+    pool.cost = new Float64Array(size);
+    pool.parent = new Int32Array(size);
+    pool.seen = new Uint32Array(size);
+    pool.generation = 0;
+  }
+  pool.generation++;
+  if (pool.generation === 0xffffffff) {
+    pool.seen.fill(0);
+    pool.generation = 1;
+  }
+  return pool;
+}
+
+/**
+ * Where `rasterize` files the run leaving grid point (i, j) heading `nd`: a
+ * run is filed under its left or upper end, so heading left or up it is the
+ * run starting one column or one row back.
+ */
+const RUN_IS_DOWN = [false, true, false, true] as const; // right, down, left, up
+const RUN_DI = [0, 0, -1, 0] as const;
+const RUN_DJ = [0, 0, 0, -1] as const;
+
 /**
  * The cheapest route through one leg for each direction it can arrive in —
  * the whole route so far included — or an empty map when every way is
@@ -193,32 +357,80 @@ interface Leg {
  */
 function searchLeg(leg: Leg): Map<Dir, Arrival> {
   const { from, to, blocking } = leg;
-  const xs = uniqueSorted([from.x, to.x, ...leg.midX, ...blocking.flatMap((b) => [b.l, b.r])]);
-  const ys = uniqueSorted([from.y, to.y, ...leg.midY, ...blocking.flatMap((b) => [b.t, b.b])]);
-  const midX = new Set(leg.midX.map((v) => xs.findIndex((x) => Math.abs(x - v) <= EPS)));
-  const midY = new Set(leg.midY.map((v) => ys.findIndex((y) => Math.abs(y - v) <= EPS)));
+  const xsIn = [from.x, to.x, ...leg.midX];
+  const ysIn = [from.y, to.y, ...leg.midY];
+  for (const b of blocking) {
+    xsIn.push(b.l, b.r);
+    ysIn.push(b.t, b.b);
+  }
+  const xs = uniqueSorted(xsIn);
+  const ys = uniqueSorted(ysIn);
   const W = xs.length;
   const H = ys.length;
+  const midX = new Uint8Array(W);
+  const midY = new Uint8Array(H);
+  for (const v of leg.midX) {
+    const i = xs.findIndex((x) => Math.abs(x - v) <= EPS);
+    if (i >= 0) midX[i] = 1;
+  }
+  for (const v of leg.midY) {
+    const j = ys.findIndex((y) => Math.abs(y - v) <= EPS);
+    if (j >= 0) midY[j] = 1;
+  }
   const at = (i: number, j: number) => ({ x: xs[i], y: ys[j] });
-  const open = (i: number, j: number) => !blocking.some((b) => inside(at(i, j), b));
   const index = (p: RoutePoint) => [xs.findIndex((x) => Math.abs(x - p.x) <= EPS), ys.findIndex((y) => Math.abs(y - p.y) <= EPS)];
+  const stateOf = (i: number, j: number, d: Dir) => ((j * W + i) << 2) | d;
+
+  // Blocked points and runs, and per-state cost and parent: dense within the
+  // budget, sparse past it (see `DENSE_STATES`). The dense path is
+  // written out inline in the loop below — it is the one every frame of a
+  // drag runs — and the sparse one goes through these closures.
+  const dense = W * H * 4 <= DENSE_STATES;
+  const blocked = dense ? rasterize(xs, ys, blocking) : null;
+  const arrays = dense ? searchArrays(W * H * 4) : null;
+  const sparseCost = new Map<number, number>();
+  const sparseParent = new Map<number, number>();
+  const generation = arrays?.generation ?? 0;
+  /** A state's best cost so far (`Infinity` until it is reached). */
+  const costOf = (state: number) =>
+    arrays ? (arrays.seen[state] === generation ? arrays.cost[state] : Infinity) : (sparseCost.get(state) ?? Infinity);
+  /** Records a cheaper way to `state`; `fromState` is null for a start, which has no parent. */
+  const reach = (state: number, c: number, fromState: number | null) => {
+    if (arrays) {
+      arrays.seen[state] = generation;
+      arrays.cost[state] = c;
+      // Dense states are small non-negative numbers, so -1 is free to mean "none".
+      arrays.parent[state] = fromState ?? -1;
+    } else {
+      sparseCost.set(state, c);
+      if (fromState !== null) sparseParent.set(state, fromState);
+    }
+  };
+  const parentOf = (state: number): number | null => {
+    if (arrays) return arrays.parent[state] === -1 ? null : arrays.parent[state];
+    return sparseParent.get(state) ?? null;
+  };
+  const sparseBlocked = (i: number, j: number) => blocking.some((b) => inside(at(i, j), b));
+  const sparseRunBlocked = (i: number, j: number, ni: number, nj: number) => {
+    const a = at(i, j);
+    const b = at(ni, nj);
+    return blocking.some((box) => crosses(a, b, box));
+  };
 
   const [si, sj] = index(from);
   const [ti, tj] = index(to);
-  const stateOf = (i: number, j: number, d: Dir) => ((j * W + i) << 2) | d;
-  const cost = new Map<number, number>();
-  const parent = new Map<number, number>();
   const heap = new Heap();
   for (const [d, arrival] of leg.starts) {
     const start = stateOf(si, sj, d);
-    cost.set(start, arrival.cost);
+    reach(start, arrival.cost, null);
     heap.push(arrival.cost, start);
   }
 
   const best = new Map<Dir, { cost: number; state: number }>();
   while (heap.size > 0) {
-    const [c, state] = heap.pop();
-    if (c > (cost.get(state) ?? Infinity)) continue;
+    const state = heap.pop();
+    const c = heap.topCost;
+    if (c > (arrays ? (arrays.seen[state] === generation ? arrays.cost[state] : Infinity) : costOf(state))) continue;
     const d = (state & 3) as Dir;
     const cell = state >> 2;
     const i = cell % W;
@@ -233,18 +445,28 @@ function searchLeg(leg: Leg): Map<Dir, Arrival> {
       if (nd === reverse(d)) continue;
       const ni = i + DX[nd];
       const nj = j + DY[nd];
-      if (ni < 0 || nj < 0 || ni >= W || nj >= H || !open(ni, nj)) continue;
-      const a = at(i, j);
-      const b = at(ni, nj);
-      if (blocking.some((box) => crosses(a, b, box))) continue;
-      const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y);
-      const onMid = nd % 2 === 0 ? midY.has(j) : midX.has(i);
+      if (ni < 0 || nj < 0 || ni >= W || nj >= H) continue;
+      if (blocked) {
+        if (blocked.node[nj * W + ni] === 1) continue;
+        const runs = RUN_IS_DOWN[nd] ? blocked.down : blocked.right;
+        if (runs[(j + RUN_DJ[nd]) * W + i + RUN_DI[nd]] === 1) continue;
+      } else if (sparseBlocked(ni, nj) || sparseRunBlocked(i, j, ni, nj)) {
+        continue;
+      }
+      const length = Math.abs(xs[ni] - xs[i]) + Math.abs(ys[nj] - ys[j]);
+      const onMid = nd % 2 === 0 ? midY[j] === 1 : midX[i] === 1;
       const step = length * (onMid ? MIDLINE_DISCOUNT : 1) + (nd !== d ? BEND_PENALTY : 0);
       const next = stateOf(ni, nj, nd);
       const nc = c + step;
-      if (nc < (cost.get(next) ?? Infinity)) {
-        cost.set(next, nc);
-        parent.set(next, state);
+      if (arrays) {
+        if (nc < (arrays.seen[next] === generation ? arrays.cost[next] : Infinity)) {
+          arrays.seen[next] = generation;
+          arrays.cost[next] = nc;
+          arrays.parent[next] = state;
+          heap.push(nc, next);
+        }
+      } else if (nc < costOf(next)) {
+        reach(next, nc, state);
         heap.push(nc, next);
       }
     }
@@ -257,8 +479,8 @@ function searchLeg(leg: Leg): Map<Dir, Arrival> {
     for (;;) {
       const cell = s >> 2;
       cells.push(at(cell % W, Math.floor(cell / W)));
-      const p = parent.get(s);
-      if (p === undefined) break;
+      const p = parentOf(s);
+      if (p === null) break;
       s = p;
     }
     cells.reverse();
@@ -288,13 +510,169 @@ function simplify(points: RoutePoint[]): RoutePoint[] {
   return out;
 }
 
+/** The side of one cell of an `ObstacleIndex`'s grid, in board px. */
+const CELL = 256;
+/** A box spanning more cells than this is checked on every query instead. */
+const MAX_CELLS_PER_BOX = 1024;
+
+/**
+ * Every obstacle on a board, grown by `ROUTE_MARGIN`, with a coarse grid of
+ * which boxes touch which cell. Build it once per board with
+ * `obstacleIndex(rects)` and hand it to every connector routed over that board.
+ * Opaque outside this module.
+ */
+export interface ObstacleIndex {
+  readonly rects: readonly RouteRect[];
+  /** `boxOf(rects[k], ROUTE_MARGIN)`, in the same order. */
+  readonly boxes: readonly Box[];
+  /** Cell key → the indices of the boxes touching that cell, ascending. */
+  readonly cells: ReadonlyMap<number, number[]>;
+  /** Boxes too big (or not finite enough) to file under cells: always candidates. */
+  readonly everywhere: readonly number[];
+  /** How many times each rect appears, for `ignore` (built on first use). */
+  counts: Map<RouteRect, number> | null;
+  /** Scratch for de-duplicating a query's candidates. */
+  readonly stamp: Uint32Array;
+  generation: number;
+}
+
+const cellOf = (v: number) => Math.floor(v / CELL);
+// Cell coordinates fit comfortably in 2^21 either way of zero for any board a
+// browser can draw; the key packs the two into one exact integer.
+const cellKey = (cx: number, cy: number) => (cx + 0x100000) * 0x200000 + (cy + 0x100000);
+const CELL_LIMIT = 0xfffff;
+
+/** Whether `[l, r] × [t, b]` can be walked cell by cell. */
+function walkable(l: number, t: number, r: number, b: number, maxCells: number): boolean {
+  if (!(Number.isFinite(l) && Number.isFinite(t) && Number.isFinite(r) && Number.isFinite(b))) return false;
+  // Inside out (a negative size): it covers no cell, yet a region spanning
+  // it still counts it as near — so it is a candidate everywhere.
+  if (r < l || b < t) return false;
+  const cl = cellOf(l), ct = cellOf(t), cr = cellOf(r), cb = cellOf(b);
+  if (Math.abs(cl) > CELL_LIMIT || Math.abs(ct) > CELL_LIMIT || Math.abs(cr) > CELL_LIMIT || Math.abs(cb) > CELL_LIMIT) return false;
+  return (cr - cl + 1) * (cb - ct + 1) <= maxCells;
+}
+
+/** The index for a board's obstacles (see `ObstacleIndex`). */
+export function obstacleIndex(rects: readonly RouteRect[]): ObstacleIndex {
+  const boxes = rects.map((r) => boxOf(r, ROUTE_MARGIN));
+  const cells = new Map<number, number[]>();
+  const everywhere: number[] = [];
+  boxes.forEach((box, k) => {
+    if (!walkable(box.l, box.t, box.r, box.b, MAX_CELLS_PER_BOX)) {
+      everywhere.push(k);
+      return;
+    }
+    for (let cx = cellOf(box.l); cx <= cellOf(box.r); cx++) {
+      for (let cy = cellOf(box.t); cy <= cellOf(box.b); cy++) {
+        const key = cellKey(cx, cy);
+        const list = cells.get(key);
+        if (list) list.push(k);
+        else cells.set(key, [k]);
+      }
+    }
+  });
+  return { rects, boxes, cells, everywhere, counts: null, stamp: new Uint32Array(boxes.length), generation: 0 };
+}
+
+/**
+ * The indices of every box that touches `[l, r] × [t, b]` (closed), plus any
+ * that might — ascending, each once. A superset: callers still apply their
+ * own exact test to each.
+ */
+function candidates(index: ObstacleIndex, l: number, t: number, r: number, b: number): number[] {
+  const n = index.boxes.length;
+  if (!walkable(l, t, r, b, Math.max(16, n))) return Array.from({ length: n }, (_, k) => k);
+  const generation = ++index.generation;
+  if (generation === 0xffffffff) {
+    index.stamp.fill(0);
+    index.generation = 1;
+  }
+  const stamp = index.stamp;
+  const g = index.generation;
+  const out: number[] = [];
+  for (let cx = cellOf(l); cx <= cellOf(r); cx++) {
+    for (let cy = cellOf(t); cy <= cellOf(b); cy++) {
+      const list = index.cells.get(cellKey(cx, cy));
+      if (!list) continue;
+      for (const k of list) {
+        if (stamp[k] !== g) {
+          stamp[k] = g;
+          out.push(k);
+        }
+      }
+    }
+  }
+  for (const k of index.everywhere) {
+    if (stamp[k] !== g) {
+      stamp[k] = g;
+      out.push(k);
+    }
+  }
+  return out.sort((x, y) => x - y);
+}
+
+const isIgnored = (rect: RouteRect, ignore: readonly RouteRect[]) => ignore.length > 0 && ignore.includes(rect);
+
+/** How many of the board's obstacles are left once `ignore` is taken out. */
+function obstacleCount(index: ObstacleIndex, ignore: readonly RouteRect[]): number {
+  if (ignore.length === 0) return index.boxes.length;
+  if (!index.counts) {
+    const counts = new Map<RouteRect, number>();
+    for (const r of index.rects) counts.set(r, (counts.get(r) ?? 0) + 1);
+    index.counts = counts;
+  }
+  let n = index.boxes.length;
+  for (const r of new Set(ignore)) n -= index.counts.get(r) ?? 0;
+  return n;
+}
+
+/** Every obstacle box but the ignored, in board order. */
+function allBoxes(index: ObstacleIndex, ignore: readonly RouteRect[]): Box[] {
+  if (ignore.length === 0) return index.boxes as Box[];
+  return index.boxes.filter((_, k) => !isIgnored(index.rects[k], ignore));
+}
+
 /**
  * The obstacle boxes (already grown by `ROUTE_MARGIN`) that reach into
- * `region`. Grown *first*: a shape just outside the region can still have
- * its clearance inside it, and a route along that edge would graze it.
+ * `region`, in board order. Grown *first*: a shape just outside the region can
+ * still have its clearance inside it, and a route along that edge would graze
+ * it.
  */
-function nearby(boxes: readonly Box[], region: Box): Box[] {
-  return boxes.filter((b) => b.l < region.r && b.r > region.l && b.t < region.b && b.b > region.t);
+function nearby(index: ObstacleIndex, ignore: readonly RouteRect[], region: Box): Box[] {
+  const out: Box[] = [];
+  for (const k of candidates(index, region.l, region.t, region.r, region.b)) {
+    const b = index.boxes[k];
+    if (b.l < region.r && b.r > region.l && b.t < region.b && b.b > region.t && !isIgnored(index.rects[k], ignore)) out.push(b);
+  }
+  return out;
+}
+
+/**
+ * Whether the polyline `points` keeps out of every obstacle box but those
+ * holding one of `stops` (which the route cannot avoid). A run can only cross
+ * a box, or end inside one, that touches the run's own bounding box, so only
+ * those are asked.
+ */
+function clearOfBoard(
+  index: ObstacleIndex,
+  ignore: readonly RouteRect[],
+  stops: readonly RoutePoint[],
+  points: readonly RoutePoint[],
+): boolean {
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const p = points[i];
+    const near = candidates(index, Math.min(a.x, p.x), Math.min(a.y, p.y), Math.max(a.x, p.x), Math.max(a.y, p.y));
+    for (const k of near) {
+      const b = index.boxes[k];
+      if (!(crosses(a, p, b) || inside(p, b))) continue;
+      if (isIgnored(index.rects[k], ignore)) continue;
+      if (stops.some((s) => inside(s, b))) continue;
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -312,7 +690,8 @@ export function orthoRoute(input: OrthoRouteInput): RoutePoint[] {
 export interface RouteMemo {
   readonly ends: EndsKey;
   readonly near: readonly Box[];
-  readonly all: readonly Box[];
+  /** Every obstacle box, kept only when a fallback answered (`usedNear` false). */
+  readonly all: readonly Box[] | null;
   /** The route searched among the near shapes alone (`null`: there was none). */
   readonly nearRoute: RoutePoint[] | null;
   /** Whether the answer was that near route rather than a fallback. */
@@ -412,25 +791,27 @@ export function orthoRouteMemo(input: OrthoRouteInput, memo: RouteMemo | null): 
     r: Math.max(sourceBox.r, targetBox.r, ...all.map((p) => p.x)) + ROUTE_MARGIN * 4,
     b: Math.max(sourceBox.b, targetBox.b, ...all.map((p) => p.y)) + ROUTE_MARGIN * 4,
   };
-  const allObstacles = input.obstacles.map((o) => boxOf(o, ROUTE_MARGIN));
-  const nearObstacles = nearby(allObstacles, region);
+  // An index built from some other array would answer for the wrong board.
+  const index = input.index?.rects === input.obstacles ? input.index : obstacleIndex(input.obstacles);
+  const ignore = input.ignore ?? [];
+  const allCount = obstacleCount(index, ignore);
+  const nearObstacles = nearby(index, ignore, region);
+  let allList: Box[] | null = null;
+  const allObstacles = () => (allList ??= allBoxes(index, ignore));
 
   const stops = [s1, ...vertices, t1];
   // A shape that holds one of the route's own stops is exempt, as it is in
   // the search.
-  const avoidable = allObstacles.filter((b) => !stops.some((p) => inside(p, b)));
   const clearOfAll = (points: RoutePoint[] | null) =>
-    points && !points.some((p, i) => i > 0 && avoidable.some((b) => crosses(points[i - 1], p, b) || inside(p, b)))
-      ? points
-      : null;
+    points && clearOfBoard(index, ignore, stops, points) ? points : null;
 
   const sameNear = memo !== null && sameEnds(memo.ends, ends) && sameBoxes(memo.near, nearObstacles);
   if (sameNear) {
     if (memo.usedNear) {
       // The same near route; the question is only whether it is still kept.
-      const kept = nearObstacles.length === allObstacles.length ? memo.nearRoute : clearOfAll(memo.nearRoute);
-      if (kept) return { points: memo.points, memo: { ...memo, all: allObstacles } };
-    } else if (sameBoxes(memo.all, allObstacles)) {
+      const kept = nearObstacles.length === allCount ? memo.nearRoute : clearOfAll(memo.nearRoute);
+      if (kept) return { points: memo.points, memo };
+    } else if (memo.all && sameBoxes(memo.all, allObstacles())) {
       return { points: memo.points, memo };
     }
   }
@@ -481,16 +862,16 @@ export function orthoRouteMemo(input: OrthoRouteInput, memo: RouteMemo | null): 
   // A route found among the near shapes can still detour out past one that
   // was left out, so it is checked against all of them before it is kept.
   const near = sameNear ? memo.nearRoute : route(nearObstacles);
-  const kept = nearObstacles.length === allObstacles.length ? near : clearOfAll(near);
+  const kept = nearObstacles.length === allCount ? near : clearOfAll(near);
   const points =
     kept ??
-    (nearObstacles.length < allObstacles.length ? route(allObstacles) : null) ??
+    (nearObstacles.length < allCount ? route(allObstacles()) : null) ??
     route([]) ??
     [s1, { x: s1.x, y: t1.y }, t1];
   let result = simplify([input.source, ...points, input.target]).slice(1, -1);
   if (memo && samePoints(memo.points, result)) result = memo.points;
   return {
     points: result,
-    memo: { ends, near: nearObstacles, all: allObstacles, nearRoute: near, usedNear: kept !== null, points: result },
+    memo: { ends, near: nearObstacles, all: kept !== null ? null : allObstacles(), nearRoute: near, usedNear: kept !== null, points: result },
   };
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { orthoRoute, orthoRouteMemo, ROUTE_MARGIN, type OrthoRouteInput, type RouteMemo, type RoutePoint, type RouteRect } from './orthoRouter';
+import { obstacleIndex, orthoRoute, orthoRouteMemo, ROUTE_MARGIN, type OrthoRouteInput, type RouteMemo, type RoutePoint, type RouteRect } from './orthoRouter';
+import { orthoRoute as referenceRoute } from './orthoRouterReference';
 import type { Direction } from '../types';
 
 const A: RouteRect = { x: 100, y: 100, width: 200, height: 100 };
@@ -307,4 +308,174 @@ describe('orthoRouteMemo', () => {
       }
     }
   }, 20_000);
+});
+
+describe('orthoRoute against the router it replaced', () => {
+  /** The same PRNG as above, so a failing seed can be replayed. */
+  function rng(seed: number) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const SIDES: Direction[] = ['top', 'right', 'bottom', 'left'];
+  const pick = <T,>(r: () => number, xs: readonly T[]) => xs[Math.floor(r() * xs.length)];
+  // Quarter-pixel coordinates, so values land within the router's 0.5 px of
+  // each other and its merging of nearby grid lines is exercised too.
+  const q = (v: number) => Math.round(v * 4) / 4;
+  const anchorOn = (rect: RouteRect, side: Direction, t: number): RoutePoint => {
+    switch (side) {
+      case 'top': return { x: q(rect.x + rect.width * t), y: rect.y - 6 };
+      case 'bottom': return { x: q(rect.x + rect.width * t), y: rect.y + rect.height + 6 };
+      case 'left': return { x: rect.x - 6, y: q(rect.y + rect.height * t) };
+      case 'right': return { x: rect.x + rect.width + 6, y: q(rect.y + rect.height * t) };
+    }
+  };
+
+  /** A random board: scattered shapes, sometimes a grid, a wall, a pen, overlaps and bends. */
+  function randomCase(seed: number) {
+    const r = rng(seed);
+    const span = 300 + r() * 3000;
+    const box = (): RouteRect => ({
+      x: q(r() * span - span / 4),
+      y: q(r() * span * 0.7 - span / 4),
+      width: q(r() < 0.05 ? 1 : 20 + r() * 220),
+      height: q(r() < 0.05 ? 1 : 16 + r() * 160),
+    });
+    const obstacles: RouteRect[] = Array.from({ length: Math.floor(r() * 60) }, box);
+    if (r() < 0.3) {
+      for (let row = 0; row < 6; row++) for (let c = 0; c < 8; c++) obstacles.push({ x: c * 200, y: row * 130, width: 120, height: 60 });
+    }
+    if (r() < 0.2) obstacles.push({ x: q(r() * span), y: -2000, width: 60, height: 5000 });
+    if (r() < 0.1) obstacles.push({ x: 60, y: 200, width: 40, height: 400 }, { x: 240, y: 200, width: 40, height: 400 });
+    const sourceRect = r() < 0.5 ? box() : { x: 100, y: 300, width: 120, height: 60 };
+    const targetRect = r() < 0.15 ? { x: sourceRect.x + 30, y: sourceRect.y + 20, width: 80, height: 50 } : box();
+    const sourceSide = pick(r, SIDES);
+    const targetSide = pick(r, SIDES);
+    const vertices: RoutePoint[] = Array.from({ length: r() < 0.7 ? 0 : 1 + Math.floor(r() * 2) }, () => ({ x: q(r() * span), y: q(r() * span * 0.7) }));
+    const input: OrthoRouteInput = {
+      source: anchorOn(sourceRect, sourceSide, r()),
+      sourceSide,
+      sourceRect,
+      target: anchorOn(targetRect, targetSide, r()),
+      targetSide,
+      targetRect,
+      obstacles,
+      vertices,
+    };
+    return input;
+  }
+
+  it('draws exactly the old corners on three hundred random boards', () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const input = randomCase(seed);
+      expect(orthoRoute(input), `seed ${seed}`).toEqual(referenceRoute(input));
+    }
+  }, 60_000);
+
+  it('draws the same with a shared index and the two ends ignored, as connectorGeometry calls it', () => {
+    for (let seed = 301; seed <= 450; seed++) {
+      const input = randomCase(seed);
+      // The board's own array, ends included, ignored by identity.
+      const board = [...input.obstacles];
+      board.splice(Math.floor(board.length / 2), 0, input.sourceRect);
+      board.push(input.targetRect);
+      const index = obstacleIndex(board);
+      const viaIndex = orthoRoute({ ...input, obstacles: board, index, ignore: [input.sourceRect, input.targetRect] });
+      expect(viaIndex, `seed ${seed}`).toEqual(referenceRoute(input));
+    }
+  }, 60_000);
+
+  it('leaves out every copy of an ignored rect, and only that', () => {
+    const wall = { x: 420, y: 0, width: 60, height: 400 };
+    const input: OrthoRouteInput = {
+      source: { x: 306, y: 150 }, sourceSide: 'right', sourceRect: A,
+      target: { x: 594, y: 150 }, targetSide: 'left', targetRect: { x: 600, y: 100, width: 200, height: 100 },
+      obstacles: [wall, wall, { ...wall }],
+    };
+    expect(orthoRoute({ ...input, ignore: [wall] })).toEqual(referenceRoute({ ...input, obstacles: [{ ...wall }] }));
+    expect(orthoRoute({ ...input, obstacles: [wall, wall], ignore: [wall] })).toEqual(referenceRoute({ ...input, obstacles: [] }));
+  });
+
+  it('matches on every frame of a block of shapes dragged across a 600-shape board', () => {
+    const r = rng(77);
+    const cell = (c: number, row: number): RouteRect => ({ x: c * 200, y: row * 130, width: 120, height: 60 });
+    let shapes: RouteRect[] = [];
+    for (let row = 0; row < 20; row++) for (let c = 0; c < 30; c++) shapes.push(cell(c, row));
+    const links = Array.from({ length: 40 }, () => {
+      const i = Math.floor(r() * 200) + 30 * 2;
+      const across = r() < 0.5;
+      const j = across ? i + 1 : i + 30;
+      return { i, j, sides: (across ? ['right', 'left'] : ['bottom', 'top']) as [Direction, Direction], memo: null as RouteMemo | null };
+    });
+    // A 4×5 block near the links, dragged as one.
+    const block = new Set<number>();
+    for (let row = 3; row < 7; row++) for (let c = 2; c < 7; c++) block.add(row * 30 + c);
+    let reused = 0;
+    for (let frame = 0; frame < 20; frame++) {
+      const dx = Math.round(r() * 30 - 8);
+      const dy = Math.round(r() * 20 - 6);
+      shapes = shapes.map((s, k) => (block.has(k) ? { ...s, x: s.x + dx, y: s.y + dy } : s));
+      const index = obstacleIndex(shapes);
+      for (const link of links) {
+        const sourceRect = shapes[link.i];
+        const targetRect = shapes[link.j];
+        const input: OrthoRouteInput = {
+          source: anchorOn(sourceRect, link.sides[0], 0.5),
+          sourceSide: link.sides[0],
+          sourceRect,
+          target: anchorOn(targetRect, link.sides[1], 0.5),
+          targetSide: link.sides[1],
+          targetRect,
+          obstacles: shapes,
+          ignore: [sourceRect, targetRect],
+          index,
+        };
+        const before = link.memo?.points;
+        const result = orthoRouteMemo(input, link.memo);
+        const expected = referenceRoute({ ...input, obstacles: shapes.filter((_, k) => k !== link.i && k !== link.j) });
+        expect(result.points, `frame ${frame}, link ${link.i}->${link.j}`).toEqual(expected);
+        if (before && result.points === before) reused++;
+        link.memo = result.memo;
+      }
+    }
+    expect(reused).toBeGreaterThan(200);
+  }, 60_000);
+});
+
+describe('orthoRoute on a board too big for the dense search', () => {
+  it('gives up on a walled-in stub in bounded time and memory, as the old router did', () => {
+    // A source stub boxed in by three shapes, and 20,000 shapes far away: the
+    // whole-board grid would be ~40,000 lines each way, so it runs sparse.
+    const sourceRect = { x: 0, y: 0, width: 120, height: 60 };
+    const targetRect = { x: 400, y: 0, width: 120, height: 60 };
+    const obstacles: RouteRect[] = [
+      { x: 100, y: -10, width: 100, height: 20 },
+      { x: 100, y: 50, width: 100, height: 20 },
+      { x: 160, y: -10, width: 40, height: 80 },
+    ];
+    for (let k = 0; k < 20_000; k++) obstacles.push({ x: 10_000 + 100_000 * k, y: 10_000 + 100_000 * k, width: 10, height: 10 });
+    const input: OrthoRouteInput = {
+      source: { x: 126, y: 30 }, sourceSide: 'right', sourceRect,
+      target: { x: 394, y: 30 }, targetSide: 'left', targetRect,
+      obstacles,
+    };
+    const started = performance.now();
+    const route = orthoRoute(input);
+    expect(performance.now() - started).toBeLessThan(2000);
+    expect(route).toEqual(referenceRoute(input));
+  });
+
+  it('ignores an index built from some other array', () => {
+    const input: OrthoRouteInput = {
+      source: { x: 306, y: 150 }, sourceSide: 'right', sourceRect: A,
+      target: { x: 594, y: 150 }, targetSide: 'left', targetRect: { x: 600, y: 100, width: 200, height: 100 },
+      obstacles: [{ x: 420, y: 0, width: 60, height: 400 }],
+    };
+    expect(orthoRoute({ ...input, index: obstacleIndex([]) })).toEqual(referenceRoute(input));
+  });
 });
