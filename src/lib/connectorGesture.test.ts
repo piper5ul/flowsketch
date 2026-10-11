@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorFor, anchorNodeAt, boardRect, facingSide, freeEndSide, nodeAtPoint, sideAnchor, snapToFreeEndGrid, OPPOSITE_SIDE } from './connectorGesture';
+import { DRAG_THRESHOLD_PX, anchorFor, anchorNodeAt, isDotClick, boardRect, facingSide, freeEndSide, nodeAtPoint, sideAnchor, snapToFreeEndGrid, OPPOSITE_SIDE } from './connectorGesture';
 
 const frame = { id: 'f', position: { x: 100, y: 100 }, width: 600, height: 400 };
 const child = { id: 'c', parentId: 'f', position: { x: 50, y: 50 }, width: 200, height: 100 };
@@ -29,6 +29,11 @@ describe('nodeAtPoint', () => {
 
   it('leaves out what the caller says to skip', () => {
     expect(nodeAtPoint(nodes, { x: 200, y: 200 }, (n) => n.id === 'c')?.id).toBe('f');
+  });
+
+  it('never hits a hidden node, such as a folded mind-map branch', () => {
+    const folded = nodes.map((n) => (n.id === 'c' ? { ...n, hidden: true } : n));
+    expect(nodeAtPoint(folded, { x: 200, y: 200 })?.id).toBe('f');
   });
 });
 
@@ -76,5 +81,17 @@ describe('snapToFreeEndGrid / anchorNodeAt', () => {
     const node = anchorNodeAt('a', { x: 100, y: 50 });
     expect(node.position).toEqual({ x: 99.5, y: 49.5 });
     expect(node.data).toMatchObject({ fill: 'transparent', stroke: 'transparent' });
+  });
+});
+
+describe('isDotClick', () => {
+  it('is a click up to and including the threshold, where React Flow has not started', () => {
+    expect(isDotClick(0)).toBe(true);
+    expect(isDotClick(DRAG_THRESHOLD_PX)).toBe(true);
+  });
+
+  it('is a drag past it — even when the release came back to the dot', () => {
+    expect(isDotClick(DRAG_THRESHOLD_PX + 0.01)).toBe(false);
+    expect(isDotClick(120)).toBe(false);
   });
 });

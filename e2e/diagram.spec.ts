@@ -206,10 +206,10 @@ async function drawConnectedPair(page: Page) {
   const node = page.locator('.react-flow__node').first();
   await expect(node).toBeVisible();
 
-  // Quick-add buttons only appear while the shape is hovered. QUICK_ADD in
-  // ShapeNode is ordered top, right, bottom, left — index 1 spawns to the right.
+  // A shape's side dots only appear while it is hovered; clicking one without
+  // dragging quick-adds a neighbour on that side.
   await node.hover();
-  await node.locator('.quick-add-btn').nth(1).click();
+  await node.getByRole('button', { name: 'Add shape right' }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
 
@@ -1489,6 +1489,9 @@ test('a public link opens the diagram read-only, and revoking it kills the URL',
   await expect(visitorPage.getByText('View only')).toBeVisible();
   // Read-only means the drawing tools are not there at all, not merely inert.
   await expect(visitorPage.getByRole('button', { name: 'Rectangle' })).toHaveCount(0);
+  // Nor are a shape's side dots: hovering one offers no connector and no
+  // quick-add, and no "Add shape" button is in the accessibility tree.
+  await expectNoSideDots(visitorPage, visitorPage.locator('.react-flow__node', { hasText: 'Public shape' }));
   // The theme cycler remains available on the public share page.
   await expect(visitorPage).toHaveURL(/\/s\/[^/]+$/);
   await expect(visitorPage.getByRole('button', { name: 'Switch to light theme' })).toBeVisible();
@@ -1827,6 +1830,7 @@ test('an invited viewer can join the discussion but not call it settled', async 
   await reviewerPage.getByText('Untitled').first().click();
   await expect(reviewerPage).toHaveURL(/\/d\/[^/]+$/);
   await expect(reviewerPage.getByText('View only')).toBeVisible();
+  await expectNoSideDots(reviewerPage, reviewerPage.locator('.react-flow__node', { hasText: 'Owner shape' }));
 
   // Reading a board they cannot edit, they can still say something about it —
   // a reviewer who cannot write anything down is not reviewing.
@@ -2186,6 +2190,114 @@ test('the connector tool draws from where you press to where you release', async
   await page.mouse.up();
   await expect(page.locator('.react-flow__node')).toHaveCount(3);
   await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+});
+
+/** How many side dots are painted right now — the dot is the handle's `::after`. */
+function visibleSideDots(page: Page) {
+  return page.evaluate(
+    () =>
+      [...document.querySelectorAll('.shape-handle')].filter(
+        (el) => getComputedStyle(el, '::after').opacity === '1',
+      ).length,
+  );
+}
+
+/** A read-only reader hovering `node` is offered no side dot, seen or named. */
+async function expectNoSideDots(page: Page, node: Locator) {
+  const box = (await node.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  // Past the dots' 120 ms fade-in, so a zero is not a dot still arriving.
+  await page.waitForTimeout(300);
+  expect(await visibleSideDots(page)).toBe(0);
+  await expect(page.getByRole('button', { name: /^Add shape / })).toHaveCount(0);
+}
+
+test('a hovered shape offers one dot per side: drag one to connect, click one to quick-add', async ({ page }) => {
+  await signUp(page);
+  const pane = await newDiagram(page);
+  const paneBox = (await pane.boundingBox())!;
+
+  await page.keyboard.press('r');
+  await pane.click({ position: { x: 400, y: 300 } });
+  await page.keyboard.press('Escape'); // the new shape opened for typing
+  const nodes = page.locator('.react-flow__node');
+  const a = nodes.nth(0);
+  await expect(a).toBeVisible();
+  // The first shape on an empty board is framed by the opening fit, so the
+  // second is placed from where the first ended up rather than from a constant.
+  await expect
+    .poll(async () => {
+      const before = JSON.stringify(await a.boundingBox());
+      await page.waitForTimeout(150);
+      return JSON.stringify(await a.boundingBox()) === before;
+    })
+    .toBe(true);
+  const aBox = (await a.boundingBox())!;
+  await page.keyboard.press('r');
+  await page.mouse.click(aBox.x + aBox.width + 300, aBox.y + aBox.height / 2);
+  await page.keyboard.press('Escape');
+  await expect(nodes).toHaveCount(2);
+  const b = nodes.nth(1);
+  const bBox = (await b.boundingBox())!;
+  const offShape = { x: paneBox.x + paneBox.width / 2, y: paneBox.y + paneBox.height - 80 };
+
+  // (a) Hovering a rectangle shows exactly four dots — one set, not two.
+  await page.mouse.move(aBox.x + aBox.width / 2, aBox.y + aBox.height / 2);
+  await expect.poll(() => visibleSideDots(page)).toBe(4);
+  await page.mouse.move(offShape.x, offShape.y);
+  await expect.poll(() => visibleSideDots(page)).toBe(0);
+
+  // (b) Arming the connector tool lights up nothing by itself; only the shape
+  // under the pointer offers its dots.
+  await page.keyboard.press('a');
+  await page.mouse.move(offShape.x + 10, offShape.y + 10);
+  await expect.poll(() => visibleSideDots(page)).toBe(0);
+  await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2);
+  await expect.poll(() => visibleSideDots(page)).toBe(4);
+  await page.mouse.move(offShape.x, offShape.y);
+  await page.keyboard.press('v');
+
+  // (c) Pressing a dot and dragging onto the middle of the other shape draws a
+  // connector between the two — pinned to it, so no free end's anchor node.
+  await page.mouse.move(aBox.x + aBox.width / 2, aBox.y + aBox.height / 2);
+  const rightDot = a.getByRole('button', { name: 'Add shape right' });
+  const dot = (await rightDot.boundingBox())!;
+  await page.mouse.move(dot.x + dot.width / 2, dot.y + dot.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2, { steps: 10 });
+  await page.mouse.up();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await expect(nodes).toHaveCount(2);
+  await page.keyboard.press('Escape'); // the new connector's label opened for typing
+
+  // (d) A click on a dot that does not travel quick-adds a connected shape.
+  await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2);
+  await b.getByRole('button', { name: 'Add shape right' }).click();
+  await expect(nodes).toHaveCount(3);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+
+  // (e) A drag that wanders off and comes back to its dot is still a drag: it
+  // leaves a connector with a free end (one anchor node, one edge) and does
+  // not also quick-add a shape.
+  await page.mouse.move(bBox.x + bBox.width / 2, bBox.y + bBox.height / 2);
+  const bottomDot = (await b.getByRole('button', { name: 'Add shape bottom' }).boundingBox())!;
+  const dotCentre = { x: bottomDot.x + bottomDot.width / 2, y: bottomDot.y + bottomDot.height / 2 };
+  await page.mouse.move(dotCentre.x, dotCentre.y);
+  await page.mouse.down();
+  await page.mouse.move(dotCentre.x, dotCentre.y + 60, { steps: 5 });
+  await page.mouse.move(dotCentre.x, dotCentre.y, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
+  await expect(nodes).toHaveCount(4);
+  await page.keyboard.press('Escape');
+
+  // (f) With the connector tool held, a click on a dot is the tool's click,
+  // not quick-add: nothing is added.
+  await page.keyboard.press('a');
+  await page.mouse.move(aBox.x + aBox.width / 2, aBox.y + aBox.height / 2);
+  await a.getByRole('button', { name: 'Add shape bottom' }).click();
+  await expect(nodes).toHaveCount(4);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(3);
 });
 
 /**

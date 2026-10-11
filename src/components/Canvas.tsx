@@ -190,7 +190,8 @@ export function Canvas({
     isInkTool(tool) ||
     SHAPE_TOOL_KINDS.includes(tool as ShapeKind);
 
-  const { screenToFlowPosition, addNodes, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
+  const addConnector = useDiagramStore((s) => s.addConnector);
+  const { screenToFlowPosition, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const prevToolRef = useRef<Tool>('select');
@@ -206,8 +207,18 @@ export function Canvas({
   } | null>(null);
   // A handle drag is React Flow's gesture, so its target comes from React Flow:
   // the same outline as the connector tool's, for the same reason.
+  // A handle within React Flow's radius names the target; otherwise it is the
+  // shape under the pointer, which is where `onConnectEnd` will pin it.
   const connection = useConnection();
-  const rfTargetId = connection.inProgress ? (connection.toNode?.id ?? null) : null;
+  const rfTargetId = connection.inProgress
+    ? (connection.toNode?.id ??
+      nodeAtPoint(
+        useDiagramStore.getState().nodes,
+        connection.to,
+        (n) => isAnchorNode(n.data) || n.id === connection.fromNode.id,
+      )?.id ??
+      null)
+    : null;
   useEffect(() => {
     useDiagramStore.getState().setConnectTarget(connection.inProgress ? rfTargetId : null);
   }, [connection.inProgress, rfTargetId]);
@@ -606,9 +617,8 @@ export function Canvas({
         const startId = nanoid(8);
         const endId = nanoid(8);
         const start = snapToFreeEndGrid(position);
-        addNodes([anchorNodeAt(startId, start), anchorNodeAt(endId, { x: start.x + 180, y: start.y })]);
         const edgeData = useDiagramStore.getState().newConnectorData();
-        addEdges({
+        addConnector([anchorNodeAt(startId, start), anchorNodeAt(endId, { x: start.x + 180, y: start.y })], {
           id: nanoid(8),
           source: startId,
           target: endId,
@@ -625,7 +635,7 @@ export function Canvas({
 
       placeTool(event);
     },
-    [tool, screenToFlowPosition, setTool, setEditingNodeId, addNodes, addEdges, placeTool],
+    [tool, screenToFlowPosition, setTool, setEditingNodeId, addConnector, placeTool],
   );
 
   // A fresh connector renders no label element, so there is nothing to
@@ -719,10 +729,10 @@ export function Canvas({
   const createFreeEndConnector = useCallback(
     (sourceId: string, sourceAnchor: EdgeAnchor | undefined, at: Point) => {
       const end = anchorNodeAt(nanoid(8), snapToFreeEndGrid(at));
-      addNodes(end);
       const edgeData = { ...useDiagramStore.getState().newConnectorData(), sourceAnchor };
       const edgeId = nanoid(8);
-      addEdges({
+      // The anchor and the line are one ⌘Z — see `addConnector`.
+      addConnector([end], {
         id: edgeId,
         source: sourceId,
         target: end.id,
@@ -734,7 +744,42 @@ export function Canvas({
       });
       setEditingEdgeId(edgeId);
     },
-    [addNodes, addEdges, setEditingEdgeId],
+    [addConnector, setEditingEdgeId],
+  );
+
+  /**
+   * Finishes a connector drawn from `sourceId` by a release at `at`: pinned to
+   * the point on the outline of the shape under the release nearest to it, or
+   * left free there when the release was on empty board. Shared by the
+   * connector tool's drag and by a side-dot drag that React Flow could not
+   * finish on a handle — so a release anywhere on a shape lands on that shape,
+   * however far its handles are from the pointer.
+   */
+  const connectTowards = useCallback(
+    (sourceId: string, sourceAnchor: EdgeAnchor | undefined, at: Point) => {
+      const current = useDiagramStore.getState().nodes;
+      const target = nodeAtPoint(current, at, (n) => isAnchorNode(n.data) || n.id === sourceId);
+      if (!target) {
+        createFreeEndConnector(sourceId, sourceAnchor, at);
+        return;
+      }
+      const targetAnchor = anchorFor(target, new Map(current.map((n) => [n.id, n] as const)), at);
+      const edgeData = { ...useDiagramStore.getState().newConnectorData(), sourceAnchor, targetAnchor: targetAnchor ?? undefined };
+      const edgeId = nanoid(8);
+      addEdges({
+        id: edgeId,
+        source: sourceId,
+        target: target.id,
+        sourceHandle: sourceAnchor?.side,
+        targetHandle: targetAnchor?.side,
+        type: 'connector',
+        zIndex: 1000,
+        ...computeMarkers(edgeData),
+        data: edgeData,
+      });
+      setEditingEdgeId(edgeId);
+    },
+    [addEdges, createFreeEndConnector, setEditingEdgeId],
   );
 
   /**
@@ -822,10 +867,9 @@ export function Canvas({
           const dy = at.y - g.start.y;
           const startSide: Direction = Math.abs(dx) >= Math.abs(dy) ? (dx >= 0 ? 'right' : 'left') : (dy >= 0 ? 'bottom' : 'top');
           const endSide = OPPOSITE_SIDE[startSide];
-          addNodes([anchorNodeAt(startId, snapToFreeEndGrid(g.start)), anchorNodeAt(endId, snapToFreeEndGrid(at))]);
           const edgeData = useDiagramStore.getState().newConnectorData();
           const edgeId = nanoid(8);
-          addEdges({
+          addConnector([anchorNodeAt(startId, snapToFreeEndGrid(g.start)), anchorNodeAt(endId, snapToFreeEndGrid(at))], {
             id: edgeId,
             source: startId,
             target: endId,
@@ -841,27 +885,7 @@ export function Canvas({
           return;
         }
 
-        const current = useDiagramStore.getState().nodes;
-        const target = nodeAtPoint(current, at, (n) => isAnchorNode(n.data) || n.id === g.sourceId);
-        if (target) {
-          const targetAnchor = anchorFor(target, new Map(current.map((n) => [n.id, n] as const)), at);
-          const edgeData = { ...useDiagramStore.getState().newConnectorData(), sourceAnchor: g.anchor, targetAnchor: targetAnchor ?? undefined };
-          const edgeId = nanoid(8);
-          addEdges({
-            id: edgeId,
-            source: g.sourceId,
-            target: target.id,
-            sourceHandle: g.anchor.side,
-            targetHandle: targetAnchor?.side,
-            type: 'connector',
-            zIndex: 1000,
-            ...computeMarkers(edgeData),
-            data: edgeData,
-          });
-          setEditingEdgeId(edgeId);
-        } else {
-          createFreeEndConnector(g.sourceId, g.anchor, at);
-        }
+        connectTowards(g.sourceId, g.anchor, at);
         setTool('select');
       };
       const onKey = (e: KeyboardEvent) => {
@@ -871,7 +895,7 @@ export function Canvas({
       window.addEventListener('pointerup', onUp);
       window.addEventListener('keydown', onKey);
     },
-    [tool, readOnly, screenToFlowPosition, addNodes, addEdges, createFreeEndConnector, setTool, setEditingEdgeId],
+    [tool, readOnly, screenToFlowPosition, addConnector, connectTowards, setTool, setEditingEdgeId],
   );
 
   /**
@@ -988,8 +1012,10 @@ export function Canvas({
     [beginConnectorGesture, beginInkGesture],
   );
 
-  // Dragging a side handle out to empty canvas leaves the connector's end
-  // free there, as Whimsical does (clicking the handle is what quick-adds).
+  // A side-dot drag React Flow did not finish on a handle: released on a shape
+  // it pins there, as the connector tool does; released on empty canvas it
+  // leaves the connector's end free, as Whimsical does (clicking the dot is
+  // what quick-adds).
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
       connectorSourceRef.current = null;
@@ -1001,10 +1027,10 @@ export function Canvas({
       const position = screenToFlowPosition({ x: point.clientX, y: point.clientY });
       const fromSide = connectionState.fromHandle?.id;
       const sourceAnchor = isSide(fromSide) ? sideAnchor(fromSide) : undefined;
-      createFreeEndConnector(connectionState.fromNode.id, sourceAnchor, position);
+      connectTowards(connectionState.fromNode.id, sourceAnchor, position);
       if (tool === 'connector') setTool('select');
     },
-    [screenToFlowPosition, createFreeEndConnector, tool, setTool],
+    [screenToFlowPosition, connectTowards, tool, setTool],
   );
 
   // What the browser's own paste brings, for the two things ⌘V can mean that
@@ -1180,6 +1206,11 @@ export function Canvas({
         snapGrid={SNAP_GRID}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={50}
+        // A side dot is two gestures (`SideHandles`): a drag past the threshold
+        // is this connection, and a click is quick-add. React Flow's own
+        // click-to-connect would claim the click, so it is off.
+        connectOnClick={false}
+        connectionDragThreshold={DRAG_THRESHOLD_PX}
         connectionLineComponent={ConnectionLine}
         // The right button opens the context menu, so panning is the middle
         // button plus the hand tool and hold-to-pan.
@@ -1213,7 +1244,7 @@ export function Canvas({
         fitView={!opening.viewport}
         fitViewOptions={FIT_VIEW_OPTIONS}
         defaultViewport={opening.viewport ?? DEFAULT_VIEWPORT_FALLBACK}
-        className={`${tool === 'pan' ? 'cursor-grab' : isDrawingTool ? 'cursor-crosshair' : ''} ${tool === 'connector' ? 'connector-mode' : ''}`}
+        className={tool === 'pan' ? 'cursor-grab' : isDrawingTool ? 'cursor-crosshair' : undefined}
         proOptions={PRO_OPTIONS}
       >
         {/* Both the backdrop and the dots come from the theme tokens, so the

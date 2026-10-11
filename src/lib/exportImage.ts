@@ -65,7 +65,6 @@ const EXCLUDED_SELECTORS = [
   // says — but the buttons that cast a dot are chrome, not drawing.
   '.vote-affordance',
   '.react-flow__handle',
-  '.quick-add-btn',
   '.connector-joint-hit',
   '.connector-label-target',
   '.react-flow__resize-control',

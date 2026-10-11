@@ -4,12 +4,14 @@ import {
   createDiagramPictureChangeTracker,
   diagramPictureChanged,
   serializeDiagram,
+  setDocumentHistory,
   useDiagramStore,
   type ConnectorEdge,
   type ShapeNode,
 } from './useDiagramStore';
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
+import { anchorNodeAt } from '../lib/connectorGesture';
 import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
 import {
   DEFAULT_COLUMN_WIDTH,
@@ -1042,6 +1044,54 @@ describe('addConnectedShape', () => {
   it('returns null for an unknown source', () => {
     expect(store().addConnectedShape('nope', 'right')).toBeNull();
     expect(store().nodes).toHaveLength(0);
+  });
+});
+
+describe('addConnector', () => {
+  /** A connector from `source` to a fresh free-end anchor, as `Canvas` builds one. */
+  function freeEnd(source: string) {
+    const end = anchorNodeAt('end', { x: 400, y: 100 });
+    const data = store().newConnectorData();
+    const edge: ConnectorEdge = {
+      id: 'e1',
+      source,
+      target: end.id,
+      sourceHandle: 'right',
+      type: 'connector',
+      zIndex: 1000,
+      ...computeMarkers(data),
+      data: { ...data, sourceAnchor: { side: 'right', t: 0.5 } },
+    };
+    return { nodes: [end as ShapeNode], edge };
+  }
+
+  it('adds the free end and its connector as one undo step', () => {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const { nodes, edge } = freeEnd(a);
+    store().addConnector(nodes, edge);
+    expect(store().nodes.map((n) => n.id)).toEqual([a, 'end']);
+    expect(store().edges.map((e) => e.id)).toEqual(['e1']);
+
+    // One ⌘Z takes both: no invisible anchor is left behind on the board.
+    store().undo();
+    expect(store().nodes.map((n) => n.id)).toEqual([a]);
+    expect(store().edges).toHaveLength(0);
+    store().redo();
+    expect(store().nodes.map((n) => n.id)).toEqual([a, 'end']);
+    expect(store().edges.map((e) => e.id)).toEqual(['e1']);
+  });
+
+  it('opens exactly one undo boundary on a document-bound diagram', () => {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const beginEntry = vi.fn();
+    setDocumentHistory({ undo: vi.fn(), redo: vi.fn(), beginEntry, clear: vi.fn() });
+    try {
+      const { nodes, edge } = freeEnd(a);
+      store().addConnector(nodes, edge);
+      expect(beginEntry).toHaveBeenCalledTimes(1);
+    } finally {
+      setDocumentHistory(null);
+    }
   });
 });
 

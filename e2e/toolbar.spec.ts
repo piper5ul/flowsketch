@@ -40,7 +40,7 @@ async function drawConnectedPair(page: Page) {
   await page.keyboard.press('Escape');
   const node = page.locator('.react-flow__node').first();
   await node.hover();
-  await node.locator('.quick-add-btn').nth(1).click();
+  await node.getByRole('button', { name: 'Add shape right' }).click();
   await expect(page.locator('.react-flow__node')).toHaveCount(2);
   await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   return (await page.locator('.react-flow__edge-interaction').first().boundingBox())!;

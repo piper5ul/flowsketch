@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef } from 'react';
-import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
+import { NodeResizer, type NodeProps } from '@xyflow/react';
+import { SideHandles } from './SideHandles';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore } from '../store/useDiagramStore';
@@ -26,13 +27,6 @@ import {
   type WireComponent,
 } from '../lib/wireframe';
 import type { TextAlign } from '../types';
-
-const HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
-  { id: 'top', position: Position.Top, style: { top: -5, left: '50%', transform: 'translateX(-50%)' } },
-  { id: 'right', position: Position.Right, style: { right: -5, top: '50%', transform: 'translateY(-50%)' } },
-  { id: 'bottom', position: Position.Bottom, style: { bottom: -5, left: '50%', transform: 'translateX(-50%)' } },
-  { id: 'left', position: Position.Left, style: { left: -5, top: '50%', transform: 'translateY(-50%)' } },
-];
 
 /**
  * How each component's words are set when the user has said nothing. A heading
@@ -78,7 +72,7 @@ const LABEL_DEFAULTS: Record<WireComponent, { size: number; weight: number; alig
  * blur to commit. That is what makes search, the typography controls and the
  * export find a wireframe's words with no special case.
  */
-export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeType>) {
+export function WireNode({ id, data, selected, parentId, isConnectable }: NodeProps<ShapeNodeType>) {
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
@@ -383,9 +377,7 @@ export function WireNode({ id, data, selected, parentId }: NodeProps<ShapeNodeTy
 
       {/* Connectors attach to a wireframe the way they attach to a shape —
           which is what an annotation pointing at one is. */}
-      {HANDLES.map((h) => (
-        <Handle key={h.id} id={h.id} type="source" position={h.position} className="shape-handle" style={h.style} />
-      ))}
+      <SideHandles nodeId={id} isConnectable={isConnectable} />
     </div>
   );
 }
