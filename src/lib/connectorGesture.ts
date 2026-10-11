@@ -17,6 +17,7 @@ export interface HitNode extends TreeNode {
   width?: number | null;
   height?: number | null;
   measured?: { width?: number; height?: number };
+  hidden?: boolean;
 }
 
 /** A node's box in board coordinates, or `null` while it has no size yet. */
@@ -33,7 +34,8 @@ export function boardRect(node: HitNode, byId: ReadonlyMap<string, HitNode>): Re
  * children in the array, so the innermost shape inside a frame is the one
  * picked, and a shape drawn over another is picked over it. `skip` says which
  * nodes are not targets — a floating arrow's anchors, and the shape a gesture
- * started on.
+ * started on. A hidden node (a folded mind-map branch) is never one: it keeps
+ * its box while nobody can see it.
  */
 export function nodeAtPoint<T extends HitNode>(
   nodes: readonly T[],
@@ -43,7 +45,7 @@ export function nodeAtPoint<T extends HitNode>(
   const byId = new Map(nodes.map((n) => [n.id, n] as const));
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i];
-    if (skip(node)) continue;
+    if (node.hidden || skip(node)) continue;
     const rect = boardRect(node, byId);
     if (!rect) continue;
     if (point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height) {
@@ -84,6 +86,18 @@ export function facingSide(from: Point, to: Point): Direction {
 
 /** How far the pointer has to travel before a press is a drag, not a click. */
 export const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * True when a press on a side dot is a click — quick-add — rather than the
+ * start of a connector. `maxTravel` is the furthest the pointer got from the
+ * press, in screen px, at any point before the release: a drag that wandered
+ * off and came back to the dot was a drag. The comparison is React Flow's own,
+ * which starts a connection only *past* `connectionDragThreshold` (a strict
+ * `>`), so every press is exactly one of the two.
+ */
+export function isDotClick(maxTravel: number): boolean {
+  return maxTravel <= DRAG_THRESHOLD_PX;
+}
 
 /**
  * The grid a connector's free end lands on. Whimsical snaps a dangling end to

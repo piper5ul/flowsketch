@@ -6,12 +6,13 @@ import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
-import type { Direction, VerticalAlign } from '../types';
+import type { VerticalAlign } from '../types';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
 import { canQuickAddFrom, canRoundCorners, isAnchorNode } from '../lib/nodeKinds';
 import { hasMarkdown, parseMarkdown } from '../lib/markdown';
 import { MarkdownLabel } from '../components/MarkdownLabel';
+import { SideHandles } from './SideHandles';
 import {
   CYLINDER_SEAM,
   DASH_ARRAY,
@@ -37,24 +38,17 @@ const LABEL_PADDING_Y = 8;
 const SHAPE_SHADOW = '0 12px 28px -10px rgba(20, 20, 50, 0.55)';
 const SHAPE_SHADOW_FILTER = 'drop-shadow(0 8px 10px rgba(20, 20, 50, 0.35))';
 
-const HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
+/** A floating arrow's endpoint: bare, unstyled handles that are never shown. */
+const ANCHOR_HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
   { id: 'top', position: Position.Top, style: { top: -5, left: '50%', transform: 'translateX(-50%)' } },
   { id: 'right', position: Position.Right, style: { right: -5, top: '50%', transform: 'translateY(-50%)' } },
   { id: 'bottom', position: Position.Bottom, style: { bottom: -5, left: '50%', transform: 'translateX(-50%)' } },
   { id: 'left', position: Position.Left, style: { left: -5, top: '50%', transform: 'translateY(-50%)' } },
 ];
 
-const QUICK_ADD: { direction: Direction; style: React.CSSProperties }[] = [
-  { direction: 'top', style: { top: -12, left: '50%', transform: 'translateX(-50%)' } },
-  { direction: 'right', style: { right: -12, top: '50%', transform: 'translateY(-50%)' } },
-  { direction: 'bottom', style: { bottom: -12, left: '50%', transform: 'translateX(-50%)' } },
-  { direction: 'left', style: { left: -12, top: '50%', transform: 'translateY(-50%)' } },
-];
-
-export function ShapeNode({ id, data, width, height, selected, parentId }: NodeProps<ShapeNodeType>) {
+export function ShapeNode({ id, data, width, height, selected, parentId, isConnectable }: NodeProps<ShapeNodeType>) {
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const setNodeSizeTransient = useDiagramStore((s) => s.setNodeSizeTransient);
-  const addConnectedShape = useDiagramStore((s) => s.addConnectedShape);
   const editingNodeId = useDiagramStore((s) => s.editingNodeId);
   const setEditingNodeId = useDiagramStore((s) => s.setEditingNodeId);
   const editing = editingNodeId === id;
@@ -142,8 +136,8 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   }
 
   // An image node is the image and nothing else: no border, no fill, no label
-  // to edit and no quick-add buttons — connectors still attach through the
-  // same handles every other shape uses.
+  // to edit and no quick-add — connectors still attach through the same dots
+  // every other shape uses.
   if (isImageNode) {
     return (
       <div
@@ -180,16 +174,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
             pointerEvents: 'none',
           }}
         />
-        {HANDLES.map((h) => (
-          <Handle
-            key={h.id}
-            id={h.id}
-            type="source"
-            position={h.position}
-            className="shape-handle"
-            style={h.style}
-          />
-        ))}
+        <SideHandles nodeId={id} isConnectable={isConnectable} />
       </div>
     );
   }
@@ -199,8 +184,8 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
   if (isAnchorNode(data)) {
     return (
       <div className="relative h-full w-full">
-        {HANDLES.map((h) => (
-          <Handle key={h.id} id={h.id} type="source" position={h.position} style={h.style} />
+        {ANCHOR_HANDLES.map((h) => (
+          <Handle key={h.id} id={h.id} type="source" position={h.position} isConnectable={isConnectable} style={h.style} />
         ))}
       </div>
     );
@@ -451,17 +436,16 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
         }}
       />
 
-      {!isText &&
-        HANDLES.map((h) => (
-          <Handle
-            key={h.id}
-            id={h.id}
-            type="source"
-            position={h.position}
-            className="shape-handle"
-            style={h.style}
-          />
-        ))}
+      {/* One dot per side: drag it to draw a connector, click it to grow a
+          connected shape. `canQuickAddFrom` is the whole of who gets the click
+          — a mind-map node and a floating arrow's endpoint are withheld there,
+          with the reasons — and it is the same predicate the ⌥+arrow commands
+          are gated on, so the keystroke offers exactly what the dot does. This
+          component only ever renders a node of type `shape`, which is what
+          makes the `type` half of it true here. Offered while the label is
+          open too: a new shape opens for typing, and type-then-grow is the
+          gesture. A click blurs the label, which saves it. */}
+      {!isText && <SideHandles nodeId={id} isConnectable={isConnectable} quickAdd={canQuickAddFrom({ type: 'shape', data })} />}
 
       {/* The fold button, on the side the branch grows out of. A mind-map node
           keeps its own count rather than a chevron: what the user needs to know
@@ -487,28 +471,6 @@ export function ShapeNode({ id, data, width, height, selected, parentId }: NodeP
           says. */}
       {!editing && <VoteBadge nodeId={id} />}
 
-      {/* `canQuickAddFrom` is the whole of who gets these — a mind-map node
-          and a floating arrow's endpoint are withheld there, with the reasons
-          — and it is the same predicate the ⌥+arrow commands are gated on, so
-          the keystroke offers exactly what the buttons do. This component only
-          ever renders a node of type `shape`, which is what makes the `type`
-          half of it true here. */}
-      {/* Offered while the label is open too: a new shape opens for typing, and
-          type-then-grow is the gesture. A click blurs the label, which saves it. */}
-      {canQuickAddFrom({ type: 'shape', data }) &&
-        QUICK_ADD.map(({ direction, style }) => (
-          <button
-            key={direction}
-            type="button"
-            className="quick-add-btn nodrag nopan"
-            style={style}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              addConnectedShape(id, direction);
-            }}
-          />
-        ))}
     </div>
   );
 }

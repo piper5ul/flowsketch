@@ -784,6 +784,14 @@ export interface DiagramState {
   onNodesChange: (changes: NodeChange<ShapeNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<ConnectorEdge>[]) => void;
   onConnect: (connection: Connection) => void;
+  /**
+   * Adds a connector drawn by hand together with the invisible anchors its free
+   * ends hang off (`nodes`, possibly none), as **one** undo step — one
+   * `pushHistory` and one `set`. Adding them through React Flow's `addNodes` /
+   * `addEdges` went through `onNodesChange` and `onEdgesChange`, each a boundary
+   * of its own, so the first ⌘Z took the line and left its anchor behind.
+   */
+  addConnector: (nodes: ShapeNode[], edge: ConnectorEdge) => void;
 
   addShape: (shape: ShapeKind, position: { x: number; y: number }) => string;
   /**
@@ -2267,6 +2275,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     const structural = changes.some((c) => c.type === 'add' || c.type === 'remove');
     if (structural) pushHistory(get());
     set((s) => ({ edges: applyEdgeChanges(changes, s.edges) }));
+  },
+
+  addConnector: (nodes, edge) => {
+    pushHistory(get());
+    set((s) => ({ nodes: [...s.nodes, ...nodes], edges: [...s.edges, edge] }));
   },
 
   onConnect: (connection) => {

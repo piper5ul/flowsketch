@@ -397,39 +397,8 @@ export function LeftRail({
 
         <div className="rail-divider my-1 h-px bg-white/10" />
 
-        {SHAPE_TOOLS.map((s) => (
-          <ShapeToolButton key={s.tool} tool={s.tool} shortcut={s.shortcut} />
-        ))}
-
-        <MoreShapesMenu />
-
-        {/* The wireframe library. One button, because the rail is already as
-            tall as a laptop window can hold — see `WireframeMenu`. */}
-        <WireframeMenu open={wirePickerOpen} onOpenChange={onWirePickerOpenChange} />
-
-        <ShapeToolButton tool="text" shortcut="T" />
-
-        {/* An image is inserted, not drawn, so this is a one-shot action
-            rather than a tool the canvas stays in. */}
-        <RailButton label="Insert image" onClick={() => fileInputRef.current?.click()}>
-          <ImageIcon size={18} />
-        </RailButton>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={onFilesPicked}
-        />
-
-        <div className="rail-divider my-1 h-px bg-white/10" />
-
-        {/* The pen, the highlighter and the eraser. Each stays held after a
-            stroke — you draw several — and Escape (or the select tool) is the
-            way back. */}
-        <PenMenu />
-
+        {/* The connector heads the drawing tools, as in Whimsical: drawing an
+            arrow is what a flowchart is mostly made of. */}
         <Popover.Root open={connectorMenuOpen} onOpenChange={setConnectorMenuOpen}>
           <Popover.Trigger asChild>
             <div className="relative">
@@ -481,6 +450,39 @@ export function LeftRail({
             </Popover.Content>
           </Popover.Portal>
         </Popover.Root>
+
+        {SHAPE_TOOLS.map((s) => (
+          <ShapeToolButton key={s.tool} tool={s.tool} shortcut={s.shortcut} />
+        ))}
+
+        <MoreShapesMenu />
+
+        {/* The wireframe library. One button, because the rail is already as
+            tall as a laptop window can hold — see `WireframeMenu`. */}
+        <WireframeMenu open={wirePickerOpen} onOpenChange={onWirePickerOpenChange} />
+
+        <ShapeToolButton tool="text" shortcut="T" />
+
+        {/* An image is inserted, not drawn, so this is a one-shot action
+            rather than a tool the canvas stays in. */}
+        <RailButton label="Insert image" onClick={() => fileInputRef.current?.click()}>
+          <ImageIcon size={18} />
+        </RailButton>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={onFilesPicked}
+        />
+
+        <div className="rail-divider my-1 h-px bg-white/10" />
+
+        {/* The pen, the highlighter and the eraser. Each stays held after a
+            stroke — you draw several — and Escape (or the select tool) is the
+            way back. */}
+        <PenMenu />
       </div>
     </div>
   );

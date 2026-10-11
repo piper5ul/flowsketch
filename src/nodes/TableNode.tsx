@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { type NodeProps } from '@xyflow/react';
+import { SideHandles } from './SideHandles';
 import clsx from 'clsx';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore } from '../store/useDiagramStore';
@@ -23,13 +24,6 @@ interface CellRef {
   row: number;
   col: number;
 }
-
-const HANDLES: { id: string; position: Position; style: React.CSSProperties }[] = [
-  { id: 'top', position: Position.Top, style: { top: -5, left: '50%', transform: 'translateX(-50%)' } },
-  { id: 'right', position: Position.Right, style: { right: -5, top: '50%', transform: 'translateY(-50%)' } },
-  { id: 'bottom', position: Position.Bottom, style: { bottom: -5, left: '50%', transform: 'translateX(-50%)' } },
-  { id: 'left', position: Position.Left, style: { left: -5, top: '50%', transform: 'translateY(-50%)' } },
-];
 
 /** How wide the invisible strip on a column's border is, in px. */
 const RESIZE_GRIP = 8;
@@ -58,7 +52,7 @@ const RESIZE_GRIP = 8;
  * `updateNodeData`, and an unchanged cell commits nothing (`setCell` returns
  * the grid it was given), so the blur that follows a Tab is free.
  */
-export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
+export function TableNode({ id, data, selected, isConnectable }: NodeProps<ShapeNodeType>) {
   const updateNodeData = useDiagramStore((s) => s.updateNodeData);
   const updateNodeDataTransient = useDiagramStore((s) => s.updateNodeDataTransient);
   const beginInteraction = useDiagramStore((s) => s.beginInteraction);
@@ -346,9 +340,7 @@ export function TableNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
           );
         })}
 
-      {HANDLES.map((h) => (
-        <Handle key={h.id} id={h.id} type="source" position={h.position} className="shape-handle" style={h.style} />
-      ))}
+      <SideHandles nodeId={id} isConnectable={isConnectable} />
     </div>
   );
 }
