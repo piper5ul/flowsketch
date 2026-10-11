@@ -29,6 +29,23 @@ export function boardRect(node: HitNode, byId: ReadonlyMap<string, HitNode>): Re
   return { x, y, width, height };
 }
 
+const lookups = new WeakMap<readonly HitNode[], ReadonlyMap<string, HitNode>>();
+
+/**
+ * `nodes` by id, built once per node array. The store replaces the array on
+ * every change to any node, so a gesture that hit-tests on every pointer move
+ * pays for the map once while the board holds still — and gets a fresh one the
+ * moment anything on it changes.
+ */
+export function lookupOf<T extends HitNode>(nodes: readonly T[]): ReadonlyMap<string, T> {
+  let byId = lookups.get(nodes);
+  if (!byId) {
+    byId = new Map(nodes.map((n) => [n.id, n] as const));
+    lookups.set(nodes, byId);
+  }
+  return byId as ReadonlyMap<string, T>;
+}
+
 /**
  * The node under `point`, or `null`. Later nodes win: a parent precedes its
  * children in the array, so the innermost shape inside a frame is the one
@@ -42,7 +59,7 @@ export function nodeAtPoint<T extends HitNode>(
   point: Point,
   skip: (node: T) => boolean = () => false,
 ): T | null {
-  const byId = new Map(nodes.map((n) => [n.id, n] as const));
+  const byId = lookupOf(nodes);
   for (let i = nodes.length - 1; i >= 0; i--) {
     const node = nodes[i];
     if (node.hidden || skip(node)) continue;

@@ -10,8 +10,8 @@
  * outside that subtree would leave every arrowhead missing from the file.
  */
 import { ViewportPortal } from '@xyflow/react';
-import { useMemo } from 'react';
-import { MARKER_GEOMETRY, markerDefsForEdges, type MarkerDef, type VisibleArrowStyle } from '../lib/edgeMarkers';
+import { useShallow } from 'zustand/react/shallow';
+import { MARKER_GEOMETRY, stableMarkerDefs, type MarkerDef, type VisibleArrowStyle } from '../lib/edgeMarkers';
 import { useDiagramStore } from '../store/useDiagramStore';
 
 /**
@@ -84,8 +84,7 @@ function Marker({ id, style, color, size }: MarkerDef) {
 }
 
 export function ConnectorMarkerDefs() {
-  const edges = useDiagramStore((s) => s.edges);
-  const defs = useMemo(() => markerDefsForEdges(edges), [edges]);
+  const defs = useDiagramStore(useShallow((s) => stableMarkerDefs(s.edges)));
 
   return (
     <ViewportPortal>
