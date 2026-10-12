@@ -6,7 +6,7 @@ import { formatShortcut, registry } from '../commands/commands';
 import type { CommandContext } from '../commands/types';
 import { matchSwatch } from '../lib/palette';
 import { resolveFillLook } from '../lib/shapeStyle';
-import { canSwapShapeKind, isContainerNode, isGroupNode, isInkNode, isTableNode, isWireNode } from '../lib/nodeKinds';
+import { canSwapShapeKind, isContainerNode, isFrameNode, isGroupNode, isInkNode, isTableNode, isWireNode } from '../lib/nodeKinds';
 import { absolutePosition } from '../lib/nodeTree';
 import { hasWireLabel } from '../lib/wireframe';
 import { textFormatValueOf, toConnectorLabelPatch } from '../lib/text';
@@ -126,7 +126,13 @@ export function FloatingToolbar({
       ? resolveFillLook(first.data)
       : null;
   }, [styleableNodes]);
-  const allTransparent = styleableNodes.length > 0 && styleableNodes.every((node) => node.data.transparent === true);
+  // What `toggleSelectedNodesTransparent` acts on: the styleable shapes plus any
+  // frames (a frame's Transparent leaves its border and title alone).
+  const transparentableNodes = useMemo(
+    () => [...styleableNodes, ...selectedNodes.filter(isFrameNode)],
+    [styleableNodes, selectedNodes],
+  );
+  const allTransparent = transparentableNodes.length > 0 && transparentableNodes.every((node) => node.data.transparent === true);
   const editingNode = useMemo(
     () => (editingNodeId ? nodes.find((node) => node.id === editingNodeId) ?? null : null),
     [editingNodeId, nodes],

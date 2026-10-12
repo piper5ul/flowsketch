@@ -1931,6 +1931,31 @@ describe('toggleSelectedNodesTransparent', () => {
     store().undo();
     expect(store().nodes.find((node) => node.id === id)!.data).toEqual(original);
   });
+
+  it('clears a frame\'s inside without giving it a fill look, in one undo step', () => {
+    const frame = store().addFrame({ x: 0, y: 0 });
+    select(frame);
+    const original = { ...store().nodes.find((node) => node.id === frame)!.data };
+
+    store().toggleSelectedNodesTransparent();
+    const data = store().nodes.find((node) => node.id === frame)!.data;
+    expect(data.transparent).toBe(true);
+    expect(data.fillStyle).toBe(original.fillStyle);
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === frame)!.data).toEqual(original);
+  });
+
+  it('leaves a group alone — it has no inside to clear', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 200, y: 0 });
+    select(a, b);
+    store().groupSelected();
+    const group = store().nodes.find((node) => node.type === 'group')!;
+    select(group.id);
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === group.id)!.data.transparent).toBeUndefined();
+  });
 });
 
 describe('updateSelectedNodesData', () => {

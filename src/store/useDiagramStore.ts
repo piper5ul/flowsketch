@@ -3407,7 +3407,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       (node) =>
         node.selected &&
         node.data.shape !== 'image' &&
-        !isContainerNode(node) &&
+        // A frame has an inside to clear (border and title alone); a group has none.
+        (!isContainerNode(node) || isFrameNode(node)) &&
         !isTableNode(node) &&
         !isInkNode(node) &&
         !isWireNode(node),
@@ -3421,6 +3422,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set((s) => ({
       nodes: s.nodes.map((node) => {
         if (!selectedIds.has(node.id)) return node;
+        // A frame has no Fill/Outline/Dash look, so only `transparent` moves.
+        if (isFrameNode(node)) return { ...node, data: { ...node.data, transparent: makeTransparent } };
         const fillStyle =
           makeTransparent && resolveFillLook(node.data) === 'fill'
             ? 'tinted'
