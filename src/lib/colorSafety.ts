@@ -30,7 +30,7 @@ export function sanitizeShapeStyleValues(data: Record<string, unknown>): Record<
   return out;
 }
 
-/** Narrows connector default colour fields without adding a built-in default. */
+/** Narrows connector default colour and look fields without adding a built-in default. */
 export function sanitizeConnectorStyleValues(data: Record<string, unknown>): Record<string, unknown> {
   const out = { ...data };
   if ('stroke' in out) {
@@ -38,6 +38,8 @@ export function sanitizeConnectorStyleValues(data: Record<string, unknown>): Rec
     if (colour === undefined) delete out.stroke;
     else out.stroke = colour;
   }
+  // Anything but a real boolean is dropped, which reads as "no pill".
+  if ('labelBackground' in out && typeof out.labelBackground !== 'boolean') delete out.labelBackground;
   return out;
 }
 

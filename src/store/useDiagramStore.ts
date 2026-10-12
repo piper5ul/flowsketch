@@ -1443,6 +1443,8 @@ function resolveConnectorPatchValue(data: ConnectorData, key: keyof ConnectorDat
       return data.labelBold ?? false;
     case 'labelItalic':
       return data.labelItalic ?? false;
+    case 'labelBackground':
+      return data.labelBackground ?? false;
     default:
       return data[key];
   }

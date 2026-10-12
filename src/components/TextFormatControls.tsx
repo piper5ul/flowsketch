@@ -8,6 +8,7 @@ import {
   AlignVerticalJustifyEnd,
   AlignVerticalJustifyStart,
   Bold,
+  Highlighter,
   Italic,
   Link2,
   Minus,
@@ -184,6 +185,16 @@ export function TextFormatControls({ value, onChange, target, keepEditorFocus, l
           <Italic size={15} />
         </ToolButton>
         {isShape && <MoreTextStyles value={value} onChange={onChange} keepEditorFocus={keepEditorFocus} />}
+        {!isShape && (
+          // Off is Whimsical's look: no pill, the line cut away behind the text.
+          <ToolButton
+            label="Label background"
+            active={value.background ?? false}
+            onClick={() => onChange({ background: !value.background })}
+          >
+            <Highlighter size={15} />
+          </ToolButton>
+        )}
       </Segmented>
       {(link || isShape) && <Separator />}
       {link && (

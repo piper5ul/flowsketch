@@ -365,3 +365,54 @@ export function estimateLabelWidth(label: string, fontSizePx: number): number {
 export function labelLift(runLength: number, labelWidth: number, headroom = 44): number {
   return runLength < labelWidth + headroom ? 14 : 0;
 }
+
+/** A box in flow coordinates. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** How far the line stops short of a background-less label's box, in px. */
+export const LABEL_GAP_PAD_PX = 3;
+
+/**
+ * The two rectangles of the mask that cuts a connector's line away behind a
+ * label drawn without a pill: `gap` is the label's own box (centred on
+ * `center`, `size` measured off the element) grown by `pad`, and `region` is
+ * everything the line can reach, in user space — `objectBoundingBox` units
+ * would collapse to nothing on a perfectly straight horizontal or vertical
+ * line, whose box has no height or no width. The region is the path's points
+ * grown generously, because a curve without bends is React Flow's cubic,
+ * whose control points can bulge past every sampled point (never by more than
+ * half the larger side plus a little), and the arrowheads overhang the ends.
+ */
+export function labelGapMask(
+  points: Point[],
+  center: Point,
+  size: { width: number; height: number },
+  pad = LABEL_GAP_PAD_PX,
+): { region: Box; gap: Box } {
+  const gap = {
+    x: center.x - size.width / 2 - pad,
+    y: center.y - size.height / 2 - pad,
+    width: size.width + pad * 2,
+    height: size.height + pad * 2,
+  };
+  let minX = gap.x;
+  let minY = gap.y;
+  let maxX = gap.x + gap.width;
+  let maxY = gap.y + gap.height;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const grow = Math.max(maxX - minX, maxY - minY) / 2 + 120;
+  return {
+    region: { x: minX - grow, y: minY - grow, width: maxX - minX + grow * 2, height: maxY - minY + grow * 2 },
+    gap,
+  };
+}

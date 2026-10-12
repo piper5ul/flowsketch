@@ -338,6 +338,21 @@ describe('stored element colour and look narrowing', () => {
     expect(migrated.nodes[0].data).toMatchObject({ fill: '#236DAE', stroke: '#236DAE', textColor: '#236DAE' });
     expect(migrated.edges[0]!.data!.stroke).toBe('#236DAE');
   });
+
+  it('keeps a boolean connector label background, drops any other, and adds none', () => {
+    const migrated = migrateDiagramData({
+      version: CURRENT_DIAGRAM_VERSION,
+      nodes: [],
+      edges: [
+        { id: 'e1', source: 'a', target: 'b', data: { labelBackground: true } },
+        { id: 'e2', source: 'a', target: 'b', data: { labelBackground: 'yes' } },
+        { id: 'e3', source: 'a', target: 'b', data: { label: 'old' } },
+      ],
+    });
+    expect(migrated.edges[0]!.data!.labelBackground).toBe(true);
+    expect(migrated.edges[1]!.data).not.toHaveProperty('labelBackground');
+    expect(migrated.edges[2]!.data).not.toHaveProperty('labelBackground');
+  });
 });
 
 describe('marker ids are recomputed on every load', () => {

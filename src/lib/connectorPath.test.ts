@@ -8,7 +8,9 @@ import {
   smoothStepPath,
   type Point,
   estimateLabelWidth,
+  labelGapMask,
   labelLift,
+  LABEL_GAP_PAD_PX,
   polylineLength,
 } from './connectorPath';
 import { orthoRoute } from './orthoRouter';
@@ -345,5 +347,49 @@ describe('label lift on short runs', () => {
     expect(labelLift(w + 44, w)).toBe(0);
     expect(labelLift(w + 43, w)).toBe(14);
     expect(labelLift(60, w)).toBe(14);
+  });
+});
+
+describe('labelGapMask', () => {
+  it('cuts the label box plus padding out of a region that holds the whole line', () => {
+    const points = [{ x: 0, y: 50 }, { x: 300, y: 50 }];
+    const { region, gap } = labelGapMask(points, { x: 150, y: 50 }, { width: 40, height: 20 });
+    expect(gap).toEqual({
+      x: 130 - LABEL_GAP_PAD_PX,
+      y: 40 - LABEL_GAP_PAD_PX,
+      width: 40 + LABEL_GAP_PAD_PX * 2,
+      height: 20 + LABEL_GAP_PAD_PX * 2,
+    });
+    // A horizontal line has no height of its own; the region still has plenty,
+    // and reaches well past both ends for the arrowheads.
+    expect(region.height).toBeGreaterThan(200);
+    expect(region.x).toBeLessThan(-100);
+    expect(region.x + region.width).toBeGreaterThan(400);
+    for (const p of points) {
+      expect(p.x).toBeGreaterThan(region.x);
+      expect(p.y).toBeGreaterThan(region.y);
+    }
+  });
+
+  it('takes an explicit padding', () => {
+    const { gap } = labelGapMask([{ x: 0, y: 0 }, { x: 0, y: 100 }], { x: 0, y: 50 }, { width: 10, height: 10 }, 0);
+    expect(gap).toEqual({ x: -5, y: 45, width: 10, height: 10 });
+  });
+
+  it('holds an unbent curve whose control points bulge past its samples', () => {
+    const path = buildConnectorPath('curved', {
+      source: { x: 0, y: 0 },
+      target: { x: -200, y: 0 },
+      sourceSide: 'right',
+      targetSide: 'left',
+    });
+    const { region } = labelGapMask(path.points, interpolatePolyline(path.points, 0.5), { width: 20, height: 10 });
+    // React Flow's cubic heads right from the source and left into the target,
+    // so its control points sit outside both ends.
+    const controls = path.d.match(/-?\d+(\.\d+)?/g)!.map(Number);
+    for (let i = 0; i < controls.length; i += 2) {
+      expect(controls[i]).toBeGreaterThanOrEqual(region.x);
+      expect(controls[i]).toBeLessThanOrEqual(region.x + region.width);
+    }
   });
 });

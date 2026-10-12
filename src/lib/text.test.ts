@@ -94,6 +94,7 @@ describe('toolbar text formatting helpers', () => {
       textColor: undefined,
       textAlign: 'center',
       verticalAlign: 'middle',
+      background: false,
     });
   });
 
@@ -132,5 +133,14 @@ describe('toolbar text formatting helpers', () => {
       verticalAlign: 'bottom',
     })).toEqual({ labelFontSize: 'large', labelBold: true, labelItalic: false });
     expect(toConnectorLabelPatch({ fontSize: 18, bold: true })).toEqual({ labelBold: true });
+  });
+
+  it('reads and writes the connector label background, absent meaning none', () => {
+    expect(textFormatValueOf({ source: 'a', target: 'b', data: { labelBackground: true } }).background).toBe(true);
+    expect(textFormatValueOf({ source: 'a', target: 'b', data: {} }).background).toBe(false);
+    expect(textFormatValueOf({ data: { shape: 'rectangle' } }).background).toBeUndefined();
+    expect(toConnectorLabelPatch({ background: true })).toEqual({ labelBackground: true });
+    expect(toConnectorLabelPatch({ background: false })).toEqual({ labelBackground: false });
+    expect(toConnectorLabelPatch({ bold: true })).not.toHaveProperty('labelBackground');
   });
 });
