@@ -397,9 +397,18 @@ a:focus-visible {
 
 /* React Flow renders nodes *after* the edge-label-renderer portal in the DOM,
    so without an explicit z-index nodes visually/interactively cover our
-   bend and endpoint drag handles wherever they sit on a shape's border. */
+   bend and endpoint drag handles wherever they sit on a shape's border.
+   It also has to clear the *edges*: a connector between two shapes inside a
+   frame is lifted to its own SVG at z-index 1001 (one more per level of
+   nesting), and at 1000 that connector's 40 px hit path covered its own label,
+   so a label in a frame could not be pressed, dragged or double-clicked.
+   The viewport portal (comment pins, presence cursors, the live ink line)
+   stays above the labels. */
 .react-flow__edgelabel-renderer {
-  z-index: 1000;
+  z-index: 5000;
+}
+.react-flow__viewport-portal {
+  z-index: 5001;
 }
 
 /* The minimap wears the bottom bar's card and sits directly above it. React
