@@ -77,7 +77,6 @@ import {
   isAnchorNode,
   isContainerNode,
   isFrameNode,
-  isGroupNode,
   isInkNode,
   isTableNode,
   isWireNode,
@@ -2620,28 +2619,38 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   ungroupSelected: () => {
     const state = get();
-    const groups = state.nodes.filter((n) => n.selected && isGroupNode(n));
-    if (groups.length === 0) return;
+    // A frame dissolves exactly as a group does: deleting one takes its whole
+    // subtree with it, so this is the one way to drop the section and keep
+    // what is drawn inside it.
+    const containers = state.nodes.filter((n) => n.selected && isContainerNode(n));
+    if (containers.length === 0) return;
 
-    const dissolved = new Map(groups.map((g) => [g.id, g]));
+    const dissolved = new Map(containers.map((g) => [g.id, g]));
     pushHistory(state);
     set({
       nodes: sortParentsFirst(
         state.nodes
           .filter((n) => !dissolved.has(n.id))
           .map((n) => {
-            const parent = n.parentId !== undefined ? dissolved.get(n.parentId) : undefined;
+            let parent = n.parentId !== undefined ? dissolved.get(n.parentId) : undefined;
             if (!parent) return n;
-            // The child's offset within the group plus the group's own offset
-            // is its offset within whatever the group was in — which is exactly
-            // its position on the board when the group had no parent.
+            // The child's offset within the container plus the container's own
+            // offset is its offset within whatever the container was in — and
+            // so on up through every dissolved level (a frame and a group in
+            // it, ungrouped together), until a surviving parent or the board.
+            let x = n.position.x;
+            let y = n.position.y;
+            let parentId: string | undefined;
+            while (parent) {
+              x += parent.position.x;
+              y += parent.position.y;
+              parentId = parent.parentId;
+              parent = parentId !== undefined ? dissolved.get(parentId) : undefined;
+            }
             return {
               ...n,
-              ...(parent.parentId !== undefined ? { parentId: parent.parentId } : { parentId: undefined }),
-              position: {
-                x: n.position.x + parent.position.x,
-                y: n.position.y + parent.position.y,
-              },
+              parentId,
+              position: { x, y },
               // The freed children become the selection, so the ⌘G that made
               // the group and the ⌘⇧G that undoes it leave the same shapes in
               // hand.
