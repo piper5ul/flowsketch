@@ -1,10 +1,13 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useReactFlow, type EdgeProps } from '@xyflow/react';
 import { useShallow } from 'zustand/react/shallow';
 import {
   buildConnectorPath,
+  CONNECTOR_LABEL_FONT_PX as FONT_SIZE_PX,
   estimateLabelWidth,
   interpolatePolyline,
+  labelChrome,
+  labelGapMask,
   labelLift,
   type PathSegment,
   type Point,
@@ -21,9 +24,6 @@ import { useDiagramStore } from '../store/useDiagramStore';
 import { trackEdgeDrag } from '../store/edgeDrags';
 import { EditableLabel } from '../components/EditableLabel';
 import { useSearchHighlight } from '../store/useSearchStore';
-import type { FontSize } from '../types';
-
-const FONT_SIZE_PX: Record<FontSize, number> = { small: 11, medium: 12, large: 15 };
 
 const DASH_ARRAYS: Record<string, string | undefined> = {
   solid: undefined,
@@ -181,6 +181,36 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
   const searchHit = useSearchHighlight('edge', id);
   const labelRef = useRef<HTMLDivElement>(null);
   const pathPointsRef = useRef<Point[]>([]);
+
+  // A bare label (see `labelChrome`) cuts the line away behind it, and the
+  // cut has to be the label's real size. Measured whenever there is a label
+  // without `labelBackground` — a lifted one wears a pill and needs no cut, but
+  // whether it is lifted is only known further down. That is measured off the element once and then only
+  // when it changes size (a ResizeObserver, not a store or viewport
+  // subscription), and in layout pixels — `offsetWidth` ignores the viewport's
+  // zoom transform, so it is already in flow coordinates.
+  const hasGeometry = !!geometry;
+  const gapped = (editing || !!data?.label) && !data?.labelBackground;
+  const [labelSize, setLabelSize] = useState<{ width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = labelRef.current;
+    if (!gapped || !el) {
+      setLabelSize(null);
+      return;
+    }
+    const read = () => {
+      const width = el.offsetWidth;
+      const height = el.offsetHeight;
+      setLabelSize((prev) => (prev && prev.width === width && prev.height === height ? prev : { width, height }));
+    };
+    read();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(read);
+    observer.observe(el);
+    return () => observer.disconnect();
+    // `editing` swaps the element (`EditableLabel` keys the two apart), and
+    // the label is only mounted once the geometry has resolved.
+  }, [gapped, editing, hasGeometry]);
 
   // Read before the editor is closed (see `EditableLabel`).
   const commit = useCallback((text: string) => {
@@ -409,6 +439,10 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
     return { x: labelAnchor.x + nx * lift * sign, y: labelAnchor.y + ny * lift * sign };
   })();
 
+  const chrome = labelChrome(gapped, data?.labelBackground, lift);
+  const gapMask = chrome.mask && labelSize ? labelGapMask(pathPoints, labelPos, labelSize) : null;
+  const maskId = `connector-label-gap-${id.replace(/[^\w-]/g, '_')}`;
+
   /**
    * Where a bend dragged out of the path at `at` belongs in the list: after
    * every bend the path already passes on its way there. On a straight or
@@ -440,9 +474,20 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
 
   return (
     <>
+      {gapMask && (
+        // Inside the edge's own SVG, and so inside `.react-flow__viewport`,
+        // which is what the image export captures.
+        <defs>
+          <mask id={maskId} maskUnits="userSpaceOnUse" {...gapMask.region}>
+            <rect {...gapMask.region} fill="white" />
+            <rect {...gapMask.gap} rx={4} fill="black" />
+          </mask>
+        </defs>
+      )}
       <BaseEdge
         id={id}
         path={svgPathString}
+        mask={gapMask ? `url(#${maskId})` : undefined}
         markerStart={selMarkerStart}
         markerEnd={selMarkerEnd}
         interactionWidth={40}
@@ -542,7 +587,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
                 setEditingEdgeId(id);
               }}
               data-placeholder="Add label"
-              className={`rounded-md border bg-canvas px-1.5 py-0.5 font-medium text-ink-700 outline-none whitespace-pre-wrap ${
+              className={`rounded-md border ${chrome.pill ? 'bg-canvas' : 'bg-transparent'} px-1.5 py-0.5 font-medium text-ink-700 outline-none whitespace-pre-wrap ${
                 editing
                   ? 'border-accent-500'
                   : selected
@@ -550,7 +595,7 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
                     : 'border-transparent'
               }`}
               style={{
-                backgroundColor: 'var(--canvas)',
+                backgroundColor: chrome.pill ? 'var(--canvas)' : 'transparent',
                 fontSize: FONT_SIZE_PX[data?.labelFontSize ?? 'medium'],
                 fontWeight: data?.labelBold ? 700 : 500,
                 fontStyle: data?.labelItalic ? 'italic' : 'normal',

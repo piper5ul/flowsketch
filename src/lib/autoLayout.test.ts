@@ -5,12 +5,16 @@ import {
   layoutAnchors,
   layoutEdgesAmong,
   layoutGraphFor,
+  layoutLabelFor,
   layoutMembers,
   layoutOrigin,
   type LayoutEdge,
   type LayoutNode,
 } from './autoLayout';
 import { runElkLayout } from './elk';
+import { CONNECTOR_LABEL_FONT_PX, estimateLabelWidth, labelLift } from './connectorPath';
+import { CONNECTOR_STANDOFF_PX } from './defaults';
+import { markerDepthPx } from './edgeMarkers';
 
 function node(
   id: string,
@@ -312,5 +316,63 @@ describe('running elkjs', () => {
 
     expect(Math.min(...Object.values(positions).map((p) => p.x))).toBe(origin.x);
     expect(Math.min(...Object.values(positions).map((p) => p.y))).toBe(origin.y);
+  });
+});
+
+/**
+ * A labelled run has to come out long enough that `labelLift` leaves the
+ * label on it: the gap between the two shapes, less the standoff and the
+ * arrowhead at each end, is the run `ConnectorEdge` draws.
+ */
+describe('room for connector labels', () => {
+  const chain = () => [node('a', 0, 0, 160, 48), node('b', 0, 100, 160, 48), node('c', 0, 200, 160, 48)];
+  const labelled = (id: string, source: string, target: string, label: string): LayoutEdge => ({
+    id, source, target, data: { label },
+  });
+  // Defaults: no start head, the regular arrow at the end.
+  const runOf = (gap: number) => gap - 2 * CONNECTOR_STANDOFF_PX - markerDepthPx('arrow', undefined);
+  const width = (label: string) => estimateLabelWidth(label, CONNECTOR_LABEL_FONT_PX.medium);
+
+  it.each(['DOWN', 'RIGHT'] as const)('spreads a labelled run far enough that its label stays on the line (%s)', async (direction) => {
+    const nodes = chain();
+    const label = 'fees deducted en route';
+    const graph = layoutGraphFor(nodes, [labelled('ab', 'a', 'b', label), edge('bc', 'b', 'c')], selectedIds(nodes), direction)!;
+    const positions = applyLayout(nodes, await runElkLayout(graph), { x: 0, y: 0 });
+    const gap = (from: string, to: string) =>
+      direction === 'DOWN' ? positions[to].y - (positions[from].y + 48) : positions[to].x - (positions[from].x + 160);
+
+    expect(runOf(gap('a', 'b'))).toBeGreaterThanOrEqual(width(label) + 44);
+    expect(labelLift(runOf(gap('a', 'b')), width(label))).toBe(0);
+    // The unlabelled run beside it keeps the ordinary spacing.
+    expect(gap('b', 'c')).toBe(64);
+  });
+
+  it('measures a two-line label as labelLift does, on the whole string', async () => {
+    const nodes = chain();
+    const label = 'first line\nsecond line';
+    const graph = layoutGraphFor(nodes, [labelled('ab', 'a', 'b', label), edge('bc', 'b', 'c')], selectedIds(nodes), 'DOWN')!;
+    const positions = applyLayout(nodes, await runElkLayout(graph), { x: 0, y: 0 });
+    expect(labelLift(runOf(positions.b.y - (positions.a.y + 48)), width(label))).toBe(0);
+  });
+
+  it('leaves an unlabelled chain exactly as it was', async () => {
+    const nodes = chain();
+    const edges = [edge('ab', 'a', 'b'), labelled('bc', 'b', 'c', '  ')];
+    const graph = layoutGraphFor(nodes, edges, selectedIds(nodes), 'DOWN')!;
+    expect(graph.edges).toEqual([
+      { id: 'ab', sources: ['a'], targets: ['b'] },
+      { id: 'bc', sources: ['b'], targets: ['c'] },
+    ]);
+    expect(graph.layoutOptions).not.toHaveProperty('elk.edgeLabels.placement');
+    const positions = applyLayout(nodes, await runElkLayout(graph), { x: 0, y: 0 });
+    expect(positions.b.y - (positions.a.y + 48)).toBe(64);
+    expect(positions.c.y - (positions.b.y + 48)).toBe(64);
+  });
+
+  it('sizes the label box across the flow as drawn, and along it for the run', () => {
+    const label = layoutLabelFor(labelled('e', 'a', 'b', 'one\nlonger line'), 'DOWN')!;
+    expect(label.width).toBe(Math.ceil(width('longer line')));
+    expect(label.height).toBeGreaterThanOrEqual(48);
+    expect(layoutLabelFor(edge('e', 'a', 'b'), 'DOWN')).toBeNull();
   });
 });

@@ -252,6 +252,13 @@ test('a selected connector offers a click target for adding its first label', as
   await expect(page.locator('.react-flow__edgelabel-renderer').getByText('maybe')).toBeVisible();
   // Once the connector has a label the bare target is gone.
   await expect(addLabel).toHaveCount(0);
+  // The pair's run is too short to carry the label, so it is lifted off the
+  // line — and a lifted label wears the pill even though the connector asks
+  // for none (`labelChrome`), so it cannot print over the shapes beside it.
+  // The pill hides the line by itself, so the path is not masked.
+  const label = page.locator('.react-flow__edgelabel-renderer').getByText('maybe');
+  await expect(label).toHaveCSS('background-color', 'rgb(234, 239, 244)');
+  await expect(page.locator('.react-flow__edge-path').first()).not.toHaveAttribute('mask', /.+/);
 });
 
 test('a text shape grows to fit the paragraph typed into it', async ({ page }) => {
