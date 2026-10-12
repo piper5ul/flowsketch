@@ -8,6 +8,7 @@ import {
   smoothStepPath,
   type Point,
   estimateLabelWidth,
+  labelChrome,
   labelGapMask,
   labelLift,
   LABEL_GAP_PAD_PX,
@@ -391,5 +392,25 @@ describe('labelGapMask', () => {
       expect(controls[i]).toBeGreaterThanOrEqual(region.x);
       expect(controls[i]).toBeLessThanOrEqual(region.x + region.width);
     }
+  });
+});
+
+describe('labelChrome', () => {
+  it('leaves a label on its line bare, with the line cut away behind it', () => {
+    expect(labelChrome(true, undefined, 0)).toEqual({ pill: false, mask: true });
+    expect(labelChrome(true, false, 0)).toEqual({ pill: false, mask: true });
+  });
+
+  it('puts a pill on a label that asks for one, and then needs no cut', () => {
+    expect(labelChrome(true, true, 0)).toEqual({ pill: true, mask: false });
+  });
+
+  it('puts a pill on a lifted label whatever it asks for', () => {
+    expect(labelChrome(true, undefined, 14)).toEqual({ pill: true, mask: false });
+    expect(labelChrome(true, true, 14)).toEqual({ pill: true, mask: false });
+  });
+
+  it('cuts nothing when there is no label', () => {
+    expect(labelChrome(false, undefined, 0).mask).toBe(false);
   });
 });
