@@ -6,6 +6,7 @@ export type Slot =
   | 'table'
   | 'headerRow'
   | 'fillStyle'
+  | 'transparent'
   | 'style'
   | 'filterSelection'
   | 'duplicate'
@@ -33,6 +34,12 @@ export interface ShapeBarSummary {
   styleableNodes: number;
   /** True only for exactly one selected table with table data. */
   tableNode: boolean;
+  /**
+   * True when every selected node is a frame. Such a selection gets a lone
+   * Transparent toggle beside the colour (a frame has no Fill/Outline/Dash);
+   * a frame mixed with shapes is covered by the shapes' own Transparent.
+   */
+  framesOnly: boolean;
   /** The `comment.addToSelection` command's `when` result. */
   canAddComment: boolean;
 }
@@ -52,6 +59,7 @@ export function shapeBarSlots(summary: ShapeBarSummary): Slot[] {
   if (summary.swappableNodes > 0) content.push('changeShape');
 
   const colour: Slot[] = summary.colourableNodes > 0 ? ['color'] : [];
+  if (summary.framesOnly) colour.push('transparent');
   const table: Slot[] = summary.tableNode ? ['table', 'headerRow'] : [];
   const style: Slot[] = summary.styleableNodes > 0 ? ['fillStyle', 'style'] : [];
   const filter: Slot[] = summary.selectedNodes > 1 ? ['filterSelection'] : [];
