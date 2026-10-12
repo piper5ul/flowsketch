@@ -12,7 +12,7 @@ import { useSession } from '../lib/authClient';
 import { createAutosaver } from '../lib/autosave';
 import { thumbnailSubsetIds } from '../lib/boardThumbnail';
 import { listenForCanvasPointerActivity } from '../lib/canvasPointerActivity';
-import { renderDiagramPng } from '../lib/exportImage';
+import { renderThumbnailPng } from '../lib/exportImage';
 import { backfillBase64Images, findBase64ImageNodes } from '../lib/imageBackfill';
 import { THUMBNAIL_MAX_SIDE, createThumbnailScheduler } from '../lib/thumbnail';
 import { toastError } from '../store/useToastStore';
@@ -236,10 +236,8 @@ export function CanvasPage() {
         // against the live picture state before rasterizing.
         pictureChanges.checkPending(nodes, edges, voting);
         const nodeIds = thumbnailSubsetIds(thumbnailNodeIds, nodes);
-        return renderDiagramPng({
-          pixelRatio: 1,
+        return renderThumbnailPng({
           maxSide: THUMBNAIL_MAX_SIDE,
-          preserveSelection: true,
           ...(nodeIds.length > 0 ? { nodeIds } : {}),
         });
       },
@@ -340,7 +338,7 @@ export function CanvasPage() {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
       // Best-effort: the capture reads the live canvas, so it only produces a
-      // thumbnail while the viewport is still mounted. `renderDiagramPng`
+      // thumbnail while the viewport is still mounted. `renderThumbnailPng`
       // returns null once it is gone, which the scheduler treats as "nothing
       // to save" rather than an error.
       void thumbnails.flush();
