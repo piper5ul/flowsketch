@@ -8,6 +8,7 @@ const summary = (patch: Partial<ShapeBarSummary> = {}): ShapeBarSummary => ({
   colourableNodes: 1,
   styleableNodes: 1,
   tableNode: false,
+  framesOnly: false,
   canAddComment: true,
   ...patch,
 });
@@ -50,9 +51,24 @@ describe('shapeBarSlots', () => {
       ['color', 'separator', 'duplicate', 'addComment', 'moreActions'],
     ],
     [
-      'one frame',
-      summary({ textableNodes: 0, swappableNodes: 0, styleableNodes: 0 }),
-      ['color', 'separator', 'duplicate', 'addComment', 'moreActions'],
+      'one frame (Transparent beside the colour, no Fill/Outline/Dash)',
+      summary({ textableNodes: 0, swappableNodes: 0, styleableNodes: 0, framesOnly: true }),
+      ['color', 'transparent', 'separator', 'duplicate', 'addComment', 'moreActions'],
+    ],
+    [
+      'several frames',
+      summary({ selectedNodes: 2, textableNodes: 0, swappableNodes: 0, colourableNodes: 2, styleableNodes: 0, framesOnly: true }),
+      ['color', 'transparent', 'separator', 'filterSelection', 'separator', 'duplicate', 'moreActions'],
+    ],
+    [
+      'a frame with a shape (the shape bar\'s own Transparent covers both)',
+      summary({ selectedNodes: 2, textableNodes: 1, swappableNodes: 1, colourableNodes: 2, styleableNodes: 1 }),
+      ['text', 'changeShape', 'separator', 'color', 'separator', 'fillStyle', 'style', 'separator', 'filterSelection', 'separator', 'duplicate', 'moreActions'],
+    ],
+    [
+      'a frame with an ink stroke (no lone toggle: not frames only)',
+      summary({ selectedNodes: 2, textableNodes: 0, swappableNodes: 0, colourableNodes: 2, styleableNodes: 0 }),
+      ['color', 'separator', 'filterSelection', 'separator', 'duplicate', 'moreActions'],
     ],
     [
       'one group',

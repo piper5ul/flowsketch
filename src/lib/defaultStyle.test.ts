@@ -82,6 +82,23 @@ describe('pickShapeStyle', () => {
 });
 
 describe('pickConnectorStyle', () => {
+  it('keeps whether the label wears a pill, so ⌘⇧D carries it', () => {
+    expect(pickConnectorStyle({ stroke: '#123456', labelBackground: true, label: 'x' })).toEqual({
+      stroke: '#123456',
+      labelBackground: true,
+    });
+    expect(pickConnectorStyle({ labelBackground: false })).toEqual({ labelBackground: false });
+  });
+
+  it('narrows a saved label background to a boolean', () => {
+    expect(sanitizeDefaults({ connector: { labelBackground: 'yes', stroke: '#123456' } })).toEqual({
+      connector: { stroke: '#123456' },
+    });
+    expect(sanitizeDefaults({ connector: { labelBackground: true } })).toEqual({
+      connector: { labelBackground: true },
+    });
+  });
+
   it('keeps the line, both arrowheads and the routing kind', () => {
     expect(
       pickConnectorStyle({

@@ -6,6 +6,7 @@ import { useDiagramStore } from '../store/useDiagramStore';
 import { EditableLabel } from '../components/EditableLabel';
 import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
+import { frameStyle } from '../lib/frameStyle';
 
 /**
  * A frame: a titled section of the board that owns whatever is dropped inside
@@ -34,7 +35,7 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
   // colour, exactly as a shape is. See `[data-peer-selected]` in `index.css`.
   const peerSelection = usePeerSelection(id);
   const titleRef = useRef<HTMLDivElement>(null);
-  const tinted = data.fill !== 'transparent' && data.stroke !== 'transparent';
+  const { background, borderColor } = frameStyle(data);
 
   // Read before the editor is closed (see `EditableLabel`). A section's name is
   // one line, so the stray whitespace a contentEditable collects is trimmed.
@@ -53,11 +54,10 @@ export function FrameNode({ id, data, selected }: NodeProps<ShapeNodeType>) {
       onDoubleClick={() => { if (!editing && !data.locked) setEditingNodeId(id); }}
       style={{
         ...peerOutlineStyle(peerSelection),
-        // A frame with no colour of its own is the theme's panel and rule; one
-        // the user coloured wears a toned-down version of that colour, the way
-        // Whimsical's sections do, so the contents stay the loudest thing in it.
-        background: tinted ? `color-mix(in srgb, ${data.fill} 28%, var(--panel))` : 'var(--panel)',
-        border: `1.5px solid ${tinted ? `color-mix(in srgb, ${data.stroke} 55%, var(--line))` : 'var(--line)'}`,
+        // The theme's panel and rule, a picked colour toned down, or — when
+        // `transparent` — the border and title alone. See `frameStyle`.
+        background,
+        border: `1.5px solid ${borderColor}`,
         boxShadow: selected ? '0 0 0 1.5px var(--color-accent-500)' : undefined,
       }}
     >

@@ -71,8 +71,9 @@ export const SHAPE_STYLE_KEYS = [
 ] as const;
 
 /**
- * The style keys a connector's default keeps: the line, both arrowheads and
- * which of the three kinds it is routed as. Not the label, not the waypoints
+ * The style keys a connector's default keeps: the line, both arrowheads,
+ * which of the three kinds it is routed as and whether its label wears a pill
+ * (`labelBackground`). Not the label's text, not the waypoints
  * (a route is drawn for two particular shapes) and not the anchors.
  */
 export const CONNECTOR_STYLE_KEYS = [
@@ -82,6 +83,7 @@ export const CONNECTOR_STYLE_KEYS = [
   'strokeWidth',
   'startArrowStyle',
   'endArrowStyle',
+  'labelBackground',
 ] as const;
 
 /** A board's saved defaults, one entry per kind that has ever been saved. */

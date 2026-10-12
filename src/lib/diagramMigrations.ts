@@ -80,6 +80,12 @@
  * instead (`votesOf`), because a shape's `data` is a free-form bag everywhere
  * else too and there is no reason to make loading a board walk every node for
  * this one field.
+ *
+ * **`ConnectorData.labelBackground` is the case one last time**: absent means
+ * no pill behind the label (the line is cut away under the text instead), and
+ * that is the look every connector — older ones included — is meant to take
+ * on. It is narrowed to a boolean beside the connector's colour
+ * (`sanitizeConnectorStyleValues`), at every door the colour already passes.
  */
 import type { DiagramData, DiagramViewport, SerializedEdge, SerializedNode } from '../../shared/types.js';
 import type { ArrowStyle, StrokeWidth } from '../types.js';

@@ -8,7 +8,7 @@
  * testable without React Flow, a DOM, or a store.
  */
 import { getBezierPath, getStraightPath, Position } from '@xyflow/react';
-import type { ConnectorKind, Direction } from '../types.js';
+import type { ConnectorKind, Direction, FontSize } from '../types.js';
 
 export interface Point {
   x: number;
@@ -356,12 +356,85 @@ export function estimateLabelWidth(label: string, fontSizePx: number): number {
   return label.length * fontSizePx * 0.55 + 12;
 }
 
+/** A connector label's font size, in px, for each of its three sizes. */
+export const CONNECTOR_LABEL_FONT_PX: Record<FontSize, number> = { small: 11, medium: 12, large: 15 };
+
+/** The room `labelLift` wants beside a label on its run: the heads plus a little line either side. */
+export const LABEL_LIFT_HEADROOM_PX = 44;
+
 /**
  * How far a connector's label is lifted off the line, in px: nothing on a run
  * long enough to carry it, and one pill's height on a short run where the
  * pill would otherwise sit on the arrowheads. `headroom` is the room the two
  * ends need — the heads plus a little line either side of the pill.
  */
-export function labelLift(runLength: number, labelWidth: number, headroom = 44): number {
+export function labelLift(runLength: number, labelWidth: number, headroom = LABEL_LIFT_HEADROOM_PX): number {
   return runLength < labelWidth + headroom ? 14 : 0;
+}
+
+/**
+ * How a connector's label is set off from its line: on a pill of the board's
+ * colour (`pill`), or bare with the line cut away behind it (`mask`).
+ *
+ * A pill is what `labelBackground` asks for, and also what a **lifted** label
+ * gets whatever it asks for: a lifted label sits beside its run, over whatever
+ * is next to it — the shapes at either end, or an elbow's next leg — and bare
+ * text there collides with theirs. The pill paints over the line on its own,
+ * so a label wearing one never needs the mask; every bare label gets it, which
+ * costs nothing where the line does not pass under the text.
+ */
+export function labelChrome(hasLabel: boolean, labelBackground: boolean | undefined, lift: number): { pill: boolean; mask: boolean } {
+  const pill = !!labelBackground || lift !== 0;
+  return { pill, mask: hasLabel && !pill };
+}
+
+/** A box in flow coordinates. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** How far the line stops short of a background-less label's box, in px. */
+export const LABEL_GAP_PAD_PX = 3;
+
+/**
+ * The two rectangles of the mask that cuts a connector's line away behind a
+ * label drawn without a pill: `gap` is the label's own box (centred on
+ * `center`, `size` measured off the element) grown by `pad`, and `region` is
+ * everything the line can reach, in user space — `objectBoundingBox` units
+ * would collapse to nothing on a perfectly straight horizontal or vertical
+ * line, whose box has no height or no width. The region is the path's points
+ * grown generously, because a curve without bends is React Flow's cubic,
+ * whose control points can bulge past every sampled point (never by more than
+ * half the larger side plus a little), and the arrowheads overhang the ends.
+ */
+export function labelGapMask(
+  points: Point[],
+  center: Point,
+  size: { width: number; height: number },
+  pad = LABEL_GAP_PAD_PX,
+): { region: Box; gap: Box } {
+  const gap = {
+    x: center.x - size.width / 2 - pad,
+    y: center.y - size.height / 2 - pad,
+    width: size.width + pad * 2,
+    height: size.height + pad * 2,
+  };
+  let minX = gap.x;
+  let minY = gap.y;
+  let maxX = gap.x + gap.width;
+  let maxY = gap.y + gap.height;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const grow = Math.max(maxX - minX, maxY - minY) / 2 + 120;
+  return {
+    region: { x: minX - grow, y: minY - grow, width: maxX - minX + grow * 2, height: maxY - minY + grow * 2 },
+    gap,
+  };
 }

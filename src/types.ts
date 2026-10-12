@@ -347,6 +347,12 @@ export interface ConnectorData {
   labelFontSize?: FontSize;
   labelBold?: boolean;
   labelItalic?: boolean;
+  /**
+   * `true` draws the label on a pill of the board's colour. Absent or false —
+   * every connector saved before the field existed included — is Whimsical's
+   * look: no pill, and the line is cut away behind the text instead.
+   */
+  labelBackground?: boolean;
   /** 0–1 position of the label along the path (0 = source, 1 = target). */
   labelT?: number;
   /**

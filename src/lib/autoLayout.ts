@@ -14,9 +14,12 @@
  * what lets the interesting half be tested without a canvas around it.
  */
 import { boardRect, sideAnchor, type HitNode } from './connectorGesture';
+import { CONNECTOR_LABEL_FONT_PX, estimateLabelWidth, LABEL_LIFT_HEADROOM_PX } from './connectorPath';
+import { CONNECTOR_STANDOFF_PX, DEFAULT_END_ARROW, DEFAULT_START_ARROW } from './defaults';
+import { markerDepthPx } from './edgeMarkers';
 import { isAnchorNode, isContainerNode } from './nodeKinds';
 import { absolutePosition, boundsOf, type Bounds } from './nodeTree';
-import type { EdgeAnchor, ShapeData } from '../types';
+import type { ConnectorData, EdgeAnchor, ShapeData } from '../types';
 
 /** Which way the flow runs. ELK's own spelling, passed through as `elk.direction`. */
 export type LayoutDirection = 'DOWN' | 'RIGHT';
@@ -28,11 +31,19 @@ export interface LayoutNode extends HitNode {
   data: Pick<ShapeData, 'shape' | 'fill' | 'stroke'>;
 }
 
-/** What layout needs to know about a connector: which two nodes it joins. */
+/** What layout needs to know about a connector: which two nodes it joins, and what is written on it. */
 export interface LayoutEdge {
   id: string;
   source: string;
   target: string;
+  data?: Partial<Pick<ConnectorData, 'label' | 'labelFontSize' | 'startArrowStyle' | 'endArrowStyle' | 'strokeWidth'>>;
+}
+
+/** An edge label as ELK takes it: a box it keeps room for. */
+export interface ElkLabel {
+  text: string;
+  width: number;
+  height: number;
 }
 
 /** The subset of ELK's graph JSON we build. Structurally an `ElkNode`. */
@@ -40,7 +51,7 @@ export interface ElkGraph {
   id: string;
   layoutOptions: Record<string, string>;
   children: { id: string; width: number; height: number }[];
-  edges: { id: string; sources: string[]; targets: string[] }[];
+  edges: { id: string; sources: string[]; targets: string[]; labels?: ElkLabel[] }[];
 }
 
 /** One node's placement as ELK reports it back, in the graph's own coordinates. */
@@ -60,6 +71,42 @@ export interface ElkPlacement {
 const SPACING_NODE_NODE = 48;
 const SPACING_BETWEEN_LAYERS = 64;
 
+/** One line of a connector label, pill padding included. */
+const LABEL_LINE_HEIGHT = 24;
+
+/**
+ * The box ELK is asked to keep free for a connector's label, or `null` for a
+ * connector with nothing written on it.
+ *
+ * Across the flow the box is the label as drawn (its longest line, and a line
+ * height per line), so a label does not land on the shape beside its run.
+ * Along the flow it is stretched until the run comes out long enough for
+ * `labelLift` to leave the label on its line: `labelLift` wants the label's
+ * width plus `LABEL_LIFT_HEADROOM_PX` — measured on the whole string, exactly
+ * as it does — and the run is the gap between the layers less the standoff and
+ * the arrowheads at each end. ELK puts a centre label in a layer of its own,
+ * one `SPACING_BETWEEN_LAYERS` either side of it, so those two spacings are
+ * already gap the label's box need not supply.
+ */
+export function layoutLabelFor(edge: LayoutEdge, direction: LayoutDirection): ElkLabel | null {
+  const text = edge.data?.label ?? '';
+  if (text.trim() === '') return null;
+  const px = CONNECTOR_LABEL_FONT_PX[edge.data?.labelFontSize ?? 'medium'] ?? CONNECTOR_LABEL_FONT_PX.medium;
+  const lines = text.split('\n');
+  const across = Math.max(...lines.map((line) => estimateLabelWidth(line, px)));
+  const tall = lines.length * LABEL_LINE_HEIGHT;
+  const run =
+    estimateLabelWidth(text, px) +
+    LABEL_LIFT_HEADROOM_PX +
+    2 * CONNECTOR_STANDOFF_PX +
+    markerDepthPx(edge.data?.startArrowStyle ?? DEFAULT_START_ARROW, edge.data?.strokeWidth) +
+    markerDepthPx(edge.data?.endArrowStyle ?? DEFAULT_END_ARROW, edge.data?.strokeWidth);
+  const along = Math.ceil(run - 2 * SPACING_BETWEEN_LAYERS);
+  return direction === 'DOWN'
+    ? { text, width: Math.ceil(across), height: Math.max(tall, along) }
+    : { text, width: Math.max(Math.ceil(across), along), height: tall };
+}
+
 /**
  * The layout options every graph is built with.
  *
@@ -75,8 +122,12 @@ const SPACING_BETWEEN_LAYERS = 64;
  *   and draw connectors with our own router — but it is what makes ELK reserve
  *   the space between layers that a right-angled connector needs.
  */
-function layoutOptions(direction: LayoutDirection): Record<string, string> {
+function layoutOptions(direction: LayoutDirection, labelled: boolean): Record<string, string> {
   return {
+    // A labelled connector's label is a box ELK keeps room for, in a layer of
+    // its own halfway along the run (see `layoutLabelFor`). Set only when
+    // there are labels, so a graph without any is the graph it always was.
+    ...(labelled ? { 'elk.edgeLabels.placement': 'CENTER' } : {}),
     'elk.algorithm': 'layered',
     'elk.direction': direction,
     'elk.spacing.nodeNode': String(SPACING_NODE_NODE),
@@ -170,15 +221,20 @@ export function layoutGraphFor(
   const graphEdges = layoutEdgesAmong(edges, memberIds);
   if (graphEdges.length === 0) return null;
 
+  const laidOutEdges = graphEdges.map((e) => {
+    const label = layoutLabelFor(e, direction);
+    return { id: e.id, sources: [e.source], targets: [e.target], ...(label ? { labels: [label] } : {}) };
+  });
+
   return {
     id: 'root',
-    layoutOptions: layoutOptions(direction),
+    layoutOptions: layoutOptions(direction, laidOutEdges.some((e) => e.labels)),
     children: members.map((node) => {
       // Non-null: `layoutMembers` already dropped the unmeasured nodes.
       const rect = boardRect(node, byId)!;
       return { id: node.id, width: rect.width, height: rect.height };
     }),
-    edges: graphEdges.map((e) => ({ id: e.id, sources: [e.source], targets: [e.target] })),
+    edges: laidOutEdges,
   };
 }
 

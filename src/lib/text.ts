@@ -35,6 +35,8 @@ export interface TextFormatValue {
   textColor?: string;
   textAlign: TextAlign;
   verticalAlign: VerticalAlign;
+  /** A connector label's pill (`ConnectorData.labelBackground`); absent for a shape. */
+  background?: boolean;
 }
 
 type ShapeTextEntity = {
@@ -48,7 +50,7 @@ type ShapeTextEntity = {
 type ConnectorTextEntity = {
   source: string;
   target: string;
-  data?: Pick<ConnectorData, 'labelFontSize' | 'labelBold' | 'labelItalic'>;
+  data?: Pick<ConnectorData, 'labelFontSize' | 'labelBold' | 'labelItalic' | 'labelBackground'>;
 };
 
 /** Read the current label format with the same defaults as the text controls. */
@@ -64,6 +66,7 @@ export function textFormatValueOf(entity: ShapeTextEntity | ConnectorTextEntity)
       textColor: undefined,
       textAlign: 'center',
       verticalAlign: 'middle',
+      background: data?.labelBackground ?? false,
     };
   }
 
@@ -86,6 +89,7 @@ export function toConnectorLabelPatch(patch: Partial<TextFormatValue>): Partial<
   if (typeof patch.fontSize === 'string') out.labelFontSize = patch.fontSize;
   if (patch.bold !== undefined) out.labelBold = patch.bold;
   if (patch.italic !== undefined) out.labelItalic = patch.italic;
+  if (patch.background !== undefined) out.labelBackground = patch.background;
   return out;
 }
 

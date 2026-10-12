@@ -12,7 +12,7 @@ import { Fragment } from 'react';
 import { swatchFromHex } from '../../lib/palette';
 import type { FillLook } from '../../lib/shapeStyle';
 import { addColumn, addRow, removeColumn, removeRow } from '../../lib/table';
-import { canRoundCorners } from '../../lib/nodeKinds';
+import { canRoundCorners, isFrameNode } from '../../lib/nodeKinds';
 import { shapeBarSlots, type ShapeBarSummary, type Slot } from '../../lib/toolbarModel';
 import { useDiagramStore, type ShapeNode } from '../../store/useDiagramStore';
 import type { CommandContext } from '../../commands/types';
@@ -106,9 +106,13 @@ export function ShapeBar({
     colourableNodes: colourableNodes.length,
     styleableNodes: styleableNodes.length,
     tableNode: !!tableNode,
+    framesOnly: nodes.length > 0 && nodes.every(isFrameNode),
     canAddComment,
   } satisfies ShapeBarSummary);
   const firstStyleable = styleableNodes[0];
+  const transparentButton = (
+    <ToolButton key="transparent" label="Transparent" active={allTransparent} onClick={toggleSelectedNodesTransparent}><CheckerboardIcon /></ToolButton>
+  );
   const control = (slot: Slot, key: number) => {
     if (slot === 'separator') return <Separator key={`sep-${key}`} />;
     if (slot === 'text') return <ToolButton key={slot} label="Text" shortcut={textShortcut} onClick={onEnterText}><Type size={16} /></ToolButton>;
@@ -129,9 +133,10 @@ export function ShapeBar({
             </ToolButton>
           ))}
         </Segmented>
-        <ToolButton key="transparent" label="Transparent" active={allTransparent} onClick={toggleSelectedNodesTransparent}><CheckerboardIcon /></ToolButton>
+        {transparentButton}
       </Fragment>
     );
+    if (slot === 'transparent') return transparentButton;
     if (slot === 'style' && firstStyleable) return (
       <StylePopover
         key={slot}

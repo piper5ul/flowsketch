@@ -1931,6 +1931,31 @@ describe('toggleSelectedNodesTransparent', () => {
     store().undo();
     expect(store().nodes.find((node) => node.id === id)!.data).toEqual(original);
   });
+
+  it('clears a frame\'s inside without giving it a fill look, in one undo step', () => {
+    const frame = store().addFrame({ x: 0, y: 0 });
+    select(frame);
+    const original = { ...store().nodes.find((node) => node.id === frame)!.data };
+
+    store().toggleSelectedNodesTransparent();
+    const data = store().nodes.find((node) => node.id === frame)!.data;
+    expect(data.transparent).toBe(true);
+    expect(data.fillStyle).toBe(original.fillStyle);
+
+    store().undo();
+    expect(store().nodes.find((node) => node.id === frame)!.data).toEqual(original);
+  });
+
+  it('leaves a group alone — it has no inside to clear', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    const b = store().addShape('rectangle', { x: 200, y: 0 });
+    select(a, b);
+    store().groupSelected();
+    const group = store().nodes.find((node) => node.type === 'group')!;
+    select(group.id);
+    store().toggleSelectedNodesTransparent();
+    expect(store().nodes.find((node) => node.id === group.id)!.data.transparent).toBeUndefined();
+  });
 });
 
 describe('updateSelectedNodesData', () => {
@@ -2987,6 +3012,45 @@ describe('ungroupSelected', () => {
     store().redo();
     expect(nodeOf(a).parentId).toBeUndefined();
     expect(nodeOf(a).position).toEqual({ x: 100, y: 100 });
+  });
+
+  it('removes a frame and leaves its contents where they were on the board', () => {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 400, y: 300 });
+    select(a, b);
+    store().wrapSelectionInFrame();
+    const frame = store().nodes.find((n) => n.type === 'frame')!.id;
+    expect(nodeOf(a).parentId).toBe(frame);
+
+    select(frame);
+    store().ungroupSelected();
+
+    expect(store().nodes.find((n) => n.id === frame)).toBeUndefined();
+    expect(nodeOf(a)).toMatchObject({ position: { x: 100, y: 100 }, selected: true });
+    expect(nodeOf(a).parentId).toBeUndefined();
+    expect(nodeOf(b).position).toEqual({ x: 400, y: 300 });
+
+    store().undo();
+    expect(nodeOf(a).parentId).toBe(frame);
+  });
+
+  it('dissolves a frame and a group inside it together without losing either offset', () => {
+    const a = store().addShape('rectangle', { x: 100, y: 100 });
+    const b = store().addShape('rectangle', { x: 400, y: 300 });
+    select(a, b);
+    store().groupSelected();
+    const group = store().nodes.find((n) => n.type === 'group')!.id;
+    select(group);
+    store().wrapSelectionInFrame();
+    const frame = store().nodes.find((n) => n.type === 'frame')!.id;
+
+    select(frame, group);
+    store().ungroupSelected();
+
+    expect(store().nodes.some((n) => n.id === frame || n.id === group)).toBe(false);
+    expect(nodeOf(a).parentId).toBeUndefined();
+    expect(nodeOf(a).position).toEqual({ x: 100, y: 100 });
+    expect(nodeOf(b).position).toEqual({ x: 400, y: 300 });
   });
 });
 
