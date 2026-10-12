@@ -2771,3 +2771,42 @@ test('"Paste Mermaid" builds a flowchart and lays it out', async ({ page, contex
   await expect(page.locator('.react-flow__node')).toHaveCount(0);
   await expect(page.locator('.react-flow__edge')).toHaveCount(0);
 });
+
+test('a connector label inside a frame can still be dragged along its line', async ({ page, context }) => {
+  // A connector between two shapes in a frame is drawn on a raised layer
+  // (React Flow lifts a child's edges above its parent), which once sat above
+  // the edge-label layer: the connector's own 40 px hit path covered its label,
+  // so pressing the label grabbed the line instead. Labels on the line — what
+  // the layout leaves room for — made that the common case.
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await signUp(page);
+  await openEmptyBoard(page, 'Label drag in a frame');
+
+  await writeClipboard(page, 'flowchart LR\n  A[Alpha] -->|pay in USD| B[Beta]');
+  await page.locator('.react-flow__pane').click({ button: 'right', position: { x: 300, y: 200 } });
+  await page.getByRole('menuitem', { name: 'Paste Mermaid (flowchart or sequence)' }).click();
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  const label = page.getByText('pay in USD', { exact: true });
+  // The layout is async; wait until the label has settled on its line.
+  await expect.poll(async () => (await label.boundingBox())?.x ?? 0).toBeGreaterThan(0);
+  await page.waitForTimeout(500);
+
+  await page.keyboard.press('Meta+k');
+  await page.keyboard.type('Wrap in frame');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.react-flow__node-frame')).toHaveCount(1);
+  await page.locator('.react-flow__pane').click({ position: { x: 1100, y: 80 } });
+
+  // The label is what the pointer lands on, not the line's hit path.
+  await label.click();
+  await expect(page.locator('.react-flow__edge.selected')).toHaveCount(1);
+
+  const before = (await label.boundingBox())!;
+  const cx = before.x + before.width / 2;
+  const cy = before.y + before.height / 2;
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx - 60, cy, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => (await label.boundingBox())!.x).toBeLessThan(before.x - 30);
+});
