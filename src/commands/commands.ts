@@ -3,7 +3,7 @@ import { MIND_MAP_NODE_SIZE, childrenOf, mapOf } from '../lib/mindMap';
 import { linesOf } from '../lib/pasteAs';
 import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
-import { canQuickAddFrom, isFrameNode, isGroupNode } from '../lib/nodeKinds';
+import { canQuickAddFrom, isContainerNode, isFrameNode } from '../lib/nodeKinds';
 import { slidesOf } from '../lib/presentation';
 import { parseTableHtml } from '../lib/tableHtml';
 import { parseTableText } from '../lib/table';
@@ -720,7 +720,9 @@ export const commandDeclarations: Command[] = [
     group: 'arrange',
     shortcut: { key: 'g', meta: true, shift: true },
     contextMenu: 'node',
-    when: (ctx) => ctx.store.getState().nodes.some((n) => n.selected && isGroupNode(n)),
+    // A frame too: deleting a container takes its contents, so this is how a
+    // section is removed and its shapes kept.
+    when: (ctx) => ctx.store.getState().nodes.some((n) => n.selected && isContainerNode(n)),
     run: (ctx) => ctx.store.getState().ungroupSelected(),
   },
   {
