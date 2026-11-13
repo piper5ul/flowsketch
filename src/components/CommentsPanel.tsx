@@ -18,6 +18,7 @@ import {
   canDeleteThread,
   canEditComment,
   canResolveThread,
+  emptyThreadsMessage,
   formatCommentTime,
   threadNumbers,
   visibleThreads,
@@ -71,7 +72,7 @@ export function CommentsPanel() {
     <aside
       role="dialog"
       aria-label="Comments"
-      className="panel-in pointer-events-auto fixed right-0 top-0 z-30 flex h-screen w-[22rem] flex-col border-l border-line bg-panel/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
+      className="panel-in pointer-events-auto fixed bottom-0 right-0 top-16 z-30 flex w-[22rem] flex-col rounded-tl-2xl border-l border-t border-line bg-panel/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
     >
       <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
         <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ink-900">
@@ -114,9 +115,7 @@ export function CommentsPanel() {
           </p>
         ) : shown.length === 0 ? (
           <p className="px-2 py-3 text-[13px] text-ink-600">
-            {filter === 'resolved'
-              ? 'Nothing has been resolved yet.'
-              : 'No comments yet. Right-click a shape or the canvas to start one.'}
+            {emptyThreadsMessage(threads, filter)}
           </p>
         ) : (
           <ul className="flex flex-col gap-0.5">
@@ -334,6 +333,7 @@ function CommentRow({
             onChange={setDraft}
             onSubmit={save}
             label={`Edit comment by ${comment.author.name}`}
+            autoFocus
           />
           <div className="mt-1.5 flex items-center gap-2">
             <button
@@ -430,6 +430,7 @@ function CommentEditor({
   label,
   placeholder,
   textareaRef,
+  autoFocus,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -437,10 +438,24 @@ function CommentEditor({
   label: string;
   placeholder?: string;
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>;
+  /**
+   * Focus on mount, caret after the text, so typing edits the comment rather
+   * than reaching the canvas's tool shortcuts.
+   */
+  autoFocus?: boolean;
 }) {
+  const ownRef = useRef<HTMLTextAreaElement>(null);
+  const ref = textareaRef ?? ownRef;
+  useEffect(() => {
+    const box = ref.current;
+    if (!autoFocus || !box) return;
+    box.focus();
+    box.setSelectionRange(box.value.length, box.value.length);
+  }, [autoFocus, ref]);
+
   return (
     <textarea
-      ref={textareaRef}
+      ref={ref}
       value={value}
       onChange={(event) => onChange(event.target.value)}
       onKeyDown={(event) => {

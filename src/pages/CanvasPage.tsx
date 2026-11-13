@@ -428,6 +428,25 @@ export function CanvasPage() {
     };
   }, [loading, loadError, id, readOnly, bound]);
 
+  // The browser tab names the diagram, so several open boards can be told
+  // apart. A subscription rather than a selector: this page re-rendering on
+  // every keystroke in the title field would re-render the whole canvas.
+  useEffect(() => {
+    if (loading || loadError) return;
+    const previous = document.title;
+    const show = (title: string) => {
+      document.title = title.trim() ? `${title.trim()} – FlowSketch` : previous;
+    };
+    show(useDiagramStore.getState().title);
+    const unsubscribe = useDiagramStore.subscribe((state, prev) => {
+      if (state.title !== prev.title) show(state.title);
+    });
+    return () => {
+      unsubscribe();
+      document.title = previous;
+    };
+  }, [loading, loadError]);
+
   // The title is a database column, not part of DiagramData, so the collab
   // persistence (which writes only `data`) never touches it. This effect saves
   // it independently of the JSON autosave, the same way the thumbnail scheduler
@@ -444,6 +463,9 @@ export function CanvasPage() {
       timer = null;
       if (inFlight && !(await inFlight)) return false;
       if (!pending) return true;
+      // An emptied field is a name being retyped, not one to save: the server
+      // refuses it, and the field's blur puts "Untitled" back if it stays empty.
+      if (!latestTitle.trim()) return true;
 
       pending = false;
       const title = latestTitle;
@@ -454,6 +476,7 @@ export function CanvasPage() {
         })
         .catch(() => {
           pending = true;
+          toastError('Could not save the diagram title.');
           return false;
         });
       inFlight = request;

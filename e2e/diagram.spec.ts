@@ -1799,7 +1799,7 @@ test('a comment pinned to a shape can be replied to, resolved, and found again',
   // Resolved: no pin on the board, nothing under Open, no count on the button.
   await expect(pin).toHaveCount(0);
   await expect(page.getByLabel('1 open thread')).toHaveCount(0);
-  await expect(panel.getByText('No comments yet.')).toBeVisible();
+  await expect(panel.getByText('No open threads.')).toBeVisible();
 
   await panel.getByRole('button', { name: 'Resolved', exact: true }).click();
   await expect(panel.getByText('Looks off')).toBeVisible();

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ConflictError, UnauthorizedError, api, setUnauthorizedHandler } from './api';
+import { ApiError, ConflictError, UnauthorizedError, api, setUnauthorizedHandler } from './api';
 
 /** A `fetch` that answers every call with one response. */
 function respondWith(status: number, body?: unknown) {
@@ -74,5 +74,17 @@ describe('other failures', () => {
   it('rejects with the status, untyped — nothing downstream special-cases them', async () => {
     respondWith(500, { error: 'Boom' });
     await expect(api.listDiagrams()).rejects.toThrow('API error: 500');
+  });
+
+  it("carries the server's own explanation when it gave one", async () => {
+    respondWith(400, { error: 'You already own this diagram' });
+    const error = await api.listDiagrams().catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 400, serverMessage: 'You already own this diagram' });
+  });
+
+  it('has no explanation to carry from a body that is not JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('oops', { status: 502 })));
+    await expect(api.listDiagrams()).rejects.toMatchObject({ status: 502, serverMessage: null });
   });
 });

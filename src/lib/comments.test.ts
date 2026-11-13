@@ -5,6 +5,7 @@ import {
   canDeleteThread,
   canEditComment,
   canResolveThread,
+  emptyThreadsMessage,
   openThreadCount,
   pinPosition,
   threadNumbers,
@@ -51,6 +52,21 @@ describe('visibleThreads', () => {
 
   it('shows everything under the all filter, in the order given', () => {
     expect(visibleThreads([open, done], 'all')).toEqual([open, done]);
+  });
+});
+
+describe('emptyThreadsMessage', () => {
+  it('says there are no open threads when every thread is resolved', () => {
+    expect(emptyThreadsMessage([thread({ resolved: true })], 'open')).toBe('No open threads.');
+  });
+
+  it('invites a first comment on a board with no threads at all', () => {
+    expect(emptyThreadsMessage([], 'open')).toMatch(/^No comments yet/);
+    expect(emptyThreadsMessage([], 'all')).toMatch(/^No comments yet/);
+  });
+
+  it('says nothing has been resolved under the resolved filter', () => {
+    expect(emptyThreadsMessage([thread()], 'resolved')).toBe('Nothing has been resolved yet.');
   });
 });
 

@@ -30,7 +30,7 @@ export function SignupPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-canvas">
+    <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-bold text-ink-900">FlowSketch</h1>

@@ -119,9 +119,20 @@ export function DashboardPage() {
     void refresh();
   }, [refresh]);
 
+  // A double-click on "New Diagram" is two clicks, and each would otherwise
+  // make a diagram of its own.
+  const creating = useRef(false);
   const createDiagram = useCallback(async () => {
-    const diagram = await api.createDiagram();
-    navigate(`/d/${diagram.id}`);
+    if (creating.current) return;
+    creating.current = true;
+    try {
+      const diagram = await api.createDiagram();
+      navigate(`/d/${diagram.id}`);
+    } catch {
+      toastError('Could not create a diagram. Please try again.');
+    } finally {
+      creating.current = false;
+    }
   }, [navigate]);
 
   const importDiagram = useCallback(async (file: File) => {
@@ -263,6 +274,7 @@ export function DashboardPage() {
       onMove={(folderId) => moveDiagram(d.id, folderId)}
       onToggleStar={(e) => toggleStar(d.id, e)}
       onMenuToggle={() => openMenu(menuOpen === d.id ? null : d.id)}
+      onMenuClose={() => openMenu(null)}
       onRequestDelete={() => setConfirmingDelete(d.id)}
       onCancelDelete={() => openMenu(null)}
       onDelete={() => deleteDiagram(d.id)}
@@ -286,8 +298,11 @@ export function DashboardPage() {
 
         {/* Content */}
         <main className="mx-auto max-w-6xl px-6 py-8">
-          <div className="mb-6 flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
+          {/* Wraps on a phone, putting the buttons under the heading, rather
+              than squeezing the heading to nothing and the buttons onto two
+              lines each. */}
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setSidebarOpen((open) => !open)}
                 aria-label="Toggle folders"
@@ -296,7 +311,7 @@ export function DashboardPage() {
               >
                 <PanelLeft size={16} />
               </button>
-              <h2 className="truncate text-lg font-semibold text-ink-900">My Diagrams</h2>
+              <h2 className="whitespace-nowrap text-lg font-semibold text-ink-900">My Diagrams</h2>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -313,14 +328,14 @@ export function DashboardPage() {
               />
               <button
                 onClick={() => fileInput.current?.click()}
-                className="flex items-center gap-2 rounded-lg bg-panel px-4 py-2 text-sm font-semibold text-ink-700 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle transition hover:text-ink-900"
+                className="flex items-center gap-2 whitespace-nowrap rounded-lg bg-panel px-4 py-2 text-sm font-semibold text-ink-700 shadow-[0_1px_3px_rgba(20,20,50,0.06)] ring-1 ring-line-subtle transition hover:text-ink-900"
               >
                 <Upload size={16} />
                 Import
               </button>
               <button
                 onClick={createDiagram}
-                className="flex items-center gap-2 rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
+                className="flex items-center gap-2 whitespace-nowrap rounded-lg bg-accent-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-accent-600"
               >
                 <Plus size={16} />
                 New Diagram
@@ -426,6 +441,7 @@ function DiagramCard({
   onOpen,
   onToggleStar,
   onMenuToggle,
+  onMenuClose,
   onRequestDelete,
   onCancelDelete,
   onDelete,
@@ -446,6 +462,7 @@ function DiagramCard({
   onOpen: () => void;
   onToggleStar: (e: React.MouseEvent) => void;
   onMenuToggle: () => void;
+  onMenuClose: () => void;
   onRequestDelete: () => void;
   onCancelDelete: () => void;
   onDelete: () => void;
@@ -463,6 +480,28 @@ function DiagramCard({
   // a card for somebody else's diagram carries none of them, and says who it
   // belongs to and what this user may do with it instead.
   const isOwner = diagram.role === 'owner';
+  const menuRef = useRef<HTMLDivElement>(null);
+  const actionsRef = useRef<HTMLButtonElement>(null);
+
+  // The menu closes the way the app's other menus do: a press anywhere outside
+  // it, or Escape — which hands focus back to the button that opened it.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onMenuClose();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      onMenuClose();
+      actionsRef.current?.focus();
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [menuOpen, onMenuClose]);
 
   return (
     <div
@@ -499,7 +538,20 @@ function DiagramCard({
           {renaming ? (
             <RenameInput title={diagram.title} onCommit={onCommitRename} onCancel={onCancelRename} />
           ) : (
-            <p className="truncate text-sm font-medium text-ink-900">{diagram.title}</p>
+            // The title is the card's keyboard door: a button, so Tab reaches
+            // it and Enter opens the diagram, as a click anywhere on the card
+            // does. The card itself is not made focusable because it holds
+            // buttons of its own.
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpen();
+              }}
+              className="card-open min-w-0 truncate text-left text-sm font-medium text-ink-900"
+            >
+              {diagram.title}
+            </button>
           )}
           <div className="flex shrink-0 items-center gap-0.5">
             {!isOwner && (
@@ -520,11 +572,20 @@ function DiagramCard({
             </button>
             )}
             {isOwner && (
-            <div className="relative">
+            <div ref={menuRef} className="relative">
               <button
+                ref={actionsRef}
                 aria-label="Diagram actions"
+                aria-expanded={menuOpen}
                 onClick={(e) => { e.stopPropagation(); onMenuToggle(); }}
-                className="flex h-6 w-6 items-center justify-center rounded text-ink-600/40 opacity-0 transition group-hover:opacity-100 hover:text-ink-900"
+                // Shown on hover, on keyboard focus, while its menu is open, and
+                // always on a touch screen, which has no hover to reveal it.
+                className={clsx(
+                  'flex h-6 w-6 items-center justify-center rounded text-ink-600/40 transition hover:text-ink-900',
+                  menuOpen
+                    ? 'opacity-100'
+                    : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100',
+                )}
               >
                 <MoreHorizontal size={14} />
               </button>

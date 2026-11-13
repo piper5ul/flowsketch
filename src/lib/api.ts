@@ -44,6 +44,33 @@ export class ConflictError extends Error {
   }
 }
 
+/**
+ * Any other refusal. The message stays `API error: <status>` — callers match on
+ * it — and `serverMessage` carries the `{ error }` the server explained itself
+ * with, when it did, for the few places worth showing it to the user.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly serverMessage: string | null;
+
+  constructor(status: number, serverMessage: string | null) {
+    super(`API error: ${status}`);
+    this.name = 'ApiError';
+    this.status = status;
+    this.serverMessage = serverMessage;
+  }
+}
+
+async function errorMessage(res: Response): Promise<string | null> {
+  try {
+    const body = (await res.json()) as { error?: unknown };
+    if (typeof body.error === 'string') return body.error;
+  } catch {
+    // A body that is not JSON has nothing to add to the status.
+  }
+  return null;
+}
+
 /** The dashboard's answer to a 401: nothing unsaved, so go and sign in again. */
 function redirectToLogin() {
   if (typeof window !== 'undefined') window.location.href = '/login';
@@ -87,7 +114,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       throw new UnauthorizedError();
     }
     if (res.status === 409) throw new ConflictError(await conflictUpdatedAt(res));
-    throw new Error(`API error: ${res.status}`);
+    throw new ApiError(res.status, await errorMessage(res));
   }
   if (res.status === 204) return undefined as T;
   return res.json();
