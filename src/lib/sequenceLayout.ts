@@ -40,6 +40,7 @@
  */
 
 import type { MermaidSequence } from './mermaid';
+import { CONNECTOR_LABEL_FONT_PX, estimateLabelWidth } from './connectorPath';
 import type { SequenceEdgeData, SequenceNodeData } from '../types';
 
 export interface Point {
@@ -69,10 +70,25 @@ export const LIFELINE_TAIL = 40;
  * down, back. An elbow would have had to be routed between two points on one
  * vertical line, which is the router's least defined case.
  */
-export const SELF_MESSAGE_DROP = 24;
+export const SELF_MESSAGE_DROP = 40;
 
-/** How far to the right that loop reaches. */
-export const SELF_MESSAGE_REACH = 48;
+/**
+ * How far to the right that loop reaches, at the least. Its label sits on the
+ * loop's far side — the middle of the polyline — so a longer label pushes the
+ * loop further out until the text clears the lifeline by `SELF_MESSAGE_LABEL_GAP`,
+ * and never so far that the loop crosses the next participant's lifeline.
+ */
+export const SELF_MESSAGE_REACH = 64;
+
+/** The room between a self-message's label and the lifeline it loops off. */
+export const SELF_MESSAGE_LABEL_GAP = 16;
+
+/** How far right a self-message's loop reaches for a label of this text. */
+export function selfMessageReach(label: string): number {
+  const halfLabel = estimateLabelWidth(label, CONNECTOR_LABEL_FONT_PX.medium) / 2;
+  const widest = PARTICIPANT_SIZE.width + PARTICIPANT_GAP - SELF_MESSAGE_LABEL_GAP;
+  return Math.round(Math.min(widest, Math.max(SELF_MESSAGE_REACH, halfLabel + SELF_MESSAGE_LABEL_GAP)));
+}
 
 /** A lifeline anchor is a 1×1 invisible node, like every other anchor. */
 export const ANCHOR_SIZE = 1;
@@ -219,7 +235,7 @@ export function layoutSequence(
       const bottom = cursor + SELF_MESSAGE_DROP;
       const source = messagePoint(message.from, cursor, index);
       const target = messagePoint(message.to, bottom, index);
-      const reach = centreX(fromColumn) + SELF_MESSAGE_REACH;
+      const reach = centreX(fromColumn) + selfMessageReach(message.text);
       messageEdges.push({
         ...common,
         source,

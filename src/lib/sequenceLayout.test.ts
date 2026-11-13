@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseMermaidSequence, type MermaidSequence } from './mermaid';
+import { CONNECTOR_LABEL_FONT_PX, estimateLabelWidth, labelLift } from './connectorPath';
 import {
   ANCHOR_SIZE,
   LIFELINE_TAIL,
@@ -8,8 +9,10 @@ import {
   PARTICIPANT_GAP,
   PARTICIPANT_SIZE,
   SELF_MESSAGE_DROP,
+  SELF_MESSAGE_LABEL_GAP,
   SELF_MESSAGE_REACH,
   layoutSequence,
+  selfMessageReach,
   type SequenceLayout,
   type SequenceLayoutNode,
 } from './sequenceLayout';
@@ -244,6 +247,27 @@ describe('a self-message', () => {
     const top = ORIGIN.y + PARTICIPANT_SIZE.height + MESSAGE_TOP_GAP;
     const source = nodes.find((n) => n.id === second.source)!;
     expect(absolute(source, nodes).y).toBe(top + SELF_MESSAGE_DROP + MESSAGE_GAP);
+  });
+
+  it('reaches far enough out that its label clears the lifeline', () => {
+    const text = 'think about it for a while';
+    const { edges } = lay(`A->>A: ${text}`);
+    const [message] = edges.filter((e) => e.sequence.kind === 'message');
+    const centre = ORIGIN.x + PARTICIPANT_SIZE.width / 2;
+    const reach = message.waypoints![0].x - centre;
+    const labelWidth = estimateLabelWidth(text, CONNECTOR_LABEL_FONT_PX.medium);
+
+    expect(reach).toBeGreaterThan(SELF_MESSAGE_REACH);
+    // The label is centred on the loop's far side, the middle of the polyline.
+    expect(reach - labelWidth / 2).toBeGreaterThanOrEqual(SELF_MESSAGE_LABEL_GAP - 0.5);
+    // And the loop is long enough that the label stays on it, not lifted off.
+    expect(labelLift(2 * reach + SELF_MESSAGE_DROP, labelWidth)).toBe(0);
+  });
+
+  it('never loops out as far as the next lifeline', () => {
+    const pitch = PARTICIPANT_SIZE.width + PARTICIPANT_GAP;
+    expect(selfMessageReach('x'.repeat(200))).toBeLessThan(pitch);
+    expect(selfMessageReach('')).toBe(SELF_MESSAGE_REACH);
   });
 
   it('gives an ordinary message no waypoints at all', () => {

@@ -63,6 +63,7 @@ export function ShapeBar({
   swappableNodes,
   colourableNodes,
   styleableNodes,
+  fillableNodes,
   tableNode,
   currentShapeKind,
   activeColorId,
@@ -81,6 +82,7 @@ export function ShapeBar({
   swappableNodes: ShapeNode[];
   colourableNodes: ShapeNode[];
   styleableNodes: ShapeNode[];
+  fillableNodes: ShapeNode[];
   tableNode: ShapeNode | null;
   currentShapeKind: ShapeKind | null;
   activeColorId: string | null;
@@ -105,6 +107,7 @@ export function ShapeBar({
     swappableNodes: swappableNodes.length,
     colourableNodes: colourableNodes.length,
     styleableNodes: styleableNodes.length,
+    fillableNodes: fillableNodes.length,
     tableNode: !!tableNode,
     framesOnly: nodes.length > 0 && nodes.every(isFrameNode),
     canAddComment,

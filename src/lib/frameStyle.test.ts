@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { frameStyle } from './frameStyle';
+import { frameStyle, UNCOLOURED_PANEL } from './frameStyle';
 
 describe('frameStyle', () => {
-  it('paints an uncoloured frame as the theme panel and rule, exactly as before', () => {
+  it('paints an uncoloured frame as a faintly washed theme panel and the theme rule', () => {
     expect(frameStyle({ fill: 'transparent', stroke: 'transparent' })).toEqual({
-      background: 'var(--panel)',
+      background: UNCOLOURED_PANEL,
       borderColor: 'var(--line)',
     });
+    // Not the bare panel: a default white shape would vanish on that.
+    expect(UNCOLOURED_PANEL).not.toBe('var(--panel)');
+    expect(UNCOLOURED_PANEL).toContain('var(--panel)');
     expect(frameStyle({ fill: 'transparent', stroke: 'transparent', transparent: false })).toEqual(
       frameStyle({ fill: 'transparent', stroke: 'transparent' }),
     );

@@ -391,6 +391,20 @@ a:focus-visible {
 .react-flow__node.selected {
   z-index: 10;
 }
+/* A group draws nothing of its own until it is pointed at or selected, and
+   then only `GroupNode`'s dashed outline — so React Flow's built-in group look
+   (a padded, bordered, tinted box that turns grey in dark mode, with a shadow
+   on hover and selection) is switched off entirely. */
+.react-flow__node-group,
+.react-flow__node-group.selectable:hover,
+.react-flow__node-group.selectable.selected,
+.react-flow__node-group.selectable:focus,
+.react-flow__node-group.selectable:focus-visible {
+  padding: 0;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
 .react-flow__resize-control {
   z-index: 10 !important;
 }
@@ -424,6 +438,12 @@ a:focus-visible {
   background-color: var(--minimap-bg);
   box-shadow: 0 10px 30px -10px rgba(20, 20, 50, 0.25), 0 0 0 1px var(--line-subtle);
   backdrop-filter: blur(8px);
+  /* The SVG is sized to the card (`MINIMAP_SIZE` in CanvasMiniMap); this only
+     trims its corners to the card's radius. */
+  overflow: hidden;
+}
+.rf-minimap .react-flow__minimap-node {
+  vector-effect: non-scaling-stroke;
 }
 
 /* Connection handle hit areas — invisible but interactive for drag-to-connect.

@@ -86,6 +86,16 @@ describe('textInset', () => {
     expect(cloud.left).toBeGreaterThan(0);
   });
 
+  it('keeps a triangle\'s label inside its sloped sides', () => {
+    const triangle = textInset('triangle');
+    // The sides run from the apex (50, 0) to the base corners (0, 100) and
+    // (100, 100): at the top of the label box they must still be outside it.
+    const sideAtTop = 50 - triangle.top / 2;
+    expect(triangle.left).toBeGreaterThanOrEqual(sideAtTop);
+    expect(triangle.right).toBeGreaterThanOrEqual(sideAtTop);
+    expect(triangle.top).toBeGreaterThan(0);
+  });
+
   it('sits an arrow\'s label on the shaft rather than in the head', () => {
     const arrow = textInset('arrow');
     // The head starts at x=62, so the text has to stop short of it — which

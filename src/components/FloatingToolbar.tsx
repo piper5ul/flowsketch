@@ -4,7 +4,7 @@ import { X } from 'lucide-react';
 import { useDiagramStore, type ConnectorEdge } from '../store/useDiagramStore';
 import { formatShortcut, registry } from '../commands/commands';
 import type { CommandContext } from '../commands/types';
-import { matchSwatch } from '../lib/palette';
+import { matchSwatch, PALETTE } from '../lib/palette';
 import { resolveFillLook } from '../lib/shapeStyle';
 import { canSwapShapeKind, isContainerNode, isFrameNode, isGroupNode, isInkNode, isTableNode, isWireNode } from '../lib/nodeKinds';
 import { absolutePosition } from '../lib/nodeTree';
@@ -106,6 +106,9 @@ export function FloatingToolbar({
     [selectedNodes],
   );
   const styleableNodes = useMemo(() => textableNodes.filter((node) => !isWireNode(node)), [textableNodes]);
+  // A text shape ignores shape looks (`shapePaint`), so Fill/Outline/Dash and
+  // Transparent are not offered for one — they would do nothing visible.
+  const fillableNodes = useMemo(() => styleableNodes.filter((node) => node.data.shape !== 'text'), [styleableNodes]);
   const colourableNodes = useMemo(
     () => selectedNodes.filter((node) => node.data.shape !== 'image' && !isGroupNode(node)),
     [selectedNodes],
@@ -121,17 +124,21 @@ export function FloatingToolbar({
     return isTableNode(node) && node.data.table ? node : null;
   }, [selectedNodes]);
   const styleMatches = useMemo(() => {
-    const first = styleableNodes[0];
-    return first && styleableNodes.every((node) => resolveFillLook(node.data) === resolveFillLook(first.data))
+    const first = fillableNodes[0];
+    return first && fillableNodes.every((node) => resolveFillLook(node.data) === resolveFillLook(first.data))
       ? resolveFillLook(first.data)
       : null;
-  }, [styleableNodes]);
-  // What `toggleSelectedNodesTransparent` acts on: the styleable shapes plus any
+  }, [fillableNodes]);
+  // What `toggleSelectedNodesTransparent` acts on: the fillable shapes plus any
   // frames (a frame's Transparent leaves its border and title alone).
   const transparentableNodes = useMemo(
-    () => [...styleableNodes, ...selectedNodes.filter(isFrameNode)],
-    [styleableNodes, selectedNodes],
+    () => [...fillableNodes, ...selectedNodes.filter(isFrameNode)],
+    [fillableNodes, selectedNodes],
   );
+  // Colouring a Text element colours its words: it has no box for a fill to
+  // paint behind them, and a fill there reads as a solid slab. A selection
+  // mixing text with shapes keeps the shapes' rule, as it always has.
+  const textOnly = colourableNodes.length > 0 && colourableNodes.every((node) => node.data.shape === 'text');
   const allTransparent = transparentableNodes.length > 0 && transparentableNodes.every((node) => node.data.transparent === true);
   const editingNode = useMemo(
     () => (editingNodeId ? nodes.find((node) => node.id === editingNodeId) ?? null : null),
@@ -145,7 +152,9 @@ export function FloatingToolbar({
 
   const colorMatches = isEdgeMode
     ? selectedEdges.map((edge) => matchSwatch({ stroke: edge.data?.stroke ?? DEFAULT_EDGE_STROKE }, 'edge'))
-    : colourableNodes.map((node) => matchSwatch(
+    : textOnly
+      ? colourableNodes.map((node) => PALETTE.find((swatch) => swatch.fill.toUpperCase() === node.data.textColor?.toUpperCase()) ?? null)
+      : colourableNodes.map((node) => matchSwatch(
         { fill: node.data.fill, stroke: node.data.stroke },
         node.data.shape === 'sticky' ? 'sticky' : 'shape',
       ));
@@ -155,7 +164,9 @@ export function FloatingToolbar({
     : null;
   const triggerColours = isEdgeMode
     ? selectedEdges.map((edge) => edge.data?.stroke ?? DEFAULT_EDGE_STROKE)
-    : colourableNodes.map((node, index) => colorMatches[index]?.fill ?? (node.data.shape === 'sticky' ? node.data.stroke : node.data.fill));
+    : textOnly
+      ? colourableNodes.map((node) => node.data.textColor ?? 'var(--color-shape-ink)')
+      : colourableNodes.map((node, index) => colorMatches[index]?.fill ?? (node.data.shape === 'sticky' ? node.data.stroke : node.data.fill));
   const triggerColour = triggerColours.length > 0 && triggerColours.every((colour) => colour.toUpperCase() === triggerColours[0].toUpperCase())
     ? triggerColours[0]
     : null;
@@ -353,6 +364,7 @@ export function FloatingToolbar({
             swappableNodes={swappableNodes}
             colourableNodes={colourableNodes}
             styleableNodes={styleableNodes}
+            fillableNodes={fillableNodes}
             tableNode={tableNode}
             currentShapeKind={currentShapeKind}
             activeColorId={activeColorId}
@@ -362,7 +374,9 @@ export function FloatingToolbar({
             canAddComment={!!registry.find('comment.addToSelection')?.when?.(ctx)}
             textShortcut={textShortcut}
             ctx={ctx}
-            onPickColor={(swatch) => updateSelectedNodesColour(swatch)}
+            onPickColor={(swatch) => (textOnly
+              ? updateSelectedNodesData({ textColor: swatch.fill })
+              : updateSelectedNodesColour(swatch))}
             onEnterText={enterText}
             onRunCommand={onRunCommand}
           />
