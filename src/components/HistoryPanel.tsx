@@ -209,7 +209,7 @@ export function HistoryPanel({ onClose }: { onClose: () => void }) {
     <aside
       role="dialog"
       aria-label="Version history"
-      className="panel-in pointer-events-auto fixed right-0 top-0 z-30 flex h-screen w-[22rem] flex-col border-l border-line bg-panel/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
+      className="panel-in pointer-events-auto fixed bottom-0 right-0 top-16 z-30 flex w-[22rem] flex-col rounded-tl-2xl border-l border-t border-line bg-panel/95 shadow-[-12px_0_40px_-20px_rgba(10,10,25,0.35)] backdrop-blur"
     >
       <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-3">
         <h2 className="flex items-center gap-2 text-[14px] font-semibold text-ink-900">

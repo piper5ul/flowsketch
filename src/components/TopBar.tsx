@@ -43,12 +43,17 @@ export function TopBar({ beforeSignOut }: { beforeSignOut?: () => Promise<boolea
 
   return (
     <>
-    <div data-canvas-top-bar="" className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-center justify-between">
-      <div className="pointer-events-auto flex items-center gap-2 rounded-2xl bg-panel/95 py-1.5 pl-2 pr-2 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
+    {/* The Comments and History sheets open at `top-16`, just under this bar,
+        so moving it or making it taller means moving them too. */}
+    <div data-canvas-top-bar="" className="pointer-events-none absolute left-4 right-4 top-4 z-20 flex items-center justify-between gap-2">
+      {/* `min-w-0` on this group and on the title input: on a narrow window
+          the title gives up its width first, so every control on the right
+          stays on screen. */}
+      <div className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-2xl bg-panel/95 py-1.5 pl-2 pr-2 shadow-[0_10px_30px_-10px_rgba(20,20,50,0.25)] ring-1 ring-line-subtle backdrop-blur">
         <Tooltip label="Back to dashboard" side="bottom">
           <button
             onClick={() => navigate('/')}
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
           >
             <ArrowLeft size={15} />
           </button>
@@ -61,8 +66,14 @@ export function TopBar({ beforeSignOut }: { beforeSignOut?: () => Promise<boolea
           // fighting them mid-edit.
           onBlur={() => setTitle(title.trim() || 'Untitled')}
           readOnly={readOnly}
+          // The server's `MAX_TITLE_CHARS` (server/validation.ts): a longer
+          // name would be refused on save.
+          maxLength={200}
           aria-label="Diagram title"
-          className="min-w-0 max-w-[16rem] bg-transparent text-[14px] font-semibold text-ink-900 outline-none"
+          // On a narrow window the field is cut short, so the whole name is
+          // one hover away.
+          title={title}
+          className="min-w-0 max-w-[16rem] text-ellipsis bg-transparent text-[14px] font-semibold text-ink-900 outline-none"
         />
         {/* `starred` is one column on the diagram row rather than a per-user
             flag, so the server refuses it from anyone but the owner. */}
@@ -70,7 +81,7 @@ export function TopBar({ beforeSignOut }: { beforeSignOut?: () => Promise<boolea
           <Tooltip label={starred ? 'Unstar' : 'Star'} side="bottom">
             <button
               onClick={toggleStar}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-ink-700/50 transition hover:bg-hover hover:text-ink-700"
             >
               <Star size={15} className={clsx(starred && 'fill-yellow-400 text-yellow-400')} />
             </button>
@@ -83,7 +94,7 @@ export function TopBar({ beforeSignOut }: { beforeSignOut?: () => Promise<boolea
         <PresenceStrip />
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         {/* Reading the history is a viewer's right too: being shown what a
             board looked like last week is the same permission as being shown
             what it looks like now. The panel withholds the two writes. */}
