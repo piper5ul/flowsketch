@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MARKER_GEOMETRY, computeMarkers, markerDepthPx, markerDefsForEdges, markerId, stableMarkerDefs } from './edgeMarkers';
-import { CONNECTOR_STROKE_PX, DEFAULT_STROKE_WIDTH, makeEdgeData } from './defaults';
+import { CONNECTOR_STROKE_PX, DEFAULT_EDGE_STROKE, DEFAULT_STROKE_WIDTH, makeEdgeData } from './defaults';
 import type { ArrowStyle, ConnectorData } from '../types';
 
 /** The fields every case needs, so each test states only its subject. */
@@ -12,6 +12,15 @@ function edge(patch: Partial<ConnectorData> = {}) {
 }
 
 describe('computeMarkers', () => {
+  it('uses the default stroke for an imported connector with no stroke', () => {
+    const data = { connectorType: 'elbow' } as ConnectorData;
+    const markers = computeMarkers(data);
+    expect(markers).toEqual(computeMarkers({ stroke: DEFAULT_EDGE_STROKE }));
+    expect(markerDefsForEdges([{ data }])).toEqual([
+      { id: markers.markerEnd, style: 'arrow', color: DEFAULT_EDGE_STROKE, size: 13 },
+    ]);
+  });
+
   it('names a marker after the style, colour and size it draws', () => {
     const { markerEnd } = computeMarkers({ ...base, strokeWidth: 3 });
     expect(markerEnd).toContain('arrow');
