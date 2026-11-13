@@ -67,7 +67,6 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
 
   const [editing, setEditing] = useState<CellRef | null>(null);
   const [draft, setDraft] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
   // What the grid was when the current write started, so a Tab that both
   // commits a cell and adds a row composes the two into one patch.
   const table: TableData = data.table ?? emptyTable(1, 1, false);
@@ -129,9 +128,15 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
     if (editing && editingNodeId !== id) setEditing(null);
   }, [editing, editingNodeId, id]);
 
-  useEffect(() => {
-    if (editing) inputRef.current?.select();
-  }, [editing]);
+  // The open cell's input takes the focus as it mounts, rather than when
+  // `editing` changes: a Tab past the last cell opens a row the grid does not
+  // have yet — the new row arrives with the node's data a render later — so on
+  // the render `editing` moves there is no input to focus, and the letters
+  // typed next would run as tool shortcuts.
+  const focusOnMount = useCallback((input: HTMLInputElement | null) => {
+    input?.focus();
+    input?.select();
+  }, []);
 
   /** Tab / ⇧Tab / Enter: commit, then put the cursor where the key points. */
   const move = useCallback(
@@ -267,7 +272,7 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
                     >
                       {open ? (
                         <input
-                          ref={inputRef}
+                          ref={focusOnMount}
                           // `nodrag`/`nopan` or a text selection inside the cell
                           // would drag the table around instead.
                           className="nodrag nopan h-full w-full bg-transparent px-2 text-inherit outline-none"
