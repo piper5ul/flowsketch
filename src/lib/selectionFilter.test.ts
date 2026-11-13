@@ -19,6 +19,24 @@ const nodes = [
 ];
 
 describe('filterOptions', () => {
+  it('buckets ink, tables, frames and groups by type rather than their rectangle data', () => {
+    const mixed = [
+      n('rectangle', 'rectangle', '#DBEAFE'),
+      ...['ink', 'table', 'frame', 'group'].map((type) => ({ ...n(type, 'rectangle', 'transparent'), type })),
+    ];
+    expect(filterOptions(mixed).shapes).toEqual([
+      { value: 'frame', count: 1 },
+      { value: 'group', count: 1 },
+      { value: 'ink', count: 1 },
+      { value: 'rectangle', count: 1 },
+      { value: 'table', count: 1 },
+    ]);
+    for (const type of ['ink', 'table', 'frame', 'group'] as const) {
+      expect([...narrowedIds(mixed, { shape: type })]).toEqual([type]);
+    }
+    expect([...narrowedIds(mixed, { shape: 'rectangle' })]).toEqual(['rectangle']);
+  });
+
   it('counts the kinds and fills among the selected shapes, most common first', () => {
     const o = filterOptions(nodes);
     expect(o.shapes).toEqual([

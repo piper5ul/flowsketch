@@ -95,6 +95,22 @@ describe('buildConnectorPath', () => {
   });
 
   describe('elbow', () => {
+    it('keeps a loopback connector reaching its target along the short final stub', () => {
+      const source = { x: 380, y: 506 };
+      const target = { x: 490, y: 183.6 };
+      const routed = orthoRoute({
+        source, sourceSide: 'bottom', sourceRect: { x: 290, y: 400, width: 180, height: 100 },
+        target, targetSide: 'top', targetRect: { x: 400, y: 200, width: 180, height: 100 },
+        obstacles: [], vertices: [],
+      });
+      const path = buildConnectorPath('elbow', { source, target, sourceSide: 'bottom', targetSide: 'top', routed });
+      expect(path.points[0]).toEqual(source);
+      expect(path.points.at(-1)).toEqual(target);
+      expect(path.points.at(-2)).toEqual({ x: 490, y: 180 });
+      expect(path.d).toMatch(/L 490 183\.6$/);
+      expectOrthogonal(path.points, 0);
+    });
+
     it('passes the routed corners through, in order, between the anchors', () => {
       const routed = [{ x: 100, y: 0 }, { x: 100, y: 100 }];
       const path = buildConnectorPath('elbow', { ...ends, routed });
@@ -294,6 +310,11 @@ describe('controlThrough', () => {
 });
 
 describe('cleanPath', () => {
+  it('straightens a kink beside the target by moving the interior point', () => {
+    const pts = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 103, y: 50 }];
+    expect(cleanPath(pts)).toEqual([{ x: 0, y: 0 }, { x: 103, y: 0 }, { x: 103, y: 50 }]);
+  });
+
   it('leaves the two endpoints where they are', () => {
     const pts = [{ x: 0, y: 0 }, { x: 3, y: 50 }, { x: 100, y: 50 }];
     const cleaned = cleanPath(pts);

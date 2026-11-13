@@ -14,6 +14,8 @@
  */
 import type { DiagramData, SerializedEdge, SerializedNode } from '../../shared/types';
 import { DEFAULT_EDGE_STROKE } from './defaults';
+import { isFrameNode, isGroupNode } from './nodeKinds';
+import { absolutePosition } from './nodeTree';
 
 /** Box a node is drawn at when the stored row does not say — v0 rows may not. */
 const FALLBACK_WIDTH = 180;
@@ -56,17 +58,20 @@ function stringOr(value: unknown, fallback: string): string {
   return typeof value === 'string' && value !== '' ? value : fallback;
 }
 
-function boxOf(node: SerializedNode): PreviewBox {
+function boxOf(node: SerializedNode, byId: ReadonlyMap<string, SerializedNode>): PreviewBox {
+  const position = absolutePosition(node, byId);
+  const frame = isFrameNode(node);
+  const stroke = stringOr(node.data?.stroke, '#94A3B8');
   return {
     id: node.id,
-    x: node.position?.x ?? 0,
-    y: node.position?.y ?? 0,
+    x: position.x,
+    y: position.y,
     w: node.width ?? FALLBACK_WIDTH,
     h: node.height ?? FALLBACK_HEIGHT,
     // A transparent fill or stroke is a real value here (text shapes, and the
     // 1×1 anchors a floating arrow hangs off), so it is carried through.
-    fill: stringOr(node.data?.fill, '#FFFFFF'),
-    stroke: stringOr(node.data?.stroke, '#94A3B8'),
+    fill: frame ? 'transparent' : stringOr(node.data?.fill, '#FFFFFF'),
+    stroke: frame && stroke === 'transparent' ? '#94A3B8' : stroke,
   };
 }
 
@@ -92,7 +97,8 @@ function lineOf(edge: SerializedEdge, byId: Map<string, PreviewBox>): PreviewLin
  * rather than showing an empty rectangle.
  */
 export function buildVersionPreview(data: DiagramData): VersionPreviewGeometry | null {
-  const boxes = data.nodes.map(boxOf);
+  const nodesById = new Map(data.nodes.map((node) => [node.id, node]));
+  const boxes = data.nodes.filter((node) => !isGroupNode(node)).map((node) => boxOf(node, nodesById));
   if (boxes.length === 0) return null;
 
   const minX = Math.min(...boxes.map((b) => b.x));

@@ -927,7 +927,7 @@ describe('POST /api/diagrams/:id/duplicate', () => {
 
     const res = await request(server).post('/api/diagrams/d1/duplicate').expect(201);
 
-    expect(res.body).toMatchObject({ id: 'd2', title: 'Roadmap (copy)', data: source.data });
+    expect(res.body).toMatchObject({ id: 'd2', title: 'Roadmap (copy)', data: source.data, role: 'owner' });
     expect(prismaMock.diagram.create).toHaveBeenCalledWith({
       data: {
         userId: 'u1',

@@ -7,7 +7,7 @@
  */
 import { useMemo, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Filter } from 'lucide-react';
+import { Filter, Frame, Group, Pencil, Table } from 'lucide-react';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { filterOptions, isWireFilterKind, narrowedIds, wireComponentOfFilterKind } from '../lib/selectionFilter';
 import type { FilterKind } from '../lib/selectionFilter';
@@ -17,10 +17,13 @@ import { WIRE_LABELS } from '../lib/wireframe';
 import { ChromePopover, ToolButton } from './toolbar/chrome';
 
 /**
- * The icon and the name a bucket wears. Two tables rather than one, because a
- * wireframe component is not a shape kind — see `FilterKind`.
+ * The icon and the name a bucket wears — see `FilterKind`.
  */
 function faceOf(kind: FilterKind): { Icon: React.ComponentType<{ size?: number }>; label: string } {
+  if (kind === 'ink') return { Icon: Pencil, label: 'Ink' };
+  if (kind === 'table') return { Icon: Table, label: 'Table' };
+  if (kind === 'frame') return { Icon: Frame, label: 'Frame' };
+  if (kind === 'group') return { Icon: Group, label: 'Group' };
   if (isWireFilterKind(kind)) {
     const component = wireComponentOfFilterKind(kind);
     return { Icon: WIRE_ICONS[component], label: WIRE_LABELS[component] };

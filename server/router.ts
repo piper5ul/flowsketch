@@ -339,7 +339,7 @@ apiRouter.post('/diagrams/:id/duplicate', async (req, res) => {
   await indexImages(copy.id, copy.data);
   // The copy belongs to the caller, so again nothing is stripped; the call is
   // here so that adding a route beside this one inherits the rule.
-  res.status(201).json(publicDiagram(copy, 'owner'));
+  res.status(201).json({ ...publicDiagram(copy, 'owner'), role: 'owner' });
 });
 
 /**

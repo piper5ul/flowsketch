@@ -1,5 +1,5 @@
 import type { ArrowStyle, ConnectorData, StrokeWidth } from '../types.js';
-import { DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from './defaults.js';
+import { DEFAULT_EDGE_STROKE, DEFAULT_END_ARROW, DEFAULT_START_ARROW, DEFAULT_STROKE_WIDTH } from './defaults.js';
 
 /**
  * Arrowhead size, in px, for each line width. An arrowhead is sized rather
@@ -72,7 +72,7 @@ function resolve(data: MarkerSource): { start: ArrowStyle; end: ArrowStyle; colo
   return {
     start: data.startArrowStyle ?? DEFAULT_START_ARROW,
     end: data.endArrowStyle ?? DEFAULT_END_ARROW,
-    color: data.stroke,
+    color: data.stroke ?? DEFAULT_EDGE_STROKE,
     size: MARKER_SIZE_PX[data.strokeWidth ?? DEFAULT_STROKE_WIDTH],
   };
 }
