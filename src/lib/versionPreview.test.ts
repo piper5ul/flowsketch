@@ -68,6 +68,26 @@ describe('buildVersionPreview', () => {
     ]);
   });
 
+  it('places framed and grouped children and their connectors in board coordinates', () => {
+    const preview = buildVersionPreview(diagram([
+      node('frame', { type: 'frame', position: { x: 300, y: 200 }, width: 400, height: 300 }),
+      node('group', { type: 'group', parentId: 'frame', position: { x: 20, y: 30 } }),
+      node('child', { parentId: 'group', position: { x: 10, y: 15 } }),
+      node('outside', { position: { x: 800, y: 400 } }),
+    ], [edge('e1', 'child', 'outside')]))!;
+    expect(preview.boxes.find((box) => box.id === 'child')).toMatchObject({ x: 330, y: 245 });
+    expect(preview.boxes.map((box) => box.id)).toEqual(['frame', 'child', 'outside']);
+    expect(preview.lines[0]).toMatchObject({ x1: 380, y1: 270, x2: 850, y2: 425 });
+    expect(preview.viewBox).toBe('252 152 696 396');
+  });
+
+  it('draws a frame with transparent stored colours as an outlined box', () => {
+    const preview = buildVersionPreview(diagram([
+      node('frame', { type: 'frame', data: { fill: 'transparent', stroke: 'transparent' } }),
+    ]))!;
+    expect(preview.boxes[0]).toMatchObject({ fill: 'transparent', stroke: '#94A3B8' });
+  });
+
   it('falls back to a box for a v0 node that stored no size', () => {
     const preview = buildVersionPreview(diagram([node('a', { width: undefined, height: undefined })]))!;
     expect(preview.boxes[0]).toMatchObject({ w: 180, h: 100 });
