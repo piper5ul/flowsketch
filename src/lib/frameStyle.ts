@@ -7,7 +7,15 @@ export interface FrameStyle {
 }
 
 /**
- * A frame with no colour of its own is the theme's panel and rule; one the
+ * An uncoloured frame's panel: the theme's panel with a faint wash of its ink,
+ * so a default white shape still reads inside it (Whimsical's sections are a
+ * light grey for the same reason). The ink flips with the theme, so the wash
+ * lightens a dark panel rather than darkening it.
+ */
+export const UNCOLOURED_PANEL = 'color-mix(in srgb, var(--ink-600) 7%, var(--panel))';
+
+/**
+ * A frame with no colour of its own is the theme's panel, faintly washed, and rule; one the
  * user coloured wears a toned-down version of that colour, the way Whimsical's
  * sections do, so the contents stay the loudest thing in it.
  *
@@ -23,7 +31,7 @@ export function frameStyle(data: Pick<ShapeData, 'fill' | 'stroke' | 'transparen
   const clear = data.transparent === true;
   const background = clear
     ? 'transparent'
-    : tinted ? `color-mix(in srgb, ${data.fill} 28%, var(--panel))` : 'var(--panel)';
+    : tinted ? `color-mix(in srgb, ${data.fill} 28%, var(--panel))` : UNCOLOURED_PANEL;
   const borderColor = tinted
     ? `color-mix(in srgb, ${data.stroke} 55%, var(--line))`
     : clear ? 'color-mix(in srgb, var(--ink-600) 35%, transparent)' : 'var(--line)';

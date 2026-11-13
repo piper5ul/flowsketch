@@ -16,6 +16,7 @@
 
 import { absolutePosition } from './nodeTree';
 import { isFrameNode } from './nodeKinds';
+import { UNCOLOURED_PANEL } from './frameStyle';
 
 /** Just enough of a node to work out whether it is a slide, and where. */
 export interface SlideNode {
@@ -109,7 +110,8 @@ function byReadingOrder(a: SlideRect & { id: string }, b: SlideRect & { id: stri
 /**
  * How `FrameNode` paints a frame's ground, as a colour string.
  *
- * A frame with no colour of its own is the theme's panel; one the user
+ * A frame with no colour of its own is the theme's panel, faintly washed
+ * (`UNCOLOURED_PANEL`); one the user
  * coloured wears a toned-down version of that colour. Kept here rather than
  * imported from the component so the presentation's backdrop cannot drift from
  * the frame's own — and so it can be asserted on.
@@ -119,7 +121,7 @@ export function slideBackground(data: SlideNode['data']): string {
   // `color-mix(in srgb, undefined 28%, …)` is not a declaration a browser keeps.
   const tinted =
     !!data.fill && !!data.stroke && data.fill !== 'transparent' && data.stroke !== 'transparent';
-  return tinted ? `color-mix(in srgb, ${data.fill} 28%, var(--panel))` : 'var(--panel)';
+  return tinted ? `color-mix(in srgb, ${data.fill} 28%, var(--panel))` : UNCOLOURED_PANEL;
 }
 
 /**

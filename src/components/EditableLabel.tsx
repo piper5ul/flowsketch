@@ -21,8 +21,9 @@ import { consumeSuppressBlur } from '../store/useDiagramStore';
  *
  * **The text is read before anything else happens**: `onCommit` is handed what
  * was typed, and only then does the caller close the editor. Should the editor
- * be taken away without a blur (another node opened in its place), what was
- * typed is committed on the way out rather than lost.
+ * be taken away without a blur (another node opened in its place, or the page
+ * itself going away), what was typed is committed on the way out rather than
+ * lost.
  */
 export interface EditableLabelProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children' | 'onBlur' | 'contentEditable'> {
   editing: boolean;
@@ -76,7 +77,18 @@ export function EditableLabel({ editing, value, onCommit, caret = 'end', childre
       frame = requestAnimationFrame(retry);
     };
     frame = requestAnimationFrame(retry);
+    // The tab going away (closed, reloaded, put in the back/forward cache)
+    // takes the editor with it and fires no blur, so what was typed is
+    // committed then — and on the capture phase, which runs before the
+    // page's own `pagehide` save, so that save carries it.
+    const onPageHide = () => {
+      if (committed.current) return;
+      committed.current = true;
+      onCommitRef.current(el.innerText);
+    };
+    window.addEventListener('pagehide', onPageHide, { capture: true });
     return () => {
+      window.removeEventListener('pagehide', onPageHide, { capture: true });
       cancelAnimationFrame(frame);
       // Taken away without a blur (another node opened in its place): what was
       // typed is committed rather than lost. Checked a moment later, and only

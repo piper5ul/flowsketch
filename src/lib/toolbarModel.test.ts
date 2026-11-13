@@ -7,6 +7,8 @@ const summary = (patch: Partial<ShapeBarSummary> = {}): ShapeBarSummary => ({
   swappableNodes: 1,
   colourableNodes: 1,
   styleableNodes: 1,
+  // Every styleable node takes a look unless a case says otherwise.
+  fillableNodes: patch.styleableNodes ?? 1,
   tableNode: false,
   framesOnly: false,
   canAddComment: true,
@@ -26,9 +28,9 @@ describe('shapeBarSlots', () => {
       ['text', 'changeShape', 'separator', 'color', 'separator', 'fillStyle', 'style', 'separator', 'duplicate', 'addComment', 'moreActions'],
     ],
     [
-      'a text shape (the existing kind-swap gate excludes it)',
-      summary({ swappableNodes: 0 }),
-      ['text', 'separator', 'color', 'separator', 'fillStyle', 'style', 'separator', 'duplicate', 'addComment', 'moreActions'],
+      'a text shape (no kind swap, and no look: it has no box to fill)',
+      summary({ swappableNodes: 0, fillableNodes: 0 }),
+      ['text', 'separator', 'color', 'separator', 'style', 'separator', 'duplicate', 'addComment', 'moreActions'],
     ],
     [
       'a wireframe with a label',

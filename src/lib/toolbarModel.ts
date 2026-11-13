@@ -32,6 +32,12 @@ export interface ShapeBarSummary {
   swappableNodes: number;
   colourableNodes: number;
   styleableNodes: number;
+  /**
+   * The styleable nodes that also take a look — Fill/Outline/Dash and
+   * Transparent. A text shape is styleable (opacity, shadow) but has no box
+   * for a look to paint, so it is counted there and not here.
+   */
+  fillableNodes: number;
   /** True only for exactly one selected table with table data. */
   tableNode: boolean;
   /**
@@ -61,7 +67,9 @@ export function shapeBarSlots(summary: ShapeBarSummary): Slot[] {
   const colour: Slot[] = summary.colourableNodes > 0 ? ['color'] : [];
   if (summary.framesOnly) colour.push('transparent');
   const table: Slot[] = summary.tableNode ? ['table', 'headerRow'] : [];
-  const style: Slot[] = summary.styleableNodes > 0 ? ['fillStyle', 'style'] : [];
+  const style: Slot[] = [];
+  if (summary.fillableNodes > 0) style.push('fillStyle');
+  if (summary.styleableNodes > 0) style.push('style');
   const filter: Slot[] = summary.selectedNodes > 1 ? ['filterSelection'] : [];
   const actions: Slot[] = [];
   if (summary.selectedNodes > 0) actions.push('duplicate');

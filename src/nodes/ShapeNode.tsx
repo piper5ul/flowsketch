@@ -1,4 +1,4 @@
-import { useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import { useRef, useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { EditableLabel } from '../components/EditableLabel';
 import { Handle, Position, NodeResizer, type NodeProps } from '@xyflow/react';
 import clsx from 'clsx';
@@ -33,6 +33,16 @@ const TEXT_MIN_HEIGHT = 40;
  */
 const LABEL_PADDING_X = 12;
 const LABEL_PADDING_Y = 8;
+
+/**
+ * A clipped label's last line fades to nothing: a mask over the bottom line's
+ * height (`leading-snug` is 1.375em), so whatever is cut off below it is lost
+ * in the fade rather than sliced through.
+ */
+const CLIPPED_LABEL_MASK: React.CSSProperties = {
+  maskImage: 'linear-gradient(to bottom, #000 calc(100% - 1.4em), transparent)',
+  WebkitMaskImage: 'linear-gradient(to bottom, #000 calc(100% - 1.4em), transparent)',
+};
 
 /** The drop shadow a shape casts when it is asked to, boxed and un-boxed. */
 const SHAPE_SHADOW = '0 12px 28px -10px rgba(20, 20, 50, 0.55)';
@@ -106,6 +116,17 @@ export function ShapeNode({ id, data, width, height, selected, parentId, isConne
   useLayoutEffect(() => {
     syncTextHeight();
   }, [syncTextHeight, data.label, data.fontSize, data.bold, data.italic]);
+
+  // A label longer than its shape is cut off at the shape's edge (shapes do not
+  // grow to fit their text); when it is, the last visible line fades out, so the
+  // cut reads as "there is more" rather than as a line sliced in half. Measured
+  // whenever the text, its typography or the box changes; a text shape grows
+  // instead, and an open editor shows everything.
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const label = ref.current;
+    setClipped(!!label && !isTextShape && !editing && label.scrollHeight > label.clientHeight + 1);
+  }, [isTextShape, editing, data.label, data.fontSize, data.bold, data.italic, data.shape, width, height]);
 
   // Markdown in the label renders only while it is not being edited: the
   // source stays what is stored, and editing shows it so the markers can be
@@ -378,6 +399,7 @@ export function ShapeNode({ id, data, width, height, selected, parentId, isConne
               // A colour the user picked outranks the automatic one; without
               // it the label goes white on a dark fill and dark on a light one.
               color: data.textColor ?? (darkBg ? '#fff' : undefined),
+              ...(clipped ? CLIPPED_LABEL_MASK : {}),
             }}
             className={clsx(
               'relative z-[1] w-full break-words whitespace-pre-wrap leading-snug outline-none',

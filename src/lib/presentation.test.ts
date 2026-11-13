@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { UNCOLOURED_PANEL } from './frameStyle';
 import {
   maskRects,
   moveSlide,
@@ -110,9 +111,9 @@ describe('slidesOf', () => {
 
 describe('slideBackground', () => {
   it('is the panel for a frame with no colour of its own', () => {
-    expect(slideBackground({ fill: 'transparent', stroke: 'transparent' })).toBe('var(--panel)');
+    expect(slideBackground({ fill: 'transparent', stroke: 'transparent' })).toBe(UNCOLOURED_PANEL);
     // A row written before frames could be coloured carries neither.
-    expect(slideBackground({})).toBe('var(--panel)');
+    expect(slideBackground({})).toBe(UNCOLOURED_PANEL);
   });
 
   it('is a toned-down mix of the frame\'s own fill, exactly as FrameNode paints it', () => {
