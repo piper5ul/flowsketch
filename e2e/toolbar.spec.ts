@@ -442,7 +442,10 @@ test('Escape leaves multi-selection text mode without clearing the selection', a
 test('text toolbar clamps by its rendered width near the viewport edge', async ({ page }) => {
   await page.setViewportSize({ width: 800, height: 700 });
   await signUp(page);
-  const { toolbar } = await drawRectangle(page, { x: 10, y: 300 });
+  // Just right of the rail: a shape lands where it is placed, so one any closer
+  // to the edge would sit under the rail. Its toolbar, over 400 px wide and
+  // centred on the shape, still runs past the left edge and has to clamp.
+  const { toolbar } = await drawRectangle(page, { x: 120, y: 300 });
 
   await toolbar.getByRole('button', { name: 'Text' }).click();
   await expect(toolbar.getByRole('button', { name: 'Finish editing' })).toBeVisible();
