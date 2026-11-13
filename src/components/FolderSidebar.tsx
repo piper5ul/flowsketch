@@ -132,6 +132,10 @@ export function FolderSidebar({
               // piece of information, and a screen reader should hear both.
               accessibleName={`${folder.name}, ${count} ${count === 1 ? 'diagram' : 'diagrams'}`}
               count={count}
+              // The actions button sits over the count, so the count steps
+              // aside whenever the button shows (hover, focus, open menu)
+              // rather than the two reading as one smudge.
+              countHidden={menuOpen === folder.id}
               selected={sameSelection(selection, { kind: 'folder', id: folder.id })}
               highlighted={dropTarget === folder.id}
               onClick={() => onSelect({ kind: 'folder', id: folder.id })}
@@ -148,7 +152,7 @@ export function FolderSidebar({
                 setConfirmingDelete(null);
               }}
               className={clsx(
-                'absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-ink-600/50 transition hover:bg-hover-strong hover:text-ink-900',
+                'folder-actions absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-ink-600/50 transition hover:bg-hover-strong hover:text-ink-900',
                 menuOpen === folder.id ? 'opacity-100' : 'opacity-0 group-hover/folder:opacity-100 focus-visible:opacity-100',
               )}
             >
@@ -246,6 +250,7 @@ function SidebarRow({
   label,
   accessibleName,
   count,
+  countHidden,
   selected,
   highlighted,
   className,
@@ -256,6 +261,7 @@ function SidebarRow({
   label: string;
   accessibleName?: string;
   count?: number;
+  countHidden?: boolean;
   selected: boolean;
   highlighted?: boolean;
   className?: string;
@@ -279,7 +285,15 @@ function SidebarRow({
       <span className="shrink-0 text-ink-600/70">{icon}</span>
       <span className="min-w-0 flex-1 truncate">{label}</span>
       {count !== undefined && (
-        <span aria-hidden="true" className="shrink-0 text-xs tabular-nums text-ink-600/60">
+        <span
+          aria-hidden="true"
+          className={clsx(
+            'shrink-0 text-xs tabular-nums text-ink-600/60',
+            countHidden
+              ? 'invisible'
+              : 'group-hover/folder:invisible group-has-[.folder-actions:focus-visible]/folder:invisible',
+          )}
+        >
           {count}
         </span>
       )}
