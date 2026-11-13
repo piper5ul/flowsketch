@@ -79,6 +79,19 @@ export function visibleThreads(
   return threads.filter((thread) => thread.resolved === (filter === 'resolved'));
 }
 
+/**
+ * What the panel says when the current filter shows nothing. "No comments yet"
+ * under Open would be wrong on a board whose every thread has been resolved.
+ */
+export function emptyThreadsMessage(
+  threads: CommentThreadInfo[],
+  filter: CommentThreadFilter,
+): string {
+  if (filter === 'resolved') return 'Nothing has been resolved yet.';
+  if (filter === 'open' && threads.length > 0) return 'No open threads.';
+  return 'No comments yet. Right-click a shape or the canvas to start one.';
+}
+
 /** How many conversations are still open — what the Comments button counts. */
 export function openThreadCount(threads: CommentThreadInfo[]): number {
   return threads.filter((thread) => !thread.resolved).length;
