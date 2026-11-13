@@ -15,6 +15,7 @@ import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { withConnectorAriaLabels } from '../lib/connectorAria';
 import { deepSelectTarget } from '../lib/deepSelect';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
 import {
@@ -159,6 +160,15 @@ export function Canvas({
 }: { topBar?: boolean; beforeSignOut?: () => Promise<boolean> } = {}) {
   const nodes = useDiagramStore((s) => s.nodes);
   const edges = useDiagramStore((s) => s.edges);
+  // The edges React Flow draws carry a spoken name (see `connectorAria.ts`); the
+  // store's own stay as they are. The same array comes back while no name
+  // changed, so a drag does not hand React Flow a new set of edges per frame.
+  const ariaEdgesRef = useRef<typeof edges>([]);
+  const ariaEdges = useMemo(() => {
+    const byId = new Map(nodes.map((node) => [node.id, node] as const));
+    ariaEdgesRef.current = withConnectorAriaLabels(edges, (id) => byId.get(id)?.data.label, ariaEdgesRef.current);
+    return ariaEdgesRef.current;
+  }, [edges, nodes]);
   const onNodesChange = useDiagramStore((s) => s.onNodesChange);
   const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
   const storeOnConnect = useDiagramStore((s) => s.onConnect);
@@ -1154,16 +1164,21 @@ export function Canvas({
       // colour input is not a canvas history command.
       if (isCanvasControlTarget(e.target)) return;
       if (isTypingTarget(e.target)) {
-        // …with one exception. **A mind map is typed, not clicked**: Tab and
-        // Enter make the next node while the label is still open, so a
-        // `mindmap.*` command — and nothing else — reaches the registry from
-        // inside a text editor. What has been typed is written to the store
-        // first, since the map is about to grow past the label that holds it.
-        // The escape hatch is only for node labels on the canvas, not for
-        // external inputs like the TopBar title — those must type normally.
+        // …with two exceptions, both typed rather than clicked. **A mind map**:
+        // Tab and Enter make the next node while the label is still open.
+        // **Quick-add**: ⌥ plus an arrow grows the next shape out of the one
+        // being typed into, so type-⌥→-type builds a chain. A `mindmap.*` or
+        // `quickadd.*` command — and nothing else — reaches the registry from
+        // inside a text editor, and only where its `when` holds, so ⌥ plus an
+        // arrow still moves the caret by word in a text shape, a table cell or
+        // a mind-map node, none of which quick-add grows from. What has been
+        // typed is written to the store first, since the board is about to
+        // grow past the label that holds it. The escape hatch is only for node
+        // labels on the canvas, not for external inputs like the TopBar title
+        // — those must type normally.
         if (!(e.target instanceof HTMLElement) || !e.target.closest('.react-flow__node')) return;
         const command = registry.matchEvent(e, commandContext);
-        if (!command?.id.startsWith('mindmap.')) return;
+        if (!command || !(command.id.startsWith('mindmap.') || command.id.startsWith('quickadd.'))) return;
         commitOpenLabel(e.target);
         e.preventDefault();
         command.run(commandContext);
@@ -1209,9 +1224,13 @@ export function Canvas({
     >
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={ariaEdges}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
+        // Deleting is the registry's `edit.delete` (Backspace and Delete),
+        // which leaves locked shapes alone; React Flow's own Backspace handler
+        // would remove them, and the connectors on them, regardless.
+        deleteKeyCode={null}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
@@ -1276,7 +1295,11 @@ export function Canvas({
         // Without a stored viewport, CanvasPage has already loaded the diagram
         // by the time this mounts, so fitView frames the actual content — and
         // defaultViewport is what an empty diagram, with nothing to fit, gets.
-        fitView={!opening.viewport}
+        // Only ask for the fit when there is something to fit: React Flow keeps
+        // a requested fit queued until the first node is measured, so on an
+        // empty board it would fire on the first shape placed and jump the view
+        // away from where it was put.
+        fitView={opening.willFit}
         fitViewOptions={FIT_VIEW_OPTIONS}
         defaultViewport={opening.viewport ?? DEFAULT_VIEWPORT_FALLBACK}
         className={tool === 'pan' ? 'cursor-grab' : isDrawingTool ? 'cursor-crosshair' : undefined}

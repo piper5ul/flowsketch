@@ -90,7 +90,7 @@ test('two people vote on one sticky and see the total only when the round closes
 
   // Ada opens a round with two dots each.
   // Exact: "End voting & show totals" inside the panel would otherwise match too.
-  const voteButton = page.getByRole('button', { name: 'Voting', exact: true });
+  const voteButton = page.getByRole('button', { name: 'Vote', exact: true });
   await voteButton.click();
   const votePanel = page.getByRole('dialog', { name: 'Voting' });
   await votePanel.getByLabel('Dots per person').fill('2');

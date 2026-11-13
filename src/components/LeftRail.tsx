@@ -411,6 +411,7 @@ export function LeftRail({
                 <ConnectorToolIcon size={18} />
               </RailButton>
               <button
+                aria-label="Connector types"
                 onClick={(e) => {
                   e.stopPropagation();
                   setConnectorMenuOpen((v) => !v);

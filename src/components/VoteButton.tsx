@@ -53,7 +53,8 @@ export function VoteButton() {
           aria-expanded={open}
           // Named explicitly, because the badge beside the word is part of the
           // button and would otherwise make the name change as dots are spent.
-          aria-label="Voting"
+          // The name is the visible word, so speech input can say what it sees.
+          aria-label="Vote"
           className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-[13px] font-medium text-ink-700 hover:bg-hover"
         >
           <CircleDot size={15} /> Vote
