@@ -184,8 +184,10 @@ function SharedHeader({ title }: { title: string }) {
     <header className="flex shrink-0 items-center justify-between gap-4 border-b border-line bg-panel/90 px-4 py-2.5 backdrop-blur">
       <div className="flex min-w-0 items-center gap-3">
         <h1 className="truncate text-[14px] font-semibold text-ink-900">{title}</h1>
-        <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
-          <Eye size={12} /> View only · Shared with you
+        {/* On a phone the pill and the sign-in link drop their second halves,
+            so the title keeps some room instead of everything overlapping. */}
+        <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-hover-strong px-2 py-0.5 text-xs font-medium text-ink-700">
+          <Eye size={12} /> View only<span className="max-sm:hidden">· Shared with you</span>
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-3">
@@ -199,9 +201,9 @@ function SharedHeader({ title }: { title: string }) {
         <PresentButton />
         <Link
           to="/login"
-          className="text-[13px] font-medium text-ink-600 transition hover:text-accent-600"
+          className="whitespace-nowrap text-[13px] font-medium text-ink-600 transition hover:text-accent-600"
         >
-          Made with FlowSketch — Sign in
+          <span className="max-sm:hidden">Made with FlowSketch — </span>Sign in
         </Link>
       </div>
     </header>
