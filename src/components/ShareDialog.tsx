@@ -15,7 +15,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Copy, Loader2, X } from 'lucide-react';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
+import { useFocusTrap } from '../lib/focusTrap';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { toastError } from '../store/useToastStore';
 import { sharedDiagramPath, type DiagramMemberInfo, type DiagramMemberRole } from '../../shared/types';
@@ -45,6 +46,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
   /** Set while a request that would change something is in flight. */
   const [busy, setBusy] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(panelRef);
 
   useEffect(() => {
     if (!diagramId) return;
@@ -152,9 +154,16 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         // simply has no account behind it, and there is no invite-by-email flow
         // to fall back on yet.
         const notFound = err instanceof Error && err.message.includes('404');
+        // Anything else the server explained (inviting yourself, say) is
+        // worth saying in its own words rather than as a generic failure —
+        // except the validator's bare "Invalid body", which explains nothing.
+        const explained =
+          err instanceof ApiError && err.status === 400 && err.serverMessage !== 'Invalid body'
+            ? err.serverMessage
+            : null;
         return {
           ok: false as const,
-          error: notFound ? 'No account with that email' : 'Could not send the invitation.',
+          error: notFound ? 'No account with that email' : explained ?? 'Could not send the invitation.',
         };
       } finally {
         setBusy(false);
@@ -175,6 +184,7 @@ export function ShareDialog({ onClose }: { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label="Share"
+        tabIndex={-1}
         className="panel-in flex w-full max-w-lg flex-col gap-5 rounded-2xl bg-panel p-5 shadow-[0_24px_60px_-12px_rgba(10,10,25,0.45)] ring-1 ring-line"
       >
         <div className="flex items-center justify-between">
