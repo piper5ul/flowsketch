@@ -68,9 +68,11 @@ export const LIFELINE_TAIL = 40;
  * ends are this far apart and it is drawn as a loop out to the right — a
  * straight connector pulled through two waypoints, which is a polyline: out,
  * down, back. An elbow would have had to be routed between two points on one
- * vertical line, which is the router's least defined case.
+ * vertical line, which is the router's least defined case. The label sits on
+ * the loop's far side, and the line is cut away around it, so the drop has to
+ * be tall enough that the cut stops short of the two horizontal runs.
  */
-export const SELF_MESSAGE_DROP = 40;
+export const SELF_MESSAGE_DROP = 56;
 
 /**
  * How far to the right that loop reaches, at the least. Its label sits on the

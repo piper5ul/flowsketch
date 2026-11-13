@@ -76,10 +76,11 @@ const TEXT_INSETS: Partial<Record<ShapeKind, TextInset>> = {
   document: { top: 4, right: 8, bottom: 20, left: 8 },
   // Full width only below the top bump, which starts around y=45.
   cloud: { top: 30, right: 14, bottom: 16, left: 14 },
-  // Apex at the top centre, base along the bottom: the sides meet x=25 and
-  // x=75 at half height, so the widest box that stays inside them sits in the
-  // lower half — which is where a triangle's label belongs anyway.
-  triangle: { top: 50, right: 25, bottom: 4, left: 25 },
+  // Apex at the top centre, base along the bottom, so the label sits in the
+  // lower half. A middle-aligned label is centred at y≈71, where the sides are
+  // at x≈14 and x≈86; 18 keeps it inside them with a word's room to spare
+  // (any narrower and a 140-wide triangle breaks "Triangle" in two).
+  triangle: { top: 46, right: 18, bottom: 4, left: 18 },
   // The one lopsided inset: the shaft runs to x=62 and the head fills the rest,
   // so the label sits on the shaft rather than in the point.
   arrow: { top: 28, right: 42, bottom: 28, left: 6 },
