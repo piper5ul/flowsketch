@@ -11,7 +11,7 @@ import type { WireComponent } from './wireframe';
 import { wireComponentOf } from './wireframe';
 
 /**
- * What "by shape" can name: a shape kind, or one wireframe component.
+ * What "by shape" can name: a node kind, a shape kind, or one wireframe component.
  *
  * A wire node's `data.shape` is a rectangle nothing draws (see `nodeKinds.ts`),
  * so bucketing one by its data would file every button, browser and toggle
@@ -20,7 +20,7 @@ import { wireComponentOf } from './wireframe';
  * the `wire:` prefix is what keeps `image` the shape kind apart from `image`
  * the wireframe placeholder.
  */
-export type FilterKind = ShapeKind | `wire:${WireComponent}`;
+export type FilterKind = ShapeKind | 'ink' | 'table' | 'frame' | 'group' | `wire:${WireComponent}`;
 
 /** The bucket key for one wireframe component. */
 export function wireFilterKind(component: WireComponent): `wire:${WireComponent}` {
@@ -29,8 +29,7 @@ export function wireFilterKind(component: WireComponent): `wire:${WireComponent}
 
 /**
  * Whether a bucket key names a wireframe component rather than a shape kind.
- * A type guard, so the other branch narrows to `ShapeKind` and the shape icon
- * and label tables can be indexed with it directly.
+ * A type guard, so the component's icon and label tables can be indexed with it.
  */
 export function isWireFilterKind(kind: FilterKind): kind is `wire:${WireComponent}` {
   return kind.startsWith('wire:');
@@ -53,8 +52,9 @@ export interface FilterOption<T extends string> {
   count: number;
 }
 
-/** Which bucket this node falls in — its component when it is a wireframe, its shape kind otherwise. */
+/** Which bucket this node falls in — its type, wireframe component or shape kind. */
 function kindOfNode(node: FilterableNode): FilterKind {
+  if (node.type === 'ink' || node.type === 'table' || node.type === 'frame' || node.type === 'group') return node.type;
   if (node.type === 'wire') {
     const component = wireComponentOf(node.data);
     // A wire node naming a component this build cannot draw has no bucket of
