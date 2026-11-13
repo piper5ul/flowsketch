@@ -310,9 +310,14 @@ describe('controlThrough', () => {
 });
 
 describe('cleanPath', () => {
-  it('straightens a kink beside the target by moving the interior point', () => {
-    const pts = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 103, y: 50 }];
-    expect(cleanPath(pts)).toEqual([{ x: 0, y: 0 }, { x: 103, y: 0 }, { x: 103, y: 50 }]);
+  it('draws two shapes a few pixels out of line as one straight run', () => {
+    // A 3px jog between two nearly level shapes snaps flat, the end sliding
+    // along the side it arrives on — that is what lets a user line arrows up.
+    expect(cleanPath([{ x: 100, y: 100 }, { x: 150, y: 100 }, { x: 150, y: 103 }, { x: 200, y: 103 }]))
+      .toEqual([{ x: 100, y: 100 }, { x: 200, y: 100 }]);
+    expect(cleanPath([
+      { x: 100, y: 100 }, { x: 120, y: 100 }, { x: 120, y: 103 }, { x: 180, y: 103 }, { x: 200, y: 103 },
+    ])).toEqual([{ x: 100, y: 100 }, { x: 200, y: 100 }]);
   });
 
   it('leaves the two endpoints where they are', () => {

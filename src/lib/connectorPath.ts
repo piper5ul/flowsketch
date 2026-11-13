@@ -109,7 +109,10 @@ export function smoothStepPath(points: Point[]): string {
 /**
  * Absorbs the kinks grid snapping leaves in a routed path: a segment shorter
  * than 8px is straightened onto its neighbour, and the corner that leaves
- * behind is dropped. The two endpoints are never moved.
+ * behind is dropped. The start never moves; the end slides along its side
+ * when a jog just before it is absorbed, so two shapes a few pixels out of
+ * line still get a straight connector. A short final stub that is already
+ * square to the target is left alone, or the arrowhead would turn sideways.
  *
  * Straightening rewrites points, so the input is copied first — the router's
  * output and the edge's own anchors are passed in by reference.
@@ -125,14 +128,8 @@ export function cleanPath(input: Point[]): Point[] {
     const a = pts[i], b = pts[i + 1];
     // Keep a short final stub: collapsing it would turn the arrowhead sideways.
     if (b === last && (a.x === b.x || a.y === b.y)) continue;
-    if (Math.abs(a.x - b.x) > 0 && Math.abs(a.x - b.x) < 8) {
-      if (b === last) a.x = b.x;
-      else b.x = a.x;
-    }
-    if (Math.abs(a.y - b.y) > 0 && Math.abs(a.y - b.y) < 8) {
-      if (b === last) a.y = b.y;
-      else b.y = a.y;
-    }
+    if (Math.abs(a.x - b.x) > 0 && Math.abs(a.x - b.x) < 8) b.x = a.x;
+    if (Math.abs(a.y - b.y) > 0 && Math.abs(a.y - b.y) < 8) b.y = a.y;
   }
 
   const result = [first];
