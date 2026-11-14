@@ -265,6 +265,10 @@ export function Canvas({
   const clipboardRef = useRef<ClipboardPayload | null>(null);
   const pendingCopyRef = useRef<{ type: string; payload: ClipboardPayload } | null>(null);
   const lastPastedHtmlRef = useRef<string | null>(null);
+  // Whether the last ⌘C/⌘X reached the system clipboard. When it did, a paste
+  // without our payload means something newer was copied since; when it did
+  // not (a browser that skipped the clipboard event), this tab's copy is it.
+  const copyOnSystemRef = useRef(false);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
   // What the "Comment" menu item would pin a thread to: the shape that was
   // right-clicked, or the point on the board that was. A ref rather than state
@@ -1104,6 +1108,7 @@ export function Canvas({
       pendingCopyRef.current = null;
       const write = (value: ClipboardPayload) => {
         lastPastedHtmlRef.current = null;
+        copyOnSystemRef.current = true;
         const { html, text } = encodeClipboardPayload(value);
         data.setData('text/html', html);
         data.setData('text/plain', text);
@@ -1161,6 +1166,12 @@ export function Canvas({
         const source = html === lastPastedHtmlRef.current ? clipboardRef.current ?? clip : clip;
         clipboardRef.current = useDiagramStore.getState().pasteClipboard(source);
         lastPastedHtmlRef.current = html;
+        return;
+      }
+      const own = clipboardRef.current;
+      if (own && own.nodes.length > 0 && !copyOnSystemRef.current) {
+        e.preventDefault();
+        clipboardRef.current = useDiagramStore.getState().pasteClipboard(own);
         return;
       }
 
@@ -1259,6 +1270,7 @@ export function Canvas({
             ...commandContext.clipboard,
             write: (payload) => {
               lastPastedHtmlRef.current = null;
+              copyOnSystemRef.current = false;
               pendingCopyRef.current = { type: command.id === 'clipboard.cut' ? 'cut' : 'copy', payload };
             },
           },

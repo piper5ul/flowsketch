@@ -144,6 +144,27 @@ describe('Canvas clipboard', () => {
     expect(store().nodes).toHaveLength(type === 'cut' ? 0 : 1);
   });
 
+  it('pastes this tab\'s copy when the browser fired no copy event', () => {
+    act(() => {
+      store().loadDiagram('source', 'Source', false, payload('Selection'));
+      useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+    });
+    keyboard('c');
+    expect(clipboardEvent('paste', { 'text/plain': 'unrelated' }).defaultPrevented).toBe(true);
+    expect(store().nodes).toHaveLength(2);
+  });
+
+  it('leaves a newer outside copy alone once ours reached the system clipboard', () => {
+    act(() => {
+      store().loadDiagram('source', 'Source', false, payload('Selection'));
+      useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+    });
+    keyboard('c');
+    clipboardEvent('copy', {});
+    expect(clipboardEvent('paste', { 'text/plain': 'unrelated' }).defaultPrevented).toBe(false);
+    expect(store().nodes).toHaveLength(1);
+  });
+
   it('pastes a system payload into a fresh canvas as one undo step', () => {
     act(() => {
       store().loadDiagram('source', 'Source', false, payload('Other browser'));
