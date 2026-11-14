@@ -307,3 +307,30 @@ test('a screenshot that is not a spreadsheet still pastes as an image', async ({
   await expect(page.locator('.react-flow__node img')).toHaveCount(1);
   await expect(tableNode(page)).toHaveCount(0);
 });
+
+test('a cell renders its Markdown when closed and shows the source when reopened', async ({ page }) => {
+  await signUp(page);
+  await openEmptyBoard(page, 'Table Markdown');
+
+  await page.keyboard.press('e');
+  await page.locator('.react-flow__pane').click({ position: { x: 420, y: 260 } });
+  await expect(tableNode(page)).toHaveCount(1);
+
+  // A body cell, so the header's own weight is not what makes it bold.
+  const cell = tableNode(page).locator('tr').nth(1).locator('td').first();
+  await cell.dblclick();
+  await page.keyboard.type('**bold** text');
+  await page.keyboard.press('Escape');
+
+  // Closed: the markers are gone and the word is a real <strong>.
+  await expect(cell.locator('input')).toHaveCount(0);
+  await expect(cell.locator('strong')).toHaveText('bold');
+  await expect(cell).toHaveText('bold text');
+
+  // Reopened: the input holds the source, markers and all.
+  await cell.dblclick();
+  await expect(cell.locator('input')).toHaveValue('**bold** text');
+  await expect(cell.locator('strong')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(cell.locator('strong')).toHaveText('bold');
+});
