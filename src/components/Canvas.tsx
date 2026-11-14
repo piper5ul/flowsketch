@@ -15,6 +15,7 @@ import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { decodeClipboardPayload, encodeClipboardPayload } from '../lib/clipboardPayload';
 import { withConnectorAriaLabels } from '../lib/connectorAria';
 import { deepSelectTarget } from '../lib/deepSelect';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
@@ -384,6 +385,17 @@ export function Canvas({
       clipboard: {
         get: () => clipboardRef.current,
         set: (value) => { clipboardRef.current = value; },
+        write: (value) => {
+          try {
+            const { html, text } = encodeClipboardPayload(value);
+            void navigator.clipboard.write([new ClipboardItem({
+              'text/html': new Blob([html], { type: 'text/html' }),
+              'text/plain': new Blob([text], { type: 'text/plain' }),
+            })]).catch(() => {});
+          } catch {
+            // The in-tab clipboard still works when a menu copy is refused.
+          }
+        },
       },
       styleClipboard: {
         get: () => styleClipboardRef.current,
@@ -1078,12 +1090,37 @@ export function Canvas({
     [screenToFlowPosition, connectTowards, tool, setTool],
   );
 
-  // What the browser's own paste brings, for the two things ⌘V can mean that
-  // our clipboard cannot answer for. This listener only ever runs when
-  // `clipboard.paste` did *not* match — its `when` is "we have something of our
-  // own copied", and a matched command calls `preventDefault` on the keystroke —
-  // so pasting shapes from this app always wins over either branch below.
-  //
+  // Keyboard copy/cut use the native clipboard event, which Safari permits
+  // without the async clipboard permission a menu copy needs.
+  useEffect(() => {
+    function onCopy(e: ClipboardEvent) {
+      if (shortcutsOpen || presenting || isTypingTarget(e.target) || isCanvasControlTarget(e.target)) return;
+      const data = e.clipboardData;
+      if (!data) return;
+      const command = registry.find(e.type === 'cut' ? 'clipboard.cut' : 'clipboard.copy')!;
+      if (command.when && !command.when(commandContext)) return;
+      e.preventDefault();
+      command.run({
+        ...commandContext,
+        clipboard: {
+          ...commandContext.clipboard,
+          write: (value) => {
+            const { html, text } = encodeClipboardPayload(value);
+            data.setData('text/html', html);
+            data.setData('text/plain', text);
+          },
+        },
+      });
+    }
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCopy);
+    return () => {
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCopy);
+    };
+  }, [commandContext, shortcutsOpen, presenting]);
+
+  // Our HTML payload wins over images and text, including an older in-tab copy.
   // Images are uploaded and referenced by URL: inlining them as base64 used to
   // blow a screenshot-sized paste past the 5 MB limit on the diagram's JSON
   // body, which failed the save rather than the paste.
@@ -1100,9 +1137,15 @@ export function Canvas({
   useEffect(() => {
     if (readOnly) return;
     function onPaste(e: ClipboardEvent) {
-      if (isTypingTarget(e.target)) return;
+      if (shortcutsOpen || presenting || isTypingTarget(e.target) || isCanvasControlTarget(e.target)) return;
       const data = e.clipboardData;
       if (!data) return;
+      const clip = decodeClipboardPayload(data.getData('text/html'));
+      if (clip) {
+        e.preventDefault();
+        clipboardRef.current = useDiagramStore.getState().pasteClipboard(clip);
+        return;
+      }
 
       // A spreadsheet goes on the clipboard twice: as its table and as a
       // picture of the range (desktop Excel, Google Sheets and Numbers all do
@@ -1150,11 +1193,11 @@ export function Canvas({
 
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [readOnly, insertImages, dropPoint]);
+  }, [readOnly, insertImages, dropPoint, shortcutsOpen, presenting]);
 
   // Every shortcut is a command now; this handler only decides whether one
-  // applies. A keystroke that matches nothing falls through untouched, which is
-  // what leaves ⌘V to the paste listener above when our clipboard is empty.
+  // applies. Copy, cut and paste leave the keystroke to the browser so its
+  // clipboard events can carry the system clipboard data.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       // The sheet is modal: it takes Escape itself and swallows the rest.
@@ -1190,6 +1233,7 @@ export function Canvas({
       if (presenting) return;
       const command = registry.matchEvent(e, commandContext);
       if (!command) return;
+      if (command.id === 'clipboard.copy' || command.id === 'clipboard.cut' || command.id === 'clipboard.paste') return;
       e.preventDefault();
       command.run(commandContext);
     }

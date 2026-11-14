@@ -95,7 +95,10 @@ export interface CommandContext {
    */
   dropPoint: () => { x: number; y: number };
   /** What ⌘C captured; `null` until something has been copied. */
-  clipboard: Holder<ClipboardPayload | null>;
+  clipboard: Holder<ClipboardPayload | null> & {
+    /** Copy/cut also write to the system clipboard; paste only updates the ref. */
+    write?: (value: ClipboardPayload) => void;
+  };
   /** What ⌘⌥C captured. */
   styleClipboard: Holder<Partial<ShapeData> | null>;
   /** Hold-to-pan: `begin` remembers the current tool, `end` restores it. */

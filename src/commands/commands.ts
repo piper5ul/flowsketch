@@ -59,10 +59,12 @@ function captureSelection(ctx: CommandContext) {
   // With only shapes selected, the connectors between them come along too.
   const connected = (edges.length > 0 ? edges : state.edges)
     .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-  ctx.clipboard.set({
+  const clip = {
     nodes: nodes.map((n) => ({ ...n, selected: false })),
     edges: connected.map((e) => ({ ...e, selected: false })),
-  });
+  };
+  ctx.clipboard.set(clip);
+  ctx.clipboard.write?.(clip);
 }
 
 /**
@@ -552,8 +554,8 @@ export const commandDeclarations: Command[] = [
     group: 'clipboard',
     shortcut: { key: 'v', meta: true },
     contextMenu: 'pane',
-    // With nothing of ours on the clipboard, ⌘V has to fall through to the
-    // browser so an image copied from another app can still be pasted.
+    // The menu pastes from this tab; keyboard paste reads the system clipboard
+    // in Canvas before considering anything else.
     when: (ctx) => (ctx.clipboard.get()?.nodes.length ?? 0) > 0,
     run: (ctx) => {
       const clip = ctx.clipboard.get();
