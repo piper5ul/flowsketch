@@ -9,6 +9,7 @@ import {
   isInkTool,
   simplify,
   strokeHits,
+  splitStroke,
 } from './ink';
 import type { InkPoint } from '../types';
 
@@ -162,5 +163,49 @@ describe('simplify', () => {
   it('carries the pressure of every sample it keeps', () => {
     const drawn: InkPoint[] = [[0, 0, 0.1], [10, 5, 0.9], [20, 0, 0.3]];
     expect(simplify(drawn, INK_SIMPLIFY_TOLERANCE)).toEqual(drawn);
+  });
+});
+
+
+describe('splitStroke', () => {
+  const points: InkPoint[] = Array.from({ length: 9 }, (_, i) => [i * 10, 0, i / 10]);
+
+  it('removes points within reach and keeps each surviving run with its pressure', () => {
+    expect(splitStroke(points, { x: 40, y: 0 }, 10, 4)).toEqual([points.slice(0, 4), points.slice(5)]);
+  });
+
+  it('cuts a two-point stroke at the circle boundary and interpolates pressure', () => {
+    const line: InkPoint[] = [[0, 0, 0], [100, 0, 1]];
+    expect(splitStroke(line, { x: 50, y: 0 }, 10, 4)).toEqual([
+      [[0, 0, 0], [40, 0, 0.4]],
+      [[60, 0, 0.6], [100, 0, 1]],
+    ]);
+  });
+
+  it('cuts at the circle boundary when the segment passes off-centre', () => {
+    // Allow < 1e-10 px of roundoff when interpolating the intersections.
+    expect(splitStroke([[0, 6], [100, 6]], { x: 50, y: 0 }, 10, 4)).toEqual([
+      [[0, 6], [expect.closeTo(42, 10), 6]], [[expect.closeTo(58, 10), 6], [100, 6]],
+    ]);
+  });
+
+  it('drops end crumbs shorter than the stroke width, even with many samples', () => {
+    const line: InkPoint[] = [[0, 0], [1, 0], [2, 0], [100, 0]];
+    expect(splitStroke(line, { x: 13, y: 0 }, 10, 4)).toEqual([[[23, 0], [100, 0]]]);
+    expect(splitStroke(line, { x: 13, y: 0 }, 10, 3)).toEqual([
+      [[0, 0], [1, 0], [2, 0], [3, 0]], [[23, 0], [100, 0]],
+    ]);
+    expect(splitStroke(points, { x: 40, y: 0 }, 100, 4)).toEqual([]);
+  });
+
+  it('cuts a crossing between sparse samples instead of joining the runs again', () => {
+    expect(splitStroke(points, { x: 35, y: 0 }, 1, 4)).toEqual([
+      [...points.slice(0, 4), [34, 0, 0.34]], [[36, 0, 0.36], ...points.slice(4)],
+    ]);
+  });
+
+  it('leaves a missed stroke unchanged, even one simplified below the raw point minimum', () => {
+    const line = points.slice(0, 2);
+    expect(splitStroke(line, { x: 40, y: 20 }, 4, 4)[0]).toBe(line);
   });
 });

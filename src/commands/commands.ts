@@ -3,7 +3,7 @@ import { MIND_MAP_NODE_SIZE, childrenOf, mapOf } from '../lib/mindMap';
 import { linesOf } from '../lib/pasteAs';
 import { isSameThumbnail } from '../lib/boardThumbnail';
 import { renderDiagramPng } from '../lib/exportImage';
-import { canQuickAddFrom, isContainerNode, isFrameNode } from '../lib/nodeKinds';
+import { canQuickAddFrom, isAnchorNode, isContainerNode, isFrameNode } from '../lib/nodeKinds';
 import { slidesOf } from '../lib/presentation';
 import { parseTableHtml } from '../lib/tableHtml';
 import { parseTableText } from '../lib/table';
@@ -49,16 +49,22 @@ function captureSelection(ctx: CommandContext) {
   // A container is one thing on the board: copying a group or a frame copies
   // what is inside it, or the paste would be an empty box.
   const nodeIds = subtreeIds(state.nodes, selectedNodes(state).map((n) => n.id));
-  const nodes = state.nodes.filter((n) => nodeIds.has(n.id));
   const edges = selectedEdges(state);
+  const endpointIds = new Set(edges.flatMap((e) => [e.source, e.target]));
+  // A free end belongs to its connector, even when its anchor is not selected.
+  for (const node of state.nodes) {
+    if (endpointIds.has(node.id) && !isContainerNode(node) && isAnchorNode(node.data)) nodeIds.add(node.id);
+  }
+  const nodes = state.nodes.filter((n) => nodeIds.has(n.id));
   // With only shapes selected, the connectors between them come along too.
-  const connected = edges.length > 0
-    ? edges
-    : state.edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
-  ctx.clipboard.set({
+  const connected = (edges.length > 0 ? edges : state.edges)
+    .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
+  const clip = {
     nodes: nodes.map((n) => ({ ...n, selected: false })),
     edges: connected.map((e) => ({ ...e, selected: false })),
-  });
+  };
+  ctx.clipboard.set(clip);
+  ctx.clipboard.write?.(clip);
 }
 
 /**
@@ -548,8 +554,8 @@ export const commandDeclarations: Command[] = [
     group: 'clipboard',
     shortcut: { key: 'v', meta: true },
     contextMenu: 'pane',
-    // With nothing of ours on the clipboard, ⌘V has to fall through to the
-    // browser so an image copied from another app can still be pasted.
+    // The menu pastes from this tab; keyboard paste reads the system clipboard
+    // in Canvas before considering anything else.
     when: (ctx) => (ctx.clipboard.get()?.nodes.length ?? 0) > 0,
     run: (ctx) => {
       const clip = ctx.clipboard.get();

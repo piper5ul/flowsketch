@@ -172,8 +172,8 @@ export interface VersionInput {
   label?: string;
 }
 
-/** Write one version and prune what falls off the end. */
-async function writeVersion(input: VersionInput): Promise<VersionRow> {
+/** Write a version; live restore defers pruning to ordinary persistence. */
+async function writeVersion(input: VersionInput, prune = true): Promise<VersionRow> {
   const version = await prisma.diagramVersion.create({
     data: {
       diagramId: input.diagramId,
@@ -186,7 +186,7 @@ async function writeVersion(input: VersionInput): Promise<VersionRow> {
     },
     select: { ...META_SELECT },
   });
-  await pruneVersions(input.diagramId, input.ownerId);
+  if (prune) await pruneVersions(input.diagramId, input.ownerId);
   return version;
 }
 
@@ -296,8 +296,9 @@ versionsRouter.post<{ id: string }, unknown, CreateVersionBody>(
  * back is the one failure this feature must not have, so it happens before the
  * update and its failure fails the request.
  *
- * The response is the updated diagram, `updatedAt` included: the client's
- * autosave is holding the row's old timestamp as its conflict guard, and would
+ * A live diagram returns the version for the restorer to apply as an edit.
+ * A diagram without a document returns the updated row, `updatedAt` included:
+ * the client's autosave holds the row's old timestamp as its conflict guard and would
  * 409 on its next save if it were not told where the row has moved to.
  */
 versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res) => {
@@ -319,23 +320,14 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     return;
   }
 
-  // A collab session owns the document: writing `data` here would be
-  // overwritten by the store hook's next debounce. The client re-seeds the
-  // Yjs doc through `loadDiagram`, which is the correct path — but only if
-  // we do not also race against it from the row side.
   const liveDoc = await prisma.diagramDoc.findUnique({
     where: { diagramId: req.params.id },
     select: { diagramId: true },
   });
-  if (liveDoc) {
-    res.status(409).json({ error: 'Conflict', updatedAt: access.diagram.updatedAt });
-    return;
-  }
 
-  // The state being replaced, from the live document when there is one: the
-  // whole point of this snapshot is that a restore can be walked back, and
-  // walking back to a board ten seconds older than the one that was replaced
-  // would lose exactly the edits nobody meant to discard.
+  // Capture the open document, which can be ahead of the rendered row. A
+  // collaborator's edit landing between this request and the client's apply
+  // may be missing from Before restore; it remains in their own undo history.
   await writeVersion({
     diagramId: req.params.id,
     data: liveDiagramData(req.params.id) ?? access.diagram.data,
@@ -343,7 +335,16 @@ versionsRouter.post('/diagrams/:id/versions/:versionId/restore', async (req, res
     createdById: authedUser(req).id,
     ownerId: access.diagram.userId,
     label: RESTORE_SNAPSHOT_LABEL,
-  });
+  }, !liveDoc);
+
+  if (liveDoc) {
+    // The restorer applies this as an ordinary undoable document edit. Leave
+    // Diagram.data and DiagramImage to the normal document persistence path.
+    // No retention or orphan collection in this request: keep history's image
+    // references intact while the returned version is still waiting to apply.
+    res.json({ data: version.data, title: version.title });
+    return;
+  }
 
   const updated = await prisma.diagram.update({
     where: { id: req.params.id },

@@ -280,12 +280,11 @@ export const api = {
   /**
    * Puts a version back, after snapshotting what it replaces. Editor+.
    *
-   * The returned `updatedAt` is the row's new timestamp: hand it to the
-   * autosaver (`noteSaved`) or its next save will 409 against the write this
-   * restore just made.
+   * Live diagrams return content for one ordinary client edit. Only the
+   * legacy row-writing path includes a timestamp for the autosave guard.
    */
   restoreVersion: (id: string, versionId: string) =>
-    request<{ id: string; title: string; data: unknown; updatedAt: string }>(
+    request<{ title: string; data: unknown } | { id: string; title: string; data: unknown; updatedAt: string }>(
       `/api/diagrams/${id}/versions/${encodeURIComponent(versionId)}/restore`,
       { method: 'POST' },
     ),

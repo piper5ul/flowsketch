@@ -122,7 +122,7 @@ export function layoutLabelFor(edge: LayoutEdge, direction: LayoutDirection): El
  *   and draw connectors with our own router — but it is what makes ELK reserve
  *   the space between layers that a right-angled connector needs.
  */
-function layoutOptions(direction: LayoutDirection, labelled: boolean): Record<string, string> {
+function layoutOptions(direction: LayoutDirection, labelled: boolean, cyclic: boolean): Record<string, string> {
   return {
     // A labelled connector's label is a box ELK keeps room for, in a layer of
     // its own halfway along the run (see `layoutLabelFor`). Set only when
@@ -133,6 +133,9 @@ function layoutOptions(direction: LayoutDirection, labelled: boolean): Record<st
     'elk.spacing.nodeNode': String(SPACING_NODE_NODE),
     'elk.layered.spacing.nodeNodeBetweenLayers': String(SPACING_BETWEEN_LAYERS),
     'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
+    // Break cycles against declaration order, so a retry runs backwards rather
+    // than turning the main flow around.
+    ...(cyclic ? { 'elk.layered.cycleBreaking.strategy': 'MODEL_ORDER' } : {}),
     'elk.edgeRouting': 'ORTHOGONAL',
   };
 }
@@ -199,6 +202,24 @@ export function canAutoLayout(nodes: readonly LayoutNode[], edges: readonly Layo
   return layoutEdgesAmong(edges, new Set(members.map((m) => m.id))).length > 0;
 }
 
+/** True when the graph has a directed cycle; acyclic layouts keep ELK's defaults. */
+function hasCycle(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[]): boolean {
+  const children = new Map(nodes.map((n) => [n.id, [] as string[]]));
+  for (const edge of edges) children.get(edge.source)!.push(edge.target);
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (visiting.has(id)) return true;
+    if (visited.has(id)) return false;
+    visiting.add(id);
+    if (children.get(id)!.some(visit)) return true;
+    visiting.delete(id);
+    visited.add(id);
+    return false;
+  };
+  return nodes.some((n) => visit(n.id));
+}
+
 /**
  * The ELK graph for a selection, or `null` when there is nothing to lay out.
  *
@@ -228,7 +249,7 @@ export function layoutGraphFor(
 
   return {
     id: 'root',
-    layoutOptions: layoutOptions(direction, laidOutEdges.some((e) => e.labels)),
+    layoutOptions: layoutOptions(direction, laidOutEdges.some((e) => e.labels), hasCycle(members, graphEdges)),
     children: members.map((node) => {
       // Non-null: `layoutMembers` already dropped the unmeasured nodes.
       const rect = boardRect(node, byId)!;

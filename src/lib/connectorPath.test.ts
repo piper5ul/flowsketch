@@ -92,6 +92,33 @@ describe('buildConnectorPath', () => {
       expect(path.points).toEqual([SOURCE, ...THREE, TARGET]);
       expect(path.d).toBe('M 0 0 L 60 220 L 130 260 L 190 200 L 200 100');
     });
+
+    it('draws two shapes a few pixels out of line as one level run, sliding the end along its side', () => {
+      const path = buildConnectorPath('straight', {
+        source: { x: 266, y: 90 }, target: { x: 483.6, y: 93 }, sourceSide: 'right', targetSide: 'left',
+      });
+      expect(path.points).toEqual([{ x: 266, y: 90 }, { x: 483.6, y: 90 }]);
+      expect(path.d).toBe('M 266,90L 483.6,90');
+    });
+
+    it('does the same for a nearly plumb run between a bottom and a top', () => {
+      const path = buildConnectorPath('straight', {
+        source: { x: 180, y: 186 }, target: { x: 184, y: 400 }, sourceSide: 'bottom', targetSide: 'top',
+      });
+      expect(path.points).toEqual([{ x: 180, y: 186 }, { x: 180, y: 400 }]);
+    });
+
+    it('leaves a deliberate slant alone, and an end that cannot slide along its side', () => {
+      const slant = buildConnectorPath('straight', {
+        source: { x: 0, y: 0 }, target: { x: 200, y: 8 }, sourceSide: 'right', targetSide: 'left',
+      });
+      expect(slant.points).toEqual([{ x: 0, y: 0 }, { x: 200, y: 8 }]);
+      // Arriving on a top side, a level run would leave the shape's outline.
+      const onTop = buildConnectorPath('straight', {
+        source: { x: 0, y: 0 }, target: { x: 200, y: 3 }, sourceSide: 'right', targetSide: 'top',
+      });
+      expect(onTop.points).toEqual([{ x: 0, y: 0 }, { x: 200, y: 3 }]);
+    });
   });
 
   describe('elbow', () => {
@@ -148,6 +175,13 @@ describe('buildConnectorPath', () => {
   });
 
   describe('curved', () => {
+    it('draws two shapes a few pixels out of line as a level line, not a wobble', () => {
+      const path = buildConnectorPath('curved', {
+        source: { x: 266, y: 490 }, target: { x: 483.6, y: 493 }, sourceSide: 'right', targetSide: 'left',
+      });
+      expect(path.d).toBe('M266,490 C374.8,490 374.8,490 483.6,490');
+    });
+
     it('draws a cubic between the anchors when there is no waypoint', () => {
       const path = buildConnectorPath('curved', ends);
       expect(path.d).toContain('C');

@@ -15,6 +15,7 @@ import { nanoid } from 'nanoid';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
+import { decodeClipboardPayload, encodeClipboardPayload } from '../lib/clipboardPayload';
 import { withConnectorAriaLabels } from '../lib/connectorAria';
 import { deepSelectTarget } from '../lib/deepSelect';
 import { anchorToPoint, type Point } from '../lib/edgeGeometry';
@@ -29,6 +30,7 @@ import {
   snapToFreeEndGrid,
 } from '../lib/connectorGesture';
 import {
+  ERASER_SLOP_PX,
   HIGHLIGHTER_OPACITY,
   INK_WIDTH,
   inkKindOfTool,
@@ -89,6 +91,8 @@ const GRID_SIZE = 10;
 const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 
 const MIDDLE_BUTTON_DRAG: number[] = [1];
+/** The keys that turn a click into a toggle of the selection (see `multiSelectionKeyCode`). */
+const MULTI_SELECTION_KEYS = ['Meta', 'Control', 'Shift'];
 const FIT_VIEW_OPTIONS = { padding: 0.2, maxZoom: 1 };
 const DEFAULT_VIEWPORT_FALLBACK = { x: 0, y: 0, zoom: 0.8 };
 const PRO_OPTIONS = { hideAttribution: true };
@@ -262,6 +266,12 @@ export function Canvas({
   const toolPlacedAtRef = useRef(0);
   // Both clipboards live outside the store: neither belongs in a saved diagram.
   const clipboardRef = useRef<ClipboardPayload | null>(null);
+  const pendingCopyRef = useRef<{ type: string; payload: ClipboardPayload } | null>(null);
+  const lastPastedHtmlRef = useRef<string | null>(null);
+  // Whether the last ⌘C/⌘X reached the system clipboard. When it did, a paste
+  // without our payload means something newer was copied since; when it did
+  // not (a browser that skipped the clipboard event), this tab's copy is it.
+  const copyOnSystemRef = useRef(false);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
   // What the "Comment" menu item would pin a thread to: the shape that was
   // right-clicked, or the point on the board that was. A ref rather than state
@@ -384,6 +394,18 @@ export function Canvas({
       clipboard: {
         get: () => clipboardRef.current,
         set: (value) => { clipboardRef.current = value; },
+        write: (value) => {
+          lastPastedHtmlRef.current = null;
+          try {
+            const { html, text } = encodeClipboardPayload(value);
+            void navigator.clipboard.write([new ClipboardItem({
+              'text/html': new Blob([html], { type: 'text/html' }),
+              'text/plain': new Blob([text], { type: 'text/plain' }),
+            })]).catch(() => {});
+          } catch {
+            // The in-tab clipboard still works when a menu copy is refused.
+          }
+        },
       },
       styleClipboard: {
         get: () => styleClipboardRef.current,
@@ -983,12 +1005,23 @@ export function Canvas({
       if (!kind) {
         // The eraser. `erased` is what folds a wipe across three strokes into
         // one undo entry — see the `continuing` argument.
+        // The eraser cuts strokes rather than taking them whole, so it has to
+        // rub out along the path the pointer swept, not only at the samples it
+        // reported: a quick wipe reports one move per frame, tens of pixels
+        // apart, and would leave crumbs of stroke between them. Steps of twice
+        // the slop keep consecutive circles overlapping for any pen width.
+        let last: { x: number; y: number } | null = null;
         const erase = (point: { x: number; y: number }) => {
           const gesture = eraseRef.current;
           if (!gesture) return;
-          if (useDiagramStore.getState().eraseInkAt(point, gesture.erased) > 0) {
-            gesture.erased = true;
+          const from = last ?? point;
+          const steps = Math.max(1, Math.ceil(Math.hypot(point.x - from.x, point.y - from.y) / (2 * ERASER_SLOP_PX)));
+          for (let i = last ? 1 : 0; i <= steps; i++) {
+            const t = i / steps;
+            const p = { x: from.x + (point.x - from.x) * t, y: from.y + (point.y - from.y) * t };
+            if (useDiagramStore.getState().eraseInkAt(p, gesture.erased) > 0) gesture.erased = true;
           }
+          last = point;
         };
         eraseRef.current = { erased: false };
         erase(at(event));
@@ -1078,12 +1111,47 @@ export function Canvas({
     [screenToFlowPosition, connectTowards, tool, setTool],
   );
 
-  // What the browser's own paste brings, for the two things ⌘V can mean that
-  // our clipboard cannot answer for. This listener only ever runs when
-  // `clipboard.paste` did *not* match — its `when` is "we have something of our
-  // own copied", and a matched command calls `preventDefault` on the keystroke —
-  // so pasting shapes from this app always wins over either branch below.
-  //
+  // A keystroke already captured the selection (and cut already deleted it).
+  // The native event only writes that payload; browser menu events capture here.
+  useEffect(() => {
+    function onCopy(e: ClipboardEvent) {
+      if (shortcutsOpen || presenting || isTypingTarget(e.target) || isCanvasControlTarget(e.target)) return;
+      const data = e.clipboardData;
+      if (!data) return;
+      const pending = pendingCopyRef.current;
+      pendingCopyRef.current = null;
+      const write = (value: ClipboardPayload) => {
+        lastPastedHtmlRef.current = null;
+        copyOnSystemRef.current = true;
+        const { html, text } = encodeClipboardPayload(value);
+        data.setData('text/html', html);
+        data.setData('text/plain', text);
+      };
+      if (pending?.type === e.type) {
+        e.preventDefault();
+        write(pending.payload);
+        return;
+      }
+      const command = registry.find(e.type === 'cut' ? 'clipboard.cut' : 'clipboard.copy')!;
+      if (command.when && !command.when(commandContext)) return;
+      e.preventDefault();
+      command.run({
+        ...commandContext,
+        clipboard: {
+          ...commandContext.clipboard,
+          write,
+        },
+      });
+    }
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCopy);
+    return () => {
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCopy);
+    };
+  }, [commandContext, shortcutsOpen, presenting]);
+
+  // Our HTML payload wins over images and text, including an older in-tab copy.
   // Images are uploaded and referenced by URL: inlining them as base64 used to
   // blow a screenshot-sized paste past the 5 MB limit on the diagram's JSON
   // body, which failed the save rather than the paste.
@@ -1100,9 +1168,26 @@ export function Canvas({
   useEffect(() => {
     if (readOnly) return;
     function onPaste(e: ClipboardEvent) {
-      if (isTypingTarget(e.target)) return;
+      if (shortcutsOpen || presenting || isTypingTarget(e.target) || isCanvasControlTarget(e.target)) return;
       const data = e.clipboardData;
       if (!data) return;
+      const html = data.getData('text/html');
+      const clip = decodeClipboardPayload(html);
+      if (clip) {
+        e.preventDefault();
+        // Repeats advance from the previous paste; a different raw payload
+        // starts from the copied positions, even if it decodes identically.
+        const source = html === lastPastedHtmlRef.current ? clipboardRef.current ?? clip : clip;
+        clipboardRef.current = useDiagramStore.getState().pasteClipboard(source);
+        lastPastedHtmlRef.current = html;
+        return;
+      }
+      const own = clipboardRef.current;
+      if (own && own.nodes.length > 0 && !copyOnSystemRef.current) {
+        e.preventDefault();
+        clipboardRef.current = useDiagramStore.getState().pasteClipboard(own);
+        return;
+      }
 
       // A spreadsheet goes on the clipboard twice: as its table and as a
       // picture of the range (desktop Excel, Google Sheets and Numbers all do
@@ -1150,13 +1235,14 @@ export function Canvas({
 
     window.addEventListener('paste', onPaste);
     return () => window.removeEventListener('paste', onPaste);
-  }, [readOnly, insertImages, dropPoint]);
+  }, [readOnly, insertImages, dropPoint, shortcutsOpen, presenting]);
 
   // Every shortcut is a command now; this handler only decides whether one
-  // applies. A keystroke that matches nothing falls through untouched, which is
-  // what leaves ⌘V to the paste listener above when our clipboard is empty.
+  // applies. Copy, cut and paste leave the keystroke to the browser so its
+  // clipboard events can carry the system clipboard data.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      pendingCopyRef.current = null;
       // The sheet is modal: it takes Escape itself and swallows the rest.
       if (shortcutsOpen) return;
       // Menus, popovers, radios and listboxes own their keyboard interactions.
@@ -1190,6 +1276,21 @@ export function Canvas({
       if (presenting) return;
       const command = registry.matchEvent(e, commandContext);
       if (!command) return;
+      if (command.id === 'clipboard.paste') return;
+      if (command.id === 'clipboard.copy' || command.id === 'clipboard.cut') {
+        command.run({
+          ...commandContext,
+          clipboard: {
+            ...commandContext.clipboard,
+            write: (payload) => {
+              lastPastedHtmlRef.current = null;
+              copyOnSystemRef.current = false;
+              pendingCopyRef.current = { type: command.id === 'clipboard.cut' ? 'cut' : 'copy', payload };
+            },
+          },
+        });
+        return;
+      }
       e.preventDefault();
       command.run(commandContext);
     }
@@ -1197,6 +1298,9 @@ export function Canvas({
     // Hold-to-pan is the one shortcut with two halves: the keydown is the
     // `view.pan` command, and releasing Space hands the previous tool back.
     function onKeyUp(e: KeyboardEvent) {
+      // A browser that omitted the clipboard event must not leave a capture
+      // for a later, unrelated Edit-menu copy/cut to consume.
+      pendingCopyRef.current = null;
       if (e.key === ' ') commandContext.pan.end();
     }
 
@@ -1231,12 +1335,24 @@ export function Canvas({
         // which leaves locked shapes alone; React Flow's own Backspace handler
         // would remove them, and the connectors on them, regardless.
         deleteKeyCode={null}
+        // Likewise the arrow keys are the registry's nudge (1 px, 10 with ⇧,
+        // coalesced into one ⌘Z). React Flow's keyboard handling would also
+        // move a focused node — and a box selection's rectangle — 5 px per
+        // press on top of it, so a clicked shape jumped 6 px at a time.
+        disableKeyboardA11y
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
         onNodeClick={onNodeClick}
+        // ⇧-click adds to (or takes out of) the selection, as in Whimsical,
+        // beside React Flow's own ⌘ / Ctrl. Both are listed whatever the
+        // platform: React Flow picks one from the user agent, and Ctrl-click on
+        // a Mac is a right-click anyway. ⇧-drag still draws a selection box
+        // (`selectionKeyCode`), now adding to what is selected; `deepSelect`
+        // ignores ⇧, so only ⌘ alone reaches inside a group.
+        multiSelectionKeyCode={MULTI_SELECTION_KEYS}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
         onNodeMouseEnter={onNodeMouseEnter}
