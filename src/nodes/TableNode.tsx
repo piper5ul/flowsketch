@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { type NodeProps } from '@xyflow/react';
 import { SideHandles } from './SideHandles';
 import clsx from 'clsx';
-import { registerCanvasEditor } from '../lib/canvasEditing';
 import type { ShapeNode as ShapeNodeType } from '../store/useDiagramStore';
 import { useDiagramStore } from '../store/useDiagramStore';
 import { useSearchHighlight } from '../store/useSearchStore';
@@ -68,8 +67,6 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
 
   const [editing, setEditing] = useState<CellRef | null>(null);
   const [draft, setDraft] = useState('');
-  const cancelled = useRef(false);
-  useEffect(() => registerCanvasEditor(() => { cancelled.current = true; }), []);
   // What the grid was when the current write started, so a Tab that both
   // commits a cell and adds a row composes the two into one patch.
   const table: TableData = data.table ?? emptyTable(1, 1, false);
@@ -91,7 +88,6 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
   const openCell = useCallback(
     (cell: CellRef) => {
       if (!canEdit) return;
-      cancelled.current = false;
       setActiveTableCell({ nodeId: id, ...cell });
       setDraft(tableRef.current.rows[cell.row]?.cells[cell.col] ?? '');
       setEditing(cell);
@@ -108,7 +104,6 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
   /** The current draft into the grid, and whatever else the caller wants doing to it. */
   const commit = useCallback(
     (cell: CellRef, value: string, then: (next: TableData) => TableData = (t) => t) => {
-      if (cancelled.current) return tableRef.current;
       const next = then(setCell(tableRef.current, cell.row, cell.col, value));
       updateNodeData(id, { table: next });
       return next;
@@ -200,13 +195,9 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
-        window.removeEventListener('pointercancel', onUp);
-        window.removeEventListener('blur', onUp);
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
-      window.addEventListener('pointercancel', onUp);
-      window.addEventListener('blur', onUp);
     },
     [beginInteraction, canEdit, id, updateNodeDataTransient],
   );

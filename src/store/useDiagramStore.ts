@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { cancelCanvasEditors } from '../lib/canvasEditing';
 import {
   applyNodeChanges,
   applyEdgeChanges,
@@ -480,19 +479,14 @@ export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'ski
  */
 let flushDocument: (() => Promise<boolean>) | null = null;
 
-let prepareVersionRestore: (() => void) | null = null;
-
-/** Canvas owns the DOM gesture cleanup; the store owns the edit boundary. */
-export function setVersionRestorePreparation(prepare: (() => void) | null): void {
-  prepareVersionRestore = prepare;
-}
-
-/** Discard editor drafts and stop gestures before capturing or applying a restore. */
+/**
+ * Before a version is applied: close any open editor and finish a gesture the
+ * binding is still holding, so the restore is an undo entry of its own.
+ * Restore is clicked in the history panel, so no pointer gesture is in flight.
+ */
 export function prepareCanvasForVersionRestore(): void {
-  cancelCanvasEditors();
   consumeSuppressBlur();
   useDiagramStore.setState({ editingNodeId: null, editingEdgeId: null, activeTableCell: null });
-  prepareVersionRestore?.();
   documentHistory?.flushInteraction();
 }
 

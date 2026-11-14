@@ -12,7 +12,6 @@ import {
   type Viewport,
 } from '@xyflow/react';
 import { nanoid } from 'nanoid';
-import { useVersionRestorePreparation } from '../lib/useVersionRestorePreparation';
 import { computeMarkers, useDiagramStore, type ClipboardPayload, type ShapeNode } from '../store/useDiagramStore';
 import { useViewPreferences } from '../store/useViewPreferences';
 import { isAnchorNode } from '../lib/nodeKinds';
@@ -170,7 +169,7 @@ export function Canvas({
     ariaEdgesRef.current = withConnectorAriaLabels(edges, (id) => byId.get(id)?.data.label, ariaEdgesRef.current);
     return ariaEdgesRef.current;
   }, [edges, nodes]);
-  const storeOnNodesChange = useDiagramStore((s) => s.onNodesChange);
+  const onNodesChange = useDiagramStore((s) => s.onNodesChange);
   const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
   const storeOnConnect = useDiagramStore((s) => s.onConnect);
   const addShape = useDiagramStore((s) => s.addShape);
@@ -218,7 +217,6 @@ export function Canvas({
   const { screenToFlowPosition, addEdges, zoomIn, zoomOut, zoomTo, fitView } = useReactFlow();
   const insertImages = useImageInsert();
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const cancellingRestoreGesture = useRef(false);
   const prevToolRef = useRef<Tool>('select');
   const connectorSourceRef = useRef<{ id: string; anchor?: EdgeAnchor } | null>(null);
   // A connector being drawn by hand — see `beginConnectorGesture`. The ref is
@@ -355,7 +353,6 @@ export function Canvas({
   const onConnect = useCallback(
     (connection: Connection) => {
       connectorSourceRef.current = null;
-      if (cancellingRestoreGesture.current) return;
       storeOnConnect(connection);
       if (tool === 'connector') setTool('select');
     },
@@ -551,17 +548,11 @@ export function Canvas({
    * the positions so nothing moves on screen, and records nothing at all when
    * nothing changed hands.
    */
-  const storeOnNodeDragStop = useCallback(
+  const onNodeDragStop = useCallback(
     (_event: MouseEvent | TouchEvent, _node: ShapeNode, nodes: ShapeNode[]) => {
       useDiagramStore.getState().reparentByPosition(nodes.map((n) => n.id));
     },
     [],
-  );
-  const { onNodesChange, onNodeDragStop } = useVersionRestorePreparation(
-    storeOnNodesChange,
-    storeOnNodeDragStop,
-    () => { connectorSourceRef.current = null; },
-    cancellingRestoreGesture,
   );
 
   const onNodeClick = useCallback(
@@ -886,7 +877,6 @@ export function Canvas({
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', finish);
-        window.removeEventListener('blur', finish);
         window.removeEventListener('keydown', onKey);
         if (finishGestureRef.current === finish) finishGestureRef.current = null;
         if (frame !== null) cancelAnimationFrame(frame);
@@ -947,7 +937,6 @@ export function Canvas({
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
       window.addEventListener('pointercancel', finish);
-      window.addEventListener('blur', finish);
       window.addEventListener('keydown', onKey);
       finishGestureRef.current = finish;
     },
@@ -1007,8 +996,6 @@ export function Canvas({
         const finishErase = () => {
           window.removeEventListener('pointermove', onEraseMove);
           window.removeEventListener('pointerup', onEraseUp);
-          window.removeEventListener('pointercancel', finishErase);
-          window.removeEventListener('blur', finishErase);
           window.removeEventListener('keydown', onEraseKey);
           eraseRef.current = null;
         };
@@ -1019,8 +1006,6 @@ export function Canvas({
         };
         window.addEventListener('pointermove', onEraseMove);
         window.addEventListener('pointerup', onEraseUp);
-        window.addEventListener('pointercancel', finishErase);
-        window.addEventListener('blur', finishErase);
         window.addEventListener('keydown', onEraseKey);
         return;
       }
@@ -1033,8 +1018,6 @@ export function Canvas({
       const finish = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
-        window.removeEventListener('pointercancel', finish);
-        window.removeEventListener('blur', finish);
         window.removeEventListener('keydown', onKey);
         inkRef.current = null;
         setInkDraft(null);
@@ -1060,8 +1043,6 @@ export function Canvas({
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
-      window.addEventListener('pointercancel', finish);
-      window.addEventListener('blur', finish);
       window.addEventListener('keydown', onKey);
     },
     [tool, readOnly, screenToFlowPosition],
@@ -1082,7 +1063,6 @@ export function Canvas({
   // what quick-adds).
   const onConnectEnd = useCallback(
     (event: MouseEvent | TouchEvent, connectionState: FinalConnectionState) => {
-      if (cancellingRestoreGesture.current) return;
       connectorSourceRef.current = null;
       if (connectionState.isValid || !connectionState.fromNode) return;
       const target = event.target as HTMLElement;
