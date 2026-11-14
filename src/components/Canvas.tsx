@@ -1231,6 +1231,11 @@ export function Canvas({
         // which leaves locked shapes alone; React Flow's own Backspace handler
         // would remove them, and the connectors on them, regardless.
         deleteKeyCode={null}
+        // Likewise the arrow keys are the registry's nudge (1 px, 10 with ⇧,
+        // coalesced into one ⌘Z). React Flow's keyboard handling would also
+        // move a focused node — and a box selection's rectangle — 5 px per
+        // press on top of it, so a clicked shape jumped 6 px at a time.
+        disableKeyboardA11y
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
