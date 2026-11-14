@@ -3970,6 +3970,11 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     set((s) => {
       const selected = s.nodes.filter((n) => n.selected && !n.data.locked).map((n) => n.id);
       const deletedNodeIds = subtreeIds(s.nodes, selected);
+      for (const node of s.nodes.filter((n) => deletedNodeIds.has(n.id) && n.data.mindMap)) {
+        const root = node.data.mindMap!.root;
+        const tree = mapOf(s.nodes.filter((n) => n.data.mindMap?.root === root), s.edges, node.id);
+        for (const id of tree?.ids ?? []) deletedNodeIds.add(id);
+      }
       return {
         nodes: s.nodes.filter((n) => !deletedNodeIds.has(n.id) && (!n.selected || n.data.locked)),
         edges: s.edges.filter((e) => !e.selected && !deletedNodeIds.has(e.source) && !deletedNodeIds.has(e.target)),

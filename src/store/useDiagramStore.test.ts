@@ -31,6 +31,8 @@ import {
   MIND_MAP_SIBLING_GAP,
 } from '../lib/mindMap';
 import { useToastStore } from './useToastStore';
+import { registry } from '../commands/commands';
+import type { CommandContext } from '../commands/types';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 
 // Only `api` itself is a stub: the error classes have to be the real ones, or
@@ -4041,6 +4043,42 @@ describe('mind maps', () => {
   /** The map's branches, in the order the edge array holds them. */
   const branches = () => store().edges.filter((e) => e.data?.role === 'mindmap');
   const childrenIds = (id: string) => branches().filter((e) => e.source === id).map((e) => e.target);
+
+  describe('deleteSelection', () => {
+    it.each(['Delete', 'Backspace'])('deletes a collapsed subtree and its branches in one undo step (%s)', (key) => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const grandchild = store().mindMapAddChild(child)!;
+      const sibling = store().mindMapAddChild(root)!;
+      store().mindMapToggleCollapse(child);
+      const otherRoot = store().mindMapAddRoot(at);
+      const otherChild = store().mindMapAddChild(otherRoot)!;
+      select(child);
+      const before = { nodes: store().nodes, edges: store().edges };
+      const ctx = { store: useDiagramStore } as unknown as CommandContext;
+      const command = registry.matchEvent({ key }, ctx)!;
+      expect(command.id).toBe('edit.delete');
+      command.run(ctx);
+      expect(store().nodes.map((n) => n.id)).toEqual([root, sibling, otherRoot, otherChild]);
+      expect(store().edges.some((e) => [child, grandchild].includes(e.source) || [child, grandchild].includes(e.target))).toBe(false);
+      store().undo();
+      expect(store().nodes).toEqual(before.nodes);
+      expect(store().edges).toEqual(before.edges);
+      store().redo();
+      expect(store().nodes.map((n) => n.id)).toEqual([root, sibling, otherRoot, otherChild]);
+    });
+
+    it('deletes the whole map when the root is selected, leaving ordinary nodes alone', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      store().mindMapAddChild(child);
+      const plain = store().addShape('rectangle', at);
+      select(root);
+      store().deleteSelection();
+      expect(store().nodes.map((n) => n.id)).toEqual([plain]);
+      expect(store().edges).toEqual([]);
+    });
+  });
 
   describe('mindMapAddRoot', () => {
     it('makes a node that points at itself, selected and open for typing', () => {
