@@ -1176,20 +1176,31 @@ describe('eraseInkAt', () => {
     return { first, second };
   }
 
-  it('rubs out the whole stroke the pointer crosses, and only that one', () => {
+  it('splits a simplified straight stroke at the eraser edge, and leaves the other alone', () => {
     const { second } = twoStrokes();
+    expect(store().nodes[0].data.ink!.points).toHaveLength(2);
+    const untouched = store().nodes[1];
     expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(1);
-    expect(store().nodes.map((n) => n.id)).toEqual([second]);
+    expect(store().nodes).toHaveLength(3);
+    expect(store().nodes[2]).toBe(untouched);
+    expect(store().nodes[2].id).toBe(second);
+    // Circle intersections can differ by floating-point roundoff (< 1e-10 px).
+    for (const [i, node] of store().nodes.slice(0, 2).entries()) {
+      expect(node).toMatchObject({
+        position: { x: 98, y: i === 0 ? 98 : 154 }, width: 4, height: expect.closeTo(48, 10),
+        data: { ink: { points: [[2, 2], [2, expect.closeTo(46, 10)]] } },
+      });
+    }
   });
 
   it('splits a stroke into boxed runs with the same pen, and undoes a whole wipe together', () => {
-    const points: InkPoint[] = Array.from({ length: 15 }, (_, i) => [100 + i * 10, 100 + (i % 2) * 2, 0.5]);
+    const points: InkPoint[] = Array.from({ length: 15 }, (_, i) => [100 + i * 10, 100, 0.5]);
     const id = store().addInk(points, 'highlighter', 4)!;
     store().updateNodeData(id, { stroke: '#123456' });
     const before = store().nodes;
-    expect(store().eraseInkAt({ x: 170, y: 102 })).toBe(1);
+    expect(store().eraseInkAt({ x: 170, y: 100 })).toBe(1);
     expect(store().nodes).toHaveLength(2);
-    const expected = [inkBounds(points.slice(0, 7), 4), inkBounds(points.slice(8), 4)];
+    const expected = [inkBounds([points[0], [164, 100, 0.5]], 4), inkBounds([[176, 100, 0.5], points[14]], 4)];
     for (const [i, node] of store().nodes.entries()) {
       const box = expected[i];
       expect(node).toMatchObject({
@@ -1198,7 +1209,7 @@ describe('eraseInkAt', () => {
       });
     }
     expect(new Set(store().nodes.map((n) => n.id)).size).toBe(2);
-    expect(store().eraseInkAt({ x: 210, y: 102 }, true)).toBe(1);
+    expect(store().eraseInkAt({ x: 210, y: 100 }, true)).toBe(1);
     store().undo();
     expect(store().nodes).toEqual(before);
   });
@@ -1225,12 +1236,12 @@ describe('eraseInkAt', () => {
     expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(0);
   });
 
-  it('erases one stroke per press, and a whole wipe in one undo step', () => {
+  it('splits the strokes a wipe crosses in one undo step', () => {
     twoStrokes();
     // What the gesture does: `continuing` is false until something has gone.
     expect(store().eraseInkAt({ x: 100, y: 150 }, false)).toBe(1);
     expect(store().eraseInkAt({ x: 300, y: 150 }, true)).toBe(1);
-    expect(store().nodes).toHaveLength(0);
+    expect(store().nodes).toHaveLength(4);
 
     store().undo();
     expect(store().nodes).toHaveLength(2);

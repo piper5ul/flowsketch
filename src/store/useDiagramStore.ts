@@ -2380,7 +2380,7 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // Points are local to the stroke's box; the pointer is on the board.
       const origin = absolutePosition(node, byId);
       const local = { x: point.x - origin.x, y: point.y - origin.y };
-      const runs = splitStroke(ink.points, local, ink.width / 2 + ERASER_SLOP_PX);
+      const runs = splitStroke(ink.points, local, ink.width / 2 + ERASER_SLOP_PX, ink.width);
       if (runs.length === 1 && runs[0] === ink.points) continue;
       replacements.set(node.id, runs.map((points) => {
         const box = inkBounds(points, ink.width);

@@ -178,27 +178,58 @@ export function strokeHits(points: InkPoint[], point: Point, radius: number): bo
 }
 
 /**
- * The runs left after erasing at `point`, with short remnants dropped before
- * any thinning. A miss keeps the original points by reference. Crossing a
- * segment cuts the run too, even when its samples sit outside the radius.
+ * The runs left after erasing at `point`, cut at the circle boundary. Stored
+ * points are already thinned, so only remnants shorter than the pen's width
+ * (or with fewer than two points) are dropped. A miss keeps the points by reference.
  */
-export function splitStroke(points: InkPoint[], point: Point, radius: number): InkPoint[][] {
+export function splitStroke(points: InkPoint[], point: Point, radius: number, width: number): InkPoint[][] {
   if (!strokeHits(points, point, radius)) return [points];
   const runs: InkPoint[][] = [];
-  let run: InkPoint[] = [];
+  let run = points.slice(0, 1);
   const finish = () => {
-    if (run.length >= MIN_INK_POINTS) runs.push(run);
+    let length = 0;
+    for (let i = 1; i < run.length; i++) {
+      length += Math.hypot(run[i][0] - run[i - 1][0], run[i][1] - run[i - 1][1]);
+    }
+    if (run.length >= 2 && length >= width) runs.push(run);
     run = [];
   };
-  for (const sample of points) {
-    const at = { x: sample[0], y: sample[1] };
-    if (Math.hypot(at.x - point.x, at.y - point.y) <= radius) {
-      finish();
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const x = a[0] - point.x;
+    const y = a[1] - point.y;
+    const squaredLength = dx * dx + dy * dy;
+    if (squaredLength === 0) {
+      if (x * x + y * y <= radius * radius) finish();
+      else run.push(b);
       continue;
     }
-    const previous = run[run.length - 1];
-    if (previous && distanceToSegment(point, { x: previous[0], y: previous[1] }, at) <= radius) finish();
-    run.push(sample);
+    // Solve |a + t(b - a) - point|² = radius² for entry and exit.
+    const dot = x * dx + y * dy;
+    const discriminant = dot * dot - squaredLength * (x * x + y * y - radius * radius);
+    const root = Math.sqrt(Math.max(0, discriminant));
+    const entry = (-dot - root) / squaredLength;
+    const exit = (-dot + root) / squaredLength;
+    if (discriminant < 0 || exit < 0 || entry > 1) {
+      run.push(b);
+      continue;
+    }
+    const at = (t: number): InkPoint => {
+      if (t === 0) return a;
+      if (t === 1) return b;
+      const sample: InkPoint = [a[0] + t * dx, a[1] + t * dy];
+      if (a[2] !== undefined && b[2] !== undefined) sample[2] = a[2] + t * (b[2] - a[2]);
+      return sample;
+    };
+    if (entry > 0) run.push(at(entry));
+    finish();
+    if (exit <= 1) {
+      run.push(at(exit));
+      if (exit < 1) run.push(b);
+    }
   }
   finish();
   return runs;
