@@ -29,6 +29,7 @@ import {
   snapToFreeEndGrid,
 } from '../lib/connectorGesture';
 import {
+  ERASER_SLOP_PX,
   HIGHLIGHTER_OPACITY,
   INK_WIDTH,
   inkKindOfTool,
@@ -983,12 +984,23 @@ export function Canvas({
       if (!kind) {
         // The eraser. `erased` is what folds a wipe across three strokes into
         // one undo entry — see the `continuing` argument.
+        // The eraser cuts strokes rather than taking them whole, so it has to
+        // rub out along the path the pointer swept, not only at the samples it
+        // reported: a quick wipe reports one move per frame, tens of pixels
+        // apart, and would leave crumbs of stroke between them. Steps of twice
+        // the slop keep consecutive circles overlapping for any pen width.
+        let last: { x: number; y: number } | null = null;
         const erase = (point: { x: number; y: number }) => {
           const gesture = eraseRef.current;
           if (!gesture) return;
-          if (useDiagramStore.getState().eraseInkAt(point, gesture.erased) > 0) {
-            gesture.erased = true;
+          const from = last ?? point;
+          const steps = Math.max(1, Math.ceil(Math.hypot(point.x - from.x, point.y - from.y) / (2 * ERASER_SLOP_PX)));
+          for (let i = last ? 1 : 0; i <= steps; i++) {
+            const t = i / steps;
+            const p = { x: from.x + (point.x - from.x) * t, y: from.y + (point.y - from.y) * t };
+            if (useDiagramStore.getState().eraseInkAt(p, gesture.erased) > 0) gesture.erased = true;
           }
+          last = point;
         };
         eraseRef.current = { erased: false };
         erase(at(event));

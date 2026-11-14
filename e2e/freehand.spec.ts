@@ -86,7 +86,8 @@ test('the pen draws strokes and the eraser rubs them out', async ({ page }) => {
   await expect(ink).toHaveCount(2);
 
   // ⇧E is the eraser — E itself is not free (see `TOOL_COMMANDS`). Scribbling
-  // back over the first stroke takes the whole of it, not the part crossed.
+  // back along the whole of the first stroke rubs all of it out, a quick wipe
+  // included: the eraser covers the path between pointer samples too.
   await page.keyboard.press('Shift+E');
   await squiggle(page, { x: 420, y: 300 }, { x: 620, y: 300 });
   await expect(ink).toHaveCount(1);
@@ -119,4 +120,34 @@ test('the highlighter draws a wider, translucent stroke', async ({ page }) => {
   await expect(ink).toHaveCount(1);
   await expect(ink.first()).toHaveAttribute('data-ink-kind', 'highlighter');
   await expect(ink.first().locator('path')).toHaveAttribute('stroke-opacity', '0.4');
+});
+
+test('a wipe across the middle of a line cuts it in two', async ({ page }) => {
+  await signUp(page);
+  await openBlankDiagram(page);
+  const ink = page.locator('[data-node-type="ink"]');
+
+  // A straight line is stored as two points once thinned, so this is the case
+  // that needs the cut made at the eraser's edge rather than at a sample.
+  await page.getByRole('button', { name: 'Pen', exact: true }).click();
+  await page.mouse.move(400, 300);
+  await page.mouse.down();
+  for (let x = 420; x <= 700; x += 20) await page.mouse.move(x, 300);
+  await page.mouse.up();
+  await expect(ink).toHaveCount(1);
+
+  // One quick vertical stroke of the eraser, two pointer moves.
+  await page.keyboard.press('Shift+E');
+  await page.mouse.move(550, 240);
+  await page.mouse.down();
+  await page.mouse.move(550, 360);
+  await page.mouse.up();
+  await expect(ink).toHaveCount(2);
+
+  const [a, b] = await Promise.all([ink.nth(0).boundingBox(), ink.nth(1).boundingBox()]);
+  const [left, right] = [a!, b!].sort((p, q) => p.x - q.x);
+  expect(left.x).toBeLessThan(410);
+  expect(left.x + left.width).toBeLessThan(550);
+  expect(right.x).toBeGreaterThan(550);
+  expect(right.x + right.width).toBeGreaterThan(690);
 });
