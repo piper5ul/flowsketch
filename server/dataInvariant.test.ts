@@ -27,8 +27,8 @@ import { serveForFile } from './testServer.js';
  *
  * `collab.ts` is the snapshot renderer — the only place a document becomes
  * JSON. `router.ts` holds the create/import, the duplicate and the guarded
- * `PUT`. `versions.ts` holds the restore, which writes JSON server-side and is
- * re-seeded into the document by the client that asked for it. Adding a fourth
+ * `PUT`. `versions.ts` holds the restore, which writes JSON server-side only
+ * when no DiagramDoc exists; live restores become ordinary client edits. Adding a fourth
  * name here is a decision about the invariant, which is exactly why it has to
  * be made in this file.
  */

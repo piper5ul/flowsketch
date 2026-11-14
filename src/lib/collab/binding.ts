@@ -817,6 +817,15 @@ export function bindDocToStore(
       if (gestureOpen) return;
       undoManager.stopCapturing();
     },
+    flushInteraction: () => {
+      if (!gestureOpen) return;
+      const wasHeld = transientTimer !== null;
+      cancelTransient();
+      if (wasHeld) push(store.getState());
+      gestureOpen = false;
+      setPendingWrite(false);
+      undoManager.stopCapturing();
+    },
     clear: () => {
       undoManager.clear();
       gestureOpen = false;

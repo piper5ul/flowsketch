@@ -651,14 +651,39 @@ describe('POST /api/diagrams/:id/versions/:versionId/restore', () => {
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
 
-  it('409s when a collab session owns the document', async () => {
-    prismaMock.diagramDoc.findUnique.mockResolvedValueOnce({ diagramId: 'd1' });
+  it.each([true, false])('returns a live restore without row, retention, GC or image-index writes (open=%s)', async (open) => {
+    prismaMock.diagramDoc.findUnique.mockResolvedValue({ diagramId: 'd1' });
+    const live = { version: 3, ...board(['live-only']) };
+    setLiveDiagramReader((id) => open && id === 'd1' ? live : null);
+    onTestFinished(() => setLiveDiagramReader(null));
+    // If retention were invoked it would prune a version drawing an image.
+    process.env.MAX_VERSIONS = '1';
+    prismaMock.diagramVersion.findMany.mockResolvedValue([{ id: 'old', data: boardWithImage('old-image') }]);
 
-    await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(409);
+    const res = await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(200);
 
-    expect(prismaMock.diagramVersion.create).not.toHaveBeenCalled();
+    expect(res.body).toEqual({ data: BEFORE, title: 'Then' });
+    expect(prismaMock.diagramVersion.create).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      data: { diagramId: 'd1', data: open ? live : AFTER, title: 'Now', createdById: 'u1', label: RESTORE_SNAPSHOT_LABEL },
+    }));
+    expect(prismaMock.diagram.update).not.toHaveBeenCalled();
+    expect(prismaMock.diagramVersion.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.diagramVersion.deleteMany).not.toHaveBeenCalled();
+    for (const model of [prismaMock.image, prismaMock.diagramImage]) {
+      for (const method of Object.values(model)) expect(method).not.toHaveBeenCalled();
+    }
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('fails a live restore if the safety snapshot cannot be written', async () => {
+    prismaMock.diagramDoc.findUnique.mockResolvedValue({ diagramId: 'd1' });
+    prismaMock.diagramVersion.create.mockRejectedValue(new Error('snapshot failed'));
+
+    await request(server).post('/api/diagrams/d1/versions/v1/restore').expect(500);
+
     expect(prismaMock.diagram.update).not.toHaveBeenCalled();
   });
+
 });
 
 describe('POST /api/diagrams/:id/versions/:versionId/fork', () => {

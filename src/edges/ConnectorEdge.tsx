@@ -340,9 +340,13 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        window.removeEventListener('blur', onUp);
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+      window.addEventListener('blur', onUp);
     },
     [id, editing, screenToFlowPosition, updateEdgeDataTransient],
   );
@@ -380,9 +384,13 @@ export function ConnectorEdge({ id, source, target, data, selected, markerStart,
       const onUp = () => {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onUp);
+        window.removeEventListener('blur', onUp);
       };
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onUp);
+      window.addEventListener('blur', onUp);
     },
     [source, target, srcX, srcY, tgtX, tgtY, screenToFlowPosition, moveNodesTransient],
   );

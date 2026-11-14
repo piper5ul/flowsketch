@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type HTMLAttributes, type ReactNode, type Ref } from 'react';
+import { registerCanvasEditor } from '../lib/canvasEditing';
 import { consumeSuppressBlur } from '../store/useDiagramStore';
 
 /**
@@ -53,6 +54,7 @@ export function EditableLabel({ editing, value, onCommit, caret = 'end', childre
     const el = editorRef.current;
     if (!editing || !el) return;
     committed.current = false;
+    const unregister = registerCanvasEditor(() => { committed.current = true; });
     el.textContent = value;
     const place = () => {
       el.focus();
@@ -88,6 +90,7 @@ export function EditableLabel({ editing, value, onCommit, caret = 'end', childre
     };
     window.addEventListener('pagehide', onPageHide, { capture: true });
     return () => {
+      unregister();
       window.removeEventListener('pagehide', onPageHide, { capture: true });
       cancelAnimationFrame(frame);
       // Taken away without a blur (another node opened in its place): what was
