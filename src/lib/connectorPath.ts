@@ -106,6 +106,9 @@ export function smoothStepPath(points: Point[]): string {
   return parts.join(' ');
 }
 
+/** How far out of line two ends may be and still be drawn as one straight run. */
+const ALIGN_SNAP_PX = 8;
+
 /**
  * Absorbs the kinks grid snapping leaves in a routed path: a segment shorter
  * than 8px is straightened onto its neighbour, and the corner that leaves
@@ -128,8 +131,8 @@ export function cleanPath(input: Point[]): Point[] {
     const a = pts[i], b = pts[i + 1];
     // Keep a short final stub: collapsing it would turn the arrowhead sideways.
     if (b === last && (a.x === b.x || a.y === b.y)) continue;
-    if (Math.abs(a.x - b.x) > 0 && Math.abs(a.x - b.x) < 8) b.x = a.x;
-    if (Math.abs(a.y - b.y) > 0 && Math.abs(a.y - b.y) < 8) b.y = a.y;
+    if (Math.abs(a.x - b.x) > 0 && Math.abs(a.x - b.x) < ALIGN_SNAP_PX) b.x = a.x;
+    if (Math.abs(a.y - b.y) > 0 && Math.abs(a.y - b.y) < ALIGN_SNAP_PX) b.y = a.y;
   }
 
   const result = [first];
@@ -143,6 +146,26 @@ export function cleanPath(input: Point[]): Point[] {
   }
   result.push(last);
   return result;
+}
+
+/**
+ * The target end of an unbent straight or curved connector, levelled with the
+ * source when the two are less than `ALIGN_SNAP_PX` out of line — the same
+ * rule `cleanPath` applies to an elbow, so two shapes a few pixels apart draw
+ * a straight run whichever kind joins them. The end only ever slides *along*
+ * its own side, so it stays on the shape's outline; an end arriving on a side
+ * it would have to leave is left where it is.
+ */
+function levelTarget(source: Point, target: Point, targetSide: Direction): Point {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const slidesVertically = targetSide === 'left' || targetSide === 'right';
+  if (slidesVertically) {
+    if (dy !== 0 && Math.abs(dy) < ALIGN_SNAP_PX && Math.abs(dx) > Math.abs(dy)) return { x: target.x, y: source.y };
+  } else if (dx !== 0 && Math.abs(dx) < ALIGN_SNAP_PX && Math.abs(dy) > Math.abs(dx)) {
+    return { x: source.x, y: target.y };
+  }
+  return target;
 }
 
 function midpoint(a: Point, b: Point): Point {
@@ -291,8 +314,10 @@ function runBetween(a: Point, b: Point, handle: Point): PathSegment {
 }
 
 export function buildConnectorPath(kind: ConnectorKind, args: ConnectorPathArgs): ConnectorPath {
-  const { source, target, sourceSide, targetSide, routed } = args;
+  const { source, sourceSide, targetSide, routed } = args;
   const waypoints = args.waypoints ?? [];
+  // A bent connector goes where its bends say; an unbent one is levelled.
+  const target = kind === 'elbow' || waypoints.length > 0 ? args.target : levelTarget(source, args.target, targetSide);
 
   if (kind === 'elbow') {
     // The router already threaded the bends: it was handed them as vertices,
