@@ -3,6 +3,8 @@ import { canEditDiagram, commandDeclarations, commands, registry } from './comma
 import { parseMermaidFlowchart, parseMermaidSequence } from '../lib/mermaid';
 import { useToastStore } from '../store/useToastStore';
 import type { CommandContext } from './types';
+import { useDiagramStore, type ClipboardPayload } from '../store/useDiagramStore';
+import { anchorNodeAt } from '../lib/connectorGesture';
 
 /**
  * A context holding one selected shape, so that the commands gated on a
@@ -98,6 +100,61 @@ describe('the read-only gate', () => {
       // or it does not survive.
       if (stillOffered) expect(gated.when, declaration.id).toBe(declaration.when);
     }
+  });
+});
+
+describe('copy and paste connectors', () => {
+  function context(): CommandContext {
+    let clip: ClipboardPayload | null = null;
+    useDiagramStore.getState().loadDiagram('test', 'Test', false, { nodes: [], edges: [] });
+    return {
+      store: useDiagramStore,
+      clipboard: { get: () => clip, set: (value: ClipboardPayload | null) => { clip = value; } },
+    } as unknown as CommandContext;
+  }
+
+  it('copies only connectors whose shapes are both in a box selection', () => {
+    const ctx = context();
+    const a = ctx.store.getState().addShape('rectangle', { x: 0, y: 0 });
+    const b = ctx.store.getState().addConnectedShape(a, 'right')!;
+    const c = ctx.store.getState().addConnectedShape(b, 'right')!;
+    ctx.store.setState({
+      nodes: ctx.store.getState().nodes.map((n) => ({ ...n, selected: n.id !== c })),
+      edges: ctx.store.getState().edges.map((e) => ({ ...e, selected: true })),
+    });
+
+    registry.find('clipboard.copy')!.run(ctx);
+    expect(ctx.clipboard.get()!.edges).toHaveLength(1);
+    registry.find('clipboard.paste')!.run(ctx);
+
+    const pasted = ctx.store.getState().nodes.filter((n) => n.selected);
+    const edges = ctx.store.getState().edges.filter((e) => e.selected);
+    expect(pasted).toHaveLength(2);
+    expect(edges).toHaveLength(1);
+    expect(pasted.map((n) => n.id)).toEqual(expect.arrayContaining([edges[0].source, edges[0].target]));
+  });
+
+  it.each([false, true])('copies a selected connector with its anchor ends (floating: %s)', (floating) => {
+    const ctx = context();
+    const id = ctx.store.getState().addShape('rectangle', { x: 0, y: 0 });
+    const source = floating
+      ? anchorNodeAt('source', { x: 0, y: 0 })
+      : { ...ctx.store.getState().nodes.find((n) => n.id === id)!, selected: true };
+    ctx.store.setState({
+      nodes: [source, anchorNodeAt('target', { x: 300, y: 100 })],
+      edges: [{ id: 'arrow', source: source.id, target: 'target', selected: true }],
+    });
+
+    registry.find('clipboard.copy')!.run(ctx);
+    expect(ctx.clipboard.get()!.nodes).toHaveLength(2);
+    registry.find('clipboard.paste')!.run(ctx);
+
+    const pasted = ctx.store.getState().nodes.filter((n) => n.selected);
+    const edge = ctx.store.getState().edges.find((e) => e.selected)!;
+    expect(pasted).toHaveLength(2);
+    expect(pasted.map((n) => n.id)).toEqual(expect.arrayContaining([edge.source, edge.target]));
+    expect(edge.source).not.toBe(source.id);
+    expect(edge.target).not.toBe('target');
   });
 });
 

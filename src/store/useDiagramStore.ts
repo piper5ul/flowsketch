@@ -1485,11 +1485,11 @@ function cloneSubgraph(
       selected,
     };
   });
-  const clonedEdges = edges.map((e) => ({
+  const clonedEdges = edges.filter((e) => idMap.has(e.source) && idMap.has(e.target)).map((e) => ({
     ...e,
     id: nanoid(8),
-    source: idMap.get(e.source) ?? e.source,
-    target: idMap.get(e.target) ?? e.target,
+    source: idMap.get(e.source)!,
+    target: idMap.get(e.target)!,
     selected,
   }));
   return { nodes: sortParentsFirst(clonedNodes), edges: clonedEdges };
