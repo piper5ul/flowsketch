@@ -539,6 +539,18 @@ describe('pasteClipboard', () => {
     expect(store().edges).toHaveLength(1);
   });
 
+  it('drops edges with an endpoint outside the cloned nodes', () => {
+    const a = store().addShape('rectangle', { x: 0, y: 0 });
+    store().addConnectedShape(a, 'right');
+    const clip = { nodes: [store().nodes[0]], edges: store().edges };
+
+    const pasted = store().pasteClipboard(clip);
+
+    expect(pasted.nodes).toHaveLength(1);
+    expect(pasted.edges).toEqual([]);
+    expect(store().edges).toHaveLength(1);
+  });
+
   it('returns the pasted content so a repeated paste keeps stepping away', () => {
     const a = store().addShape('rectangle', { x: 0, y: 0 });
 
