@@ -4,10 +4,9 @@
  * A group is a way of handling shapes, and the two gestures it needs are in
  * tension: picking the whole thing, and picking one member of it without
  * taking the group apart. Whimsical settles that with ⌘-click, and so does
- * this — but ⌘ is already React Flow's `multiSelectionKeyCode` here (the
- * default is `Meta` on a Mac and `Control` everywhere else, and `Canvas` does
- * not override it), so the two meanings have to be told apart rather than one
- * replacing the other.
+ * this — but ⌘ is already one of React Flow's `multiSelectionKeyCode`s here
+ * (`Canvas` lists `Meta`, `Control` and `Shift`), so the two meanings have to
+ * be told apart rather than one replacing the other.
  *
  * **The rule**: a ⌘-click deep-selects the node it landed on — and *only* that
  * node — when the node lives in a group and nothing is selected but that
@@ -59,9 +58,9 @@ export function deepSelectTarget(
   modifiers: ClickModifiers,
   connectorSelected = false,
 ): string | null {
-  // ⌘ alone. ⇧ is React Flow's selection key and ⌥ is the measure gesture;
-  // neither has ever meant "reach inside", and claiming them here would take a
-  // combination away from something that already uses it.
+  // ⌘ alone. ⇧ adds to the selection (and draws the selection box) and ⌥ is
+  // the measure gesture; neither has ever meant "reach inside", and claiming
+  // them here would take a combination away from something that already uses it.
   if (!(modifiers.metaKey || modifiers.ctrlKey)) return null;
   if (modifiers.shiftKey || modifiers.altKey) return null;
   if (connectorSelected) return null;

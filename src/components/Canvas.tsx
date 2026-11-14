@@ -89,6 +89,8 @@ const GRID_SIZE = 10;
 const SNAP_GRID: [number, number] = [GRID_SIZE, GRID_SIZE];
 
 const MIDDLE_BUTTON_DRAG: number[] = [1];
+/** The keys that turn a click into a toggle of the selection (see `multiSelectionKeyCode`). */
+const MULTI_SELECTION_KEYS = ['Meta', 'Control', 'Shift'];
 const FIT_VIEW_OPTIONS = { padding: 0.2, maxZoom: 1 };
 const DEFAULT_VIEWPORT_FALLBACK = { x: 0, y: 0, zoom: 0.8 };
 const PRO_OPTIONS = { hideAttribution: true };
@@ -1242,6 +1244,13 @@ export function Canvas({
         onConnectEnd={onConnectEnd}
         onPaneClick={onPaneClick}
         onNodeClick={onNodeClick}
+        // ⇧-click adds to (or takes out of) the selection, as in Whimsical,
+        // beside React Flow's own ⌘ / Ctrl. Both are listed whatever the
+        // platform: React Flow picks one from the user agent, and Ctrl-click on
+        // a Mac is a right-click anyway. ⇧-drag still draws a selection box
+        // (`selectionKeyCode`), now adding to what is selected; `deepSelect`
+        // ignores ⇧, so only ⌘ alone reaches inside a group.
+        multiSelectionKeyCode={MULTI_SELECTION_KEYS}
         onEdgeDoubleClick={onEdgeDoubleClick}
         onNodeDragStart={onNodeDragStart}
         onNodeMouseEnter={onNodeMouseEnter}
