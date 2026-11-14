@@ -264,6 +264,7 @@ export function Canvas({
   // Both clipboards live outside the store: neither belongs in a saved diagram.
   const clipboardRef = useRef<ClipboardPayload | null>(null);
   const pendingCopyRef = useRef<{ type: string; payload: ClipboardPayload } | null>(null);
+  const lastPastedHtmlRef = useRef<string | null>(null);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
   // What the "Comment" menu item would pin a thread to: the shape that was
   // right-clicked, or the point on the board that was. A ref rather than state
@@ -387,6 +388,7 @@ export function Canvas({
         get: () => clipboardRef.current,
         set: (value) => { clipboardRef.current = value; },
         write: (value) => {
+          lastPastedHtmlRef.current = null;
           try {
             const { html, text } = encodeClipboardPayload(value);
             void navigator.clipboard.write([new ClipboardItem({
@@ -1101,6 +1103,7 @@ export function Canvas({
       const pending = pendingCopyRef.current;
       pendingCopyRef.current = null;
       const write = (value: ClipboardPayload) => {
+        lastPastedHtmlRef.current = null;
         const { html, text } = encodeClipboardPayload(value);
         data.setData('text/html', html);
         data.setData('text/plain', text);
@@ -1149,10 +1152,15 @@ export function Canvas({
       if (shortcutsOpen || presenting || isTypingTarget(e.target) || isCanvasControlTarget(e.target)) return;
       const data = e.clipboardData;
       if (!data) return;
-      const clip = decodeClipboardPayload(data.getData('text/html'));
+      const html = data.getData('text/html');
+      const clip = decodeClipboardPayload(html);
       if (clip) {
         e.preventDefault();
-        clipboardRef.current = useDiagramStore.getState().pasteClipboard(clip);
+        // Repeats advance from the previous paste; a different raw payload
+        // starts from the copied positions, even if it decodes identically.
+        const source = html === lastPastedHtmlRef.current ? clipboardRef.current ?? clip : clip;
+        clipboardRef.current = useDiagramStore.getState().pasteClipboard(source);
+        lastPastedHtmlRef.current = html;
         return;
       }
 
@@ -1250,6 +1258,7 @@ export function Canvas({
           clipboard: {
             ...commandContext.clipboard,
             write: (payload) => {
+              lastPastedHtmlRef.current = null;
               pendingCopyRef.current = { type: command.id === 'clipboard.cut' ? 'cut' : 'copy', payload };
             },
           },

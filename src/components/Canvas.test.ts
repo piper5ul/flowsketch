@@ -177,6 +177,53 @@ describe('Canvas clipboard', () => {
     expect(surface.insertImages).not.toHaveBeenCalled();
   });
 
+  it('steps repeated keyboard pastes of the same system HTML by 30 px each time', () => {
+    const html = encodeClipboardPayload(payload('Repeated')).html;
+    for (const offset of [30, 60, 90]) {
+      expect(keyboard('v').defaultPrevented).toBe(false);
+      clipboardEvent('paste', { 'text/html': html });
+      expect(store().nodes.at(-1)?.position).toEqual({ x: offset, y: offset });
+      expect(surface.ctx!.clipboard.get()?.nodes[0].position).toEqual({ x: offset, y: offset });
+    }
+  });
+
+  it('restarts the offset when raw system HTML changes, even with the same decoded shapes', () => {
+    const html = encodeClipboardPayload(payload('Same shapes')).html;
+    for (const raw of [html, html, `${html}\n`, `${html}\n`]) {
+      keyboard('v');
+      clipboardEvent('paste', { 'text/html': raw });
+    }
+    expect(store().nodes.map((n) => n.position)).toEqual([
+      { x: 30, y: 30 }, { x: 60, y: 60 }, { x: 30, y: 30 }, { x: 60, y: 60 },
+    ]);
+    const fresh = payload('Other browser');
+    fresh.nodes[0].position = { x: 100, y: 200 };
+    clipboardEvent('paste', { 'text/html': encodeClipboardPayload(fresh).html });
+    expect(store().nodes.at(-1)?.position).toEqual({ x: 130, y: 230 });
+  });
+
+  it.each(['keyboard', 'keyboard without event', 'browser menu', 'command menu'])(
+    'restarts after copying the same selection again via %s', (method) => {
+      act(() => {
+        store().loadDiagram('source', 'Source', false, payload('Original'));
+        useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+      });
+      const values: Record<string, string> = {};
+      clipboardEvent('copy', values);
+      clipboardEvent('paste', values);
+      clipboardEvent('paste', values);
+      act(() => {
+        useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: n.id === 'Original' })) });
+      });
+      if (method.startsWith('keyboard')) keyboard('c');
+      if (method === 'keyboard' || method === 'browser menu') clipboardEvent('copy', {});
+      if (method === 'command menu') act(() => { registry.find('clipboard.copy')!.run(surface.ctx!); });
+      keyboard('v');
+      clipboardEvent('paste', values);
+      expect(store().nodes.at(-1)?.position).toEqual({ x: 30, y: 30 });
+    },
+  );
+
   it('keeps menu paste working when the system clipboard write is refused', async () => {
     const write = vi.fn(async (_items: { data: Record<string, Blob> }[]) => { throw new Error('refused'); });
     vi.stubGlobal('navigator', { clipboard: { write } });
