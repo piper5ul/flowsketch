@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasMarkdown, inlineSpans, parseMarkdown } from './markdown';
+import { hasMarkdown, inlineSpans, markdownBlocks, parseMarkdown } from './markdown';
 
 describe('hasMarkdown', () => {
   it('is false for plain text and true for any marker it renders', () => {
@@ -46,6 +46,23 @@ describe('parseMarkdown', () => {
       { kind: 'paragraph', spans: [{ text: 'a' }] },
       { kind: 'paragraph', spans: [{ text: '' }] },
       { kind: 'bullet', spans: [{ text: 'b', bold: true }] },
+    ]);
+  });
+});
+
+describe('markdownBlocks', () => {
+  it('is null for plain text, so a plain label or table cell is shown as typed', () => {
+    expect(markdownBlocks('')).toBeNull();
+    expect(markdownBlocks('Owner')).toBeNull();
+    expect(markdownBlocks('snake_case_name')).toBeNull();
+  });
+
+  it('parses text that holds Markdown, inline and block alike', () => {
+    expect(markdownBlocks('**bold** cell')).toEqual([
+      { kind: 'paragraph', spans: [{ text: 'bold', bold: true }, { text: ' cell' }] },
+    ]);
+    expect(markdownBlocks('[x] shipped')).toEqual([
+      { kind: 'check', checked: true, spans: [{ text: 'shipped' }] },
     ]);
   });
 });

@@ -63,3 +63,12 @@ export function parseMarkdown(text: string): Block[] {
     return { kind: 'check', checked: m[7] !== ' ', spans: inlineSpans(m[8]) };
   });
 }
+
+/**
+ * `text` as blocks when it holds any Markdown, `null` when it does not — so a
+ * plain label or table cell, the usual case, never pays for a parse. A `null`
+ * answer means "show the text as typed".
+ */
+export function markdownBlocks(text: string): Block[] | null {
+  return hasMarkdown(text) ? parseMarkdown(text) : null;
+}

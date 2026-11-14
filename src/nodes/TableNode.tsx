@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { type NodeProps } from '@xyflow/react';
 import { SideHandles } from './SideHandles';
 import clsx from 'clsx';
@@ -8,6 +8,8 @@ import { useSearchHighlight } from '../store/useSearchStore';
 import { peerOutlineStyle, usePeerSelection } from '../store/useCollabStore';
 import { resolveFontSize } from '../lib/text';
 import { isDarkFill } from '../lib/palette';
+import { markdownBlocks } from '../lib/markdown';
+import { MarkdownLabel } from '../components/MarkdownLabel';
 import {
   DEFAULT_ROW_HEIGHT,
   MIN_COLUMN_WIDTH,
@@ -24,6 +26,26 @@ interface CellRef {
   row: number;
   col: number;
 }
+
+/**
+ * A closed cell's text: rendered Markdown when it holds any, the text as typed
+ * when it does not (`markdownBlocks` answers `null` without parsing). The cell
+ * stores its source either way, and an open cell's input shows that source.
+ *
+ * Rows are a fixed height — the node's box is derived from them — so rendered
+ * Markdown is clipped to the cell rather than growing the row: the wrapper is
+ * capped at the cell's height with its overflow hidden, which keeps the first
+ * line in view the way a long plain cell keeps its start.
+ */
+const CellText = memo(function CellText({ text }: { text: string }) {
+  const blocks = useMemo(() => markdownBlocks(text), [text]);
+  if (!blocks) return <>{text}</>;
+  return (
+    <div className="max-h-full min-w-0 max-w-full overflow-hidden">
+      <MarkdownLabel blocks={blocks} />
+    </div>
+  );
+});
 
 /** How wide the invisible strip on a column's border is, in px. */
 const RESIZE_GRIP = 8;
@@ -315,7 +337,7 @@ export function TableNode({ id, data, selected, isConnectable }: NodeProps<Shape
                                   : 'flex-start',
                           }}
                         >
-                          {cell}
+                          <CellText text={cell} />
                         </div>
                       )}
                     </td>
