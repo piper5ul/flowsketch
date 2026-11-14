@@ -12,7 +12,7 @@ import {
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
 import { anchorNodeAt } from '../lib/connectorGesture';
-import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
+import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH, inkBounds } from '../lib/ink';
 import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_ROW_HEIGHT,
@@ -31,6 +31,8 @@ import {
   MIND_MAP_SIBLING_GAP,
 } from '../lib/mindMap';
 import { useToastStore } from './useToastStore';
+import { registry } from '../commands/commands';
+import type { CommandContext } from '../commands/types';
 import { ConflictError, UnauthorizedError, api } from '../lib/api';
 
 // Only `api` itself is a stub: the error classes have to be the real ones, or
@@ -1186,10 +1188,42 @@ describe('eraseInkAt', () => {
     return { first, second };
   }
 
-  it('rubs out the whole stroke the pointer crosses, and only that one', () => {
+  it('splits a simplified straight stroke at the eraser edge, and leaves the other alone', () => {
     const { second } = twoStrokes();
+    expect(store().nodes[0].data.ink!.points).toHaveLength(2);
+    const untouched = store().nodes[1];
     expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(1);
-    expect(store().nodes.map((n) => n.id)).toEqual([second]);
+    expect(store().nodes).toHaveLength(3);
+    expect(store().nodes[2]).toBe(untouched);
+    expect(store().nodes[2].id).toBe(second);
+    // Circle intersections can differ by floating-point roundoff (< 1e-10 px).
+    for (const [i, node] of store().nodes.slice(0, 2).entries()) {
+      expect(node).toMatchObject({
+        position: { x: 98, y: i === 0 ? 98 : 154 }, width: 4, height: expect.closeTo(48, 10),
+        data: { ink: { points: [[2, 2], [2, expect.closeTo(46, 10)]] } },
+      });
+    }
+  });
+
+  it('splits a stroke into boxed runs with the same pen, and undoes a whole wipe together', () => {
+    const points: InkPoint[] = Array.from({ length: 15 }, (_, i) => [100 + i * 10, 100, 0.5]);
+    const id = store().addInk(points, 'highlighter', 4)!;
+    store().updateNodeData(id, { stroke: '#123456' });
+    const before = store().nodes;
+    expect(store().eraseInkAt({ x: 170, y: 100 })).toBe(1);
+    expect(store().nodes).toHaveLength(2);
+    const expected = [inkBounds([points[0], [164, 100, 0.5]], 4), inkBounds([[176, 100, 0.5], points[14]], 4)];
+    for (const [i, node] of store().nodes.entries()) {
+      const box = expected[i];
+      expect(node).toMatchObject({
+        type: 'ink', position: { x: box.x, y: box.y }, width: box.width, height: box.height,
+        data: { stroke: '#123456', ink: { points: box.points, width: 4, kind: 'highlighter' } },
+      });
+    }
+    expect(new Set(store().nodes.map((n) => n.id)).size).toBe(2);
+    expect(store().eraseInkAt({ x: 210, y: 100 }, true)).toBe(1);
+    store().undo();
+    expect(store().nodes).toEqual(before);
   });
 
   it('reaches a little past the drawn line, and no further', () => {
@@ -1214,12 +1248,12 @@ describe('eraseInkAt', () => {
     expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(0);
   });
 
-  it('erases one stroke per press, and a whole wipe in one undo step', () => {
+  it('splits the strokes a wipe crosses in one undo step', () => {
     twoStrokes();
     // What the gesture does: `continuing` is false until something has gone.
     expect(store().eraseInkAt({ x: 100, y: 150 }, false)).toBe(1);
     expect(store().eraseInkAt({ x: 300, y: 150 }, true)).toBe(1);
-    expect(store().nodes).toHaveLength(0);
+    expect(store().nodes).toHaveLength(4);
 
     store().undo();
     expect(store().nodes).toHaveLength(2);
@@ -4053,6 +4087,42 @@ describe('mind maps', () => {
   /** The map's branches, in the order the edge array holds them. */
   const branches = () => store().edges.filter((e) => e.data?.role === 'mindmap');
   const childrenIds = (id: string) => branches().filter((e) => e.source === id).map((e) => e.target);
+
+  describe('deleteSelection', () => {
+    it.each(['Delete', 'Backspace'])('deletes a collapsed subtree and its branches in one undo step (%s)', (key) => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      const grandchild = store().mindMapAddChild(child)!;
+      const sibling = store().mindMapAddChild(root)!;
+      store().mindMapToggleCollapse(child);
+      const otherRoot = store().mindMapAddRoot(at);
+      const otherChild = store().mindMapAddChild(otherRoot)!;
+      select(child);
+      const before = { nodes: store().nodes, edges: store().edges };
+      const ctx = { store: useDiagramStore } as unknown as CommandContext;
+      const command = registry.matchEvent({ key }, ctx)!;
+      expect(command.id).toBe('edit.delete');
+      command.run(ctx);
+      expect(store().nodes.map((n) => n.id)).toEqual([root, sibling, otherRoot, otherChild]);
+      expect(store().edges.some((e) => [child, grandchild].includes(e.source) || [child, grandchild].includes(e.target))).toBe(false);
+      store().undo();
+      expect(store().nodes).toEqual(before.nodes);
+      expect(store().edges).toEqual(before.edges);
+      store().redo();
+      expect(store().nodes.map((n) => n.id)).toEqual([root, sibling, otherRoot, otherChild]);
+    });
+
+    it('deletes the whole map when the root is selected, leaving ordinary nodes alone', () => {
+      const root = store().mindMapAddRoot(at);
+      const child = store().mindMapAddChild(root)!;
+      store().mindMapAddChild(child);
+      const plain = store().addShape('rectangle', at);
+      select(root);
+      store().deleteSelection();
+      expect(store().nodes.map((n) => n.id)).toEqual([plain]);
+      expect(store().edges).toEqual([]);
+    });
+  });
 
   describe('mindMapAddRoot', () => {
     it('makes a node that points at itself, selected and open for typing', () => {

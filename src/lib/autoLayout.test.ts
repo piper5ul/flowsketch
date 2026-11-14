@@ -12,6 +12,7 @@ import {
   type LayoutNode,
 } from './autoLayout';
 import { runElkLayout } from './elk';
+import { parseMermaidFlowchart } from './mermaid';
 import { CONNECTOR_LABEL_FONT_PX, estimateLabelWidth, labelLift } from './connectorPath';
 import { CONNECTOR_STANDOFF_PX } from './defaults';
 import { markerDepthPx } from './edgeMarkers';
@@ -375,4 +376,35 @@ describe('room for connector labels', () => {
     expect(label.height).toBeGreaterThanOrEqual(48);
     expect(layoutLabelFor(edge('e', 'a', 'b'), 'DOWN')).toBeNull();
   });
+});
+
+
+describe('looped Mermaid flowcharts', () => {
+  it.each(['TB', 'LR'] as const)('keeps the declared chain forward and the loop backward (%s)', async (direction) => {
+    for (const backEdge of ['C --> A', 'C -->|no| B']) {
+      const chart = parseMermaidFlowchart(`flowchart ${direction}\nA --> B --> C\n${backEdge}`)!;
+      const nodes = chart.nodes.map((n) => node(n.id, 0, 0));
+      const edges = chart.edges.map((e, i) => ({ ...edge(String(i), e.source, e.target), data: { label: e.label } }));
+      const graph = layoutGraphFor(nodes, edges, selectedIds(nodes), direction === 'TB' ? 'DOWN' : 'RIGHT')!;
+      expect(graph.children.map((n) => n.id)).toEqual(['A', 'B', 'C']);
+      expect(graph.edges.map((e) => [e.sources[0], e.targets[0]])).toEqual([
+        ['A', 'B'], ['B', 'C'], ['C', backEdge.endsWith('A') ? 'A' : 'B'],
+      ]);
+      const positions = applyLayout(nodes, await runElkLayout(graph), { x: 0, y: 0 });
+      const axis = direction === 'TB' ? 'y' : 'x';
+      expect(positions.A[axis]).toBeLessThan(positions.B[axis]);
+      expect(positions.B[axis]).toBeLessThan(positions.C[axis]);
+    }
+  });
+});
+
+
+it('leaves an acyclic graph unchanged when declaration order opposes its edges', async () => {
+  const nodes = [node('c', 0, 0), node('b', 0, 0), node('a', 0, 0), node('d', 0, 0)];
+  const edges = [edge('ab', 'a', 'b'), edge('bc', 'b', 'c'), edge('ad', 'a', 'd')];
+  const graph = layoutGraphFor(nodes, edges, selectedIds(nodes), 'DOWN')!;
+  expect(graph.layoutOptions).not.toHaveProperty('elk.layered.cycleBreaking.strategy');
+  const original = { ...graph, layoutOptions: { ...graph.layoutOptions } };
+  delete original.layoutOptions['elk.layered.cycleBreaking.strategy'];
+  expect(await runElkLayout(graph)).toEqual(await runElkLayout(original));
 });
