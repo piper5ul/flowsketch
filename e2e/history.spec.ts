@@ -43,3 +43,4 @@ test('the history panel scrubs through versions and forks one into a new diagram
   await expect(page.locator('.react-flow__node')).toHaveCount(1);
   await expect(page.getByRole('textbox', { name: 'Diagram title' })).toHaveValue(/\(fork\)/);
 });
+

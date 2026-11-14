@@ -1253,11 +1253,11 @@ test('two people edit one diagram at once and both windows end up identical', as
 });
 
 /** Invites `email` as an editor of the open diagram, through the share dialog. */
-async function inviteEditor(page: Page, email: string) {
+async function inviteEditor(page: Page, email: string, role: 'editor' | 'viewer' = 'editor') {
   await page.getByRole('button', { name: 'Share' }).click();
   const dialog = page.getByRole('dialog', { name: 'Share' });
   await dialog.getByLabel('Invite by email').fill(email);
-  await dialog.getByLabel('Invite as').selectOption('editor');
+  await dialog.getByLabel('Invite as').selectOption(role);
   await dialog.getByRole('button', { name: 'Invite' }).click();
   await expect(dialog.getByText(email)).toBeVisible();
   // Out of the way: it covers the canvas the two of them are about to work on.
@@ -1627,13 +1627,6 @@ test('two people on one diagram see each other, their pointers and their selecti
 });
 
 test('a labelled snapshot can be taken and restored from the history panel', async ({ page }) => {
-  // Known bug, parked 2026-10-09: restoring a version on a diagram with a live
-  // document answers 409 and changes nothing (server/versions.ts refuses when a
-  // `DiagramDoc` exists). Five designs were reviewed and set aside; the findings
-  // and the recommended simple fix are in piper5ul/flowsketch#94. This marks the
-  // failure as expected so CI stays meaningful, and it turns red the day restore
-  // works: delete this line then.
-  test.fail(true, 'Version restore on a live diagram is a known, parked bug (#94)');
   await signUp(page);
   const pane = await newDiagram(page);
   const node = await drawLabelledShape(page, pane, 'Version one');
@@ -1678,8 +1671,7 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   // ...and what it replaced is itself now a version, so the restore is undoable.
   await expect(panel.getByText('Before restore')).toBeVisible();
 
-  // The restore wrote the row, and the client's conflict guard followed it —
-  // an edit straight afterwards saves rather than colliding with that write.
+  // An edit straight afterwards syncs through the same document binding.
   await page.locator('.react-flow__node').first().dblclick();
   await page.keyboard.press('ControlOrMeta+a');
   await page.keyboard.type('Version three');
@@ -1687,6 +1679,82 @@ test('a labelled snapshot can be taken and restored from the history panel', asy
   await expectSynced(page);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+for (const role of ['editor', 'viewer'] as const) {
+  test(`a live restore reaches an invited ${role} and the restorer can undo it`, async ({ page, browser }) => {
+    test.setTimeout(120_000);
+    await signUp(page, 'Ada Lovelace');
+    const pane = await newDiagram(page);
+    const node = await drawLabelledShape(page, pane, 'Version one');
+    await page.getByRole('button', { name: 'History' }).click();
+    const panel = page.getByRole('dialog', { name: 'Version history' });
+    await panel.getByLabel('Snapshot label').fill('Checkpoint');
+    await panel.getByRole('button', { name: 'Snapshot now' }).click();
+    const checkpoint = panel.getByRole('listitem').filter({ hasText: 'Checkpoint' });
+    await expect(checkpoint).toHaveCount(1);
+    await panel.getByRole('button', { name: 'Close history' }).click();
+    await node.dblclick();
+    await page.keyboard.press('ControlOrMeta+a');
+    await page.keyboard.type('Version two');
+    await page.keyboard.press('Escape');
+    await expectSynced(page);
+
+    const guest = await browser.newContext();
+    try {
+      const guestPage = await guest.newPage();
+      await inviteEditor(page, await signUp(guestPage, 'Grace Hopper'), role);
+      await guestPage.goto(page.url());
+      await expect(guestPage.locator('.react-flow__node')).toContainText(['Version two']);
+      if (role === 'viewer') {
+        await expect(guestPage.getByText('View only')).toBeVisible();
+        await guestPage.getByRole('button', { name: 'History' }).click();
+        const guestPanel = guestPage.getByRole('dialog', { name: 'Version history' });
+        await expect(guestPanel.getByRole('button', { name: 'Restore', exact: true })).toHaveCount(0);
+        // The API enforces the same gate as the UI.
+        const status = await guestPage.evaluate(async () => {
+          const id = location.pathname.split('/').pop();
+          const versions = await (await fetch(`/api/diagrams/${id}/versions`)).json();
+          return (await fetch(`/api/diagrams/${id}/versions/${versions[0].id}/restore`, { method: 'POST' })).status;
+        });
+        expect(status).toBe(403);
+      } else {
+        await guestPage.locator('.react-flow__node').first().dblclick();
+        await guestPage.keyboard.press('ControlOrMeta+a');
+        await guestPage.keyboard.type('Collaborator edit');
+        await guestPage.keyboard.press('Escape');
+        await expectSynced(guestPage);
+        await expect(node).toContainText('Collaborator edit');
+      }
+      const before = role === 'editor' ? 'Collaborator edit' : 'Version two';
+      await page.getByRole('button', { name: 'History' }).click();
+      await checkpoint.getByRole('button', { name: 'Restore' }).click();
+      await panel.getByRole('button', { name: 'Restore this version' }).click();
+      await expect(node).toContainText('Version one');
+      await expect(guestPage.locator('.react-flow__node').first()).toContainText('Version one');
+      await expectSynced(page);
+      await expect(panel.getByText('Before restore')).toBeVisible();
+      // The safety copy includes the current open document, including a peer's edit.
+      const savedLabels = await page.evaluate(async () => {
+        const id = location.pathname.split('/').pop();
+        const versions = await (await fetch(`/api/diagrams/${id}/versions`)).json();
+        const entry = versions.find((v: { label: string }) => v.label === 'Before restore');
+        const version = await (await fetch(`/api/diagrams/${id}/versions/${entry.id}`)).json();
+        return version.data.nodes.map((n: { data: { label: string } }) => n.data.label);
+      });
+      expect(savedLabels).toEqual([before]);
+      await pane.click({ position: { x: 120, y: 120 } });
+      await page.keyboard.press('ControlOrMeta+z');
+      await expect(node).toContainText(before);
+      await expect(guestPage.locator('.react-flow__node').first()).toContainText(before);
+      // Previous local history survives the restore too.
+      await page.keyboard.press('ControlOrMeta+Shift+z');
+      await expect(node).toContainText('Version one');
+      await expect(guestPage.locator('.react-flow__node').first()).toContainText('Version one');
+    } finally {
+      await guest.close();
+    }
+  });
+}
 
 /** The light canvas token. Nothing in dark mode may still be wearing it. */
 const LIGHT_CANVAS = 'rgb(234, 239, 244)';

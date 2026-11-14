@@ -1096,7 +1096,7 @@ describe('addConnector', () => {
   it('opens exactly one undo boundary on a document-bound diagram', () => {
     const a = store().addShape('rectangle', { x: 100, y: 100 });
     const beginEntry = vi.fn();
-    setDocumentHistory({ undo: vi.fn(), redo: vi.fn(), beginEntry, clear: vi.fn() });
+    setDocumentHistory({ undo: vi.fn(), redo: vi.fn(), beginEntry, flushInteraction: vi.fn(), clear: vi.fn() });
     try {
       const { nodes, edge } = freeEnd(a);
       store().addConnector(nodes, edge);

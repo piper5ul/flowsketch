@@ -479,6 +479,17 @@ export type SaveOutcome = 'saved' | 'error' | 'conflict' | 'unauthorized' | 'ski
  */
 let flushDocument: (() => Promise<boolean>) | null = null;
 
+/**
+ * Before a version is applied: close any open editor and finish a gesture the
+ * binding is still holding, so the restore is an undo entry of its own.
+ * Restore is clicked in the history panel, so no pointer gesture is in flight.
+ */
+export function prepareCanvasForVersionRestore(): void {
+  consumeSuppressBlur();
+  useDiagramStore.setState({ editingNodeId: null, editingEdgeId: null, activeTableCell: null });
+  documentHistory?.flushInteraction();
+}
+
 export function setDocumentFlush(flush: (() => Promise<boolean>) | null): void {
   flushDocument = flush;
 }
@@ -513,7 +524,9 @@ export interface DocumentHistory {
    * still marks exactly the right place and none of them had to be visited.
    */
   beginEntry: () => void;
-  /** Forget both stacks — a different diagram, or one restored over this one. */
+  /** Finish a held gesture before a separate edit. */
+  flushInteraction: () => void;
+  /** Forget both stacks when opening a diagram. */
   clear: () => void;
 }
 
@@ -745,6 +758,8 @@ export interface DiagramState {
     updatedAt?: string | null,
     options?: LoadDiagramOptions,
   ) => void;
+  /** Replace a version's content and board meta as one undoable edit. */
+  applyVersionRestore: (data: unknown) => void;
   /**
    * Writes the diagram. `overwrite` drops the `ifUnmodifiedSince` guard, which
    * is what the conflict banner's "Overwrite" does: the user has been told
@@ -2001,9 +2016,8 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
     past = [];
     future = [];
     // Whichever history is in force, a load is where it starts again: the board
-    // being opened is not one the entries on the stack describe. For a bound
-    // diagram this is a version restore or a reload of the same document, and
-    // the edit the load then pushes into it is one step of its own.
+    // being opened is not one the entries on the stack describe. A version
+    // restore uses applyVersionRestore instead, preserving earlier history.
     documentHistory?.clear();
     suppressHistory = false;
     lastNudgeAt = 0;
@@ -2047,6 +2061,28 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
       // what leaves an anonymous reader with nothing to vote as.
       viewerId: options?.viewerId ?? null,
       ...historyFlags(),
+    });
+  },
+
+  applyVersionRestore: (data) => {
+    // Narrow exactly as loadDiagram does, before touching the current board.
+    const migrated = migrateDiagramData(data);
+    const opened = deriveMindMapHidden(
+      normalizeParentage(migrated.nodes as unknown as ShapeNode[]).map(normalizeTableNode),
+      migrated.edges as unknown as ConnectorEdge[],
+    );
+    prepareCanvasForVersionRestore();
+    lastNudgeAt = 0;
+    pushHistory(get());
+    // One set is one ordinary binding transaction. The camera and title are
+    // independent of the version's board content and stay out of this edit.
+    set({
+      nodes: opened.nodes,
+      edges: opened.edges,
+      defaults: (migrated.defaults ?? {}) as BoardDefaults,
+      thumbnailNodeIds: migrated.thumbnailNodeIds ?? null,
+      voting: migrated.voting ?? null,
+      timer: migrated.timer ?? null,
     });
   },
 
