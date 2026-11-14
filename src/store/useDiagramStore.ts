@@ -32,7 +32,7 @@ import {
   MIN_INK_POINTS,
   inkBounds,
   simplify,
-  strokeHits,
+  splitStroke,
 } from '../lib/ink';
 import {
   WIRE_FILL,
@@ -818,13 +818,13 @@ export interface DiagramState {
   newInkStroke: () => string;
   /**
    * Rubs out every ink stroke passing within the eraser's reach of `point` —
-   * whole strokes, never part of one.
+   * keeping each surviving run as its own stroke.
    *
    * `continuing` is what makes one wipe one undo step: the gesture passes
    * `false` until something has actually been erased and `true` after that, so
    * the boundary is opened by the first deletion rather than by the press (a
    * press that erases nothing must not leave an undo entry that undoes
-   * nothing). Returns how many strokes went.
+   * nothing). Returns how many strokes were hit.
    */
   eraseInkAt: (point: { x: number; y: number }, continuing?: boolean) => number;
   /**
@@ -2372,32 +2372,39 @@ export const useDiagramStore = create<DiagramState>((set, get) => ({
 
   eraseInkAt: (point, continuing = false) => {
     const state = get();
-    const doomed = new Set(
-      state.nodes
-        .filter((n) => {
-          if (!isInkNode(n) || n.data.locked) return false;
-          const ink = n.data.ink;
-          if (!ink) return false;
-          // The stroke's points are relative to its own box, and the pointer is
-          // on the board: one of the two has to move, and moving the pointer is
-          // one subtraction instead of one per sample. `absolutePosition`
-          // because a stroke inside a frame is positioned against the frame.
-          const origin = absolutePosition(n, nodesById(state.nodes));
-          const local = { x: point.x - origin.x, y: point.y - origin.y };
-          return strokeHits(ink.points, local, ink.width / 2 + ERASER_SLOP_PX);
-        })
-        .map((n) => n.id),
-    );
-    if (doomed.size === 0) return 0;
+    const replacements = new Map<string, ShapeNode[]>();
+    const byId = nodesById(state.nodes);
+    for (const node of state.nodes) {
+      if (!isInkNode(node) || node.data.locked || !node.data.ink) continue;
+      const ink = node.data.ink;
+      // Points are local to the stroke's box; the pointer is on the board.
+      const origin = absolutePosition(node, byId);
+      const local = { x: point.x - origin.x, y: point.y - origin.y };
+      const runs = splitStroke(ink.points, local, ink.width / 2 + ERASER_SLOP_PX);
+      if (runs.length === 1 && runs[0] === ink.points) continue;
+      replacements.set(node.id, runs.map((points) => {
+        const box = inkBounds(points, ink.width);
+        return {
+          ...node,
+          id: nanoid(8),
+          position: { x: node.position.x + box.x, y: node.position.y + box.y },
+          width: box.width,
+          height: box.height,
+          measured: undefined,
+          data: { ...node.data, ink: { ...ink, points: box.points } },
+        };
+      }));
+    }
+    if (replacements.size === 0) return 0;
 
     if (!continuing) pushHistory(state);
     set((s) => ({
-      nodes: s.nodes.filter((n) => !doomed.has(n.id)),
+      nodes: s.nodes.flatMap((n) => replacements.get(n.id) ?? [n]),
       // A stroke has no connectors, but a diagram is free-form JSON and an edge
       // could name one; the same tidy-up every other deletion does.
-      edges: s.edges.filter((e) => !doomed.has(e.source) && !doomed.has(e.target)),
+      edges: s.edges.filter((e) => !replacements.has(e.source) && !replacements.has(e.target)),
     }));
-    return doomed.size;
+    return replacements.size;
   },
 
   addFrame: (position) => {

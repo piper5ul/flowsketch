@@ -178,6 +178,33 @@ export function strokeHits(points: InkPoint[], point: Point, radius: number): bo
 }
 
 /**
+ * The runs left after erasing at `point`, with short remnants dropped before
+ * any thinning. A miss keeps the original points by reference. Crossing a
+ * segment cuts the run too, even when its samples sit outside the radius.
+ */
+export function splitStroke(points: InkPoint[], point: Point, radius: number): InkPoint[][] {
+  if (!strokeHits(points, point, radius)) return [points];
+  const runs: InkPoint[][] = [];
+  let run: InkPoint[] = [];
+  const finish = () => {
+    if (run.length >= MIN_INK_POINTS) runs.push(run);
+    run = [];
+  };
+  for (const sample of points) {
+    const at = { x: sample[0], y: sample[1] };
+    if (Math.hypot(at.x - point.x, at.y - point.y) <= radius) {
+      finish();
+      continue;
+    }
+    const previous = run[run.length - 1];
+    if (previous && distanceToSegment(point, { x: previous[0], y: previous[1] }, at) <= radius) finish();
+    run.push(sample);
+  }
+  finish();
+  return runs;
+}
+
+/**
  * `points` thinned by Ramer–Douglas–Peucker: every sample further than
  * `tolerance` from the line its neighbours make is kept, and the rest — the
  * ones a straight run through them would have passed through anyway — go.

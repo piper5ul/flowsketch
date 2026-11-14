@@ -9,6 +9,7 @@ import {
   isInkTool,
   simplify,
   strokeHits,
+  splitStroke,
 } from './ink';
 import type { InkPoint } from '../types';
 
@@ -162,5 +163,28 @@ describe('simplify', () => {
   it('carries the pressure of every sample it keeps', () => {
     const drawn: InkPoint[] = [[0, 0, 0.1], [10, 5, 0.9], [20, 0, 0.3]];
     expect(simplify(drawn, INK_SIMPLIFY_TOLERANCE)).toEqual(drawn);
+  });
+});
+
+
+describe('splitStroke', () => {
+  const points: InkPoint[] = Array.from({ length: 9 }, (_, i) => [i * 10, 0, i / 10]);
+
+  it('removes points within reach and keeps each surviving run with its pressure', () => {
+    expect(splitStroke(points, { x: 40, y: 0 }, 10)).toEqual([points.slice(0, 3), points.slice(6)]);
+  });
+
+  it('drops runs below the raw point minimum', () => {
+    expect(splitStroke(points, { x: 20, y: 0 }, 1)).toEqual([points.slice(3)]);
+    expect(splitStroke(points, { x: 40, y: 0 }, 100)).toEqual([]);
+  });
+
+  it('cuts a crossing between sparse samples instead of joining the runs again', () => {
+    expect(splitStroke(points, { x: 35, y: 0 }, 1)).toEqual([points.slice(0, 4), points.slice(4)]);
+  });
+
+  it('leaves a missed stroke unchanged, even one simplified below the raw point minimum', () => {
+    const line = points.slice(0, 2);
+    expect(splitStroke(line, { x: 40, y: 20 }, 4)[0]).toBe(line);
   });
 });

@@ -12,7 +12,7 @@ import {
 import { CURRENT_DIAGRAM_VERSION, migrateDiagramData } from '../lib/diagramMigrations';
 import { SHAPE_KINDS, isAnchorNode } from '../lib/nodeKinds';
 import { anchorNodeAt } from '../lib/connectorGesture';
-import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH } from '../lib/ink';
+import { DEFAULT_INK_STROKE, ERASER_SLOP_PX, INK_WIDTH, inkBounds } from '../lib/ink';
 import {
   DEFAULT_COLUMN_WIDTH,
   DEFAULT_ROW_HEIGHT,
@@ -1180,6 +1180,27 @@ describe('eraseInkAt', () => {
     const { second } = twoStrokes();
     expect(store().eraseInkAt({ x: 100, y: 150 })).toBe(1);
     expect(store().nodes.map((n) => n.id)).toEqual([second]);
+  });
+
+  it('splits a stroke into boxed runs with the same pen, and undoes a whole wipe together', () => {
+    const points: InkPoint[] = Array.from({ length: 15 }, (_, i) => [100 + i * 10, 100 + (i % 2) * 2, 0.5]);
+    const id = store().addInk(points, 'highlighter', 4)!;
+    store().updateNodeData(id, { stroke: '#123456' });
+    const before = store().nodes;
+    expect(store().eraseInkAt({ x: 170, y: 102 })).toBe(1);
+    expect(store().nodes).toHaveLength(2);
+    const expected = [inkBounds(points.slice(0, 7), 4), inkBounds(points.slice(8), 4)];
+    for (const [i, node] of store().nodes.entries()) {
+      const box = expected[i];
+      expect(node).toMatchObject({
+        type: 'ink', position: { x: box.x, y: box.y }, width: box.width, height: box.height,
+        data: { stroke: '#123456', ink: { points: box.points, width: 4, kind: 'highlighter' } },
+      });
+    }
+    expect(new Set(store().nodes.map((n) => n.id)).size).toBe(2);
+    expect(store().eraseInkAt({ x: 210, y: 102 }, true)).toBe(1);
+    store().undo();
+    expect(store().nodes).toEqual(before);
   });
 
   it('reaches a little past the drawn line, and no further', () => {
