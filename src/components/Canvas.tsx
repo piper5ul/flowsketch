@@ -263,6 +263,7 @@ export function Canvas({
   const toolPlacedAtRef = useRef(0);
   // Both clipboards live outside the store: neither belongs in a saved diagram.
   const clipboardRef = useRef<ClipboardPayload | null>(null);
+  const pendingCopyRef = useRef<{ type: string; payload: ClipboardPayload } | null>(null);
   const styleClipboardRef = useRef<Partial<ShapeData> | null>(null);
   // What the "Comment" menu item would pin a thread to: the shape that was
   // right-clicked, or the point on the board that was. A ref rather than state
@@ -1090,13 +1091,25 @@ export function Canvas({
     [screenToFlowPosition, connectTowards, tool, setTool],
   );
 
-  // Keyboard copy/cut use the native clipboard event, which Safari permits
-  // without the async clipboard permission a menu copy needs.
+  // A keystroke already captured the selection (and cut already deleted it).
+  // The native event only writes that payload; browser menu events capture here.
   useEffect(() => {
     function onCopy(e: ClipboardEvent) {
       if (shortcutsOpen || presenting || isTypingTarget(e.target) || isCanvasControlTarget(e.target)) return;
       const data = e.clipboardData;
       if (!data) return;
+      const pending = pendingCopyRef.current;
+      pendingCopyRef.current = null;
+      const write = (value: ClipboardPayload) => {
+        const { html, text } = encodeClipboardPayload(value);
+        data.setData('text/html', html);
+        data.setData('text/plain', text);
+      };
+      if (pending?.type === e.type) {
+        e.preventDefault();
+        write(pending.payload);
+        return;
+      }
       const command = registry.find(e.type === 'cut' ? 'clipboard.cut' : 'clipboard.copy')!;
       if (command.when && !command.when(commandContext)) return;
       e.preventDefault();
@@ -1104,11 +1117,7 @@ export function Canvas({
         ...commandContext,
         clipboard: {
           ...commandContext.clipboard,
-          write: (value) => {
-            const { html, text } = encodeClipboardPayload(value);
-            data.setData('text/html', html);
-            data.setData('text/plain', text);
-          },
+          write,
         },
       });
     }
@@ -1200,6 +1209,7 @@ export function Canvas({
   // clipboard events can carry the system clipboard data.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      pendingCopyRef.current = null;
       // The sheet is modal: it takes Escape itself and swallows the rest.
       if (shortcutsOpen) return;
       // Menus, popovers, radios and listboxes own their keyboard interactions.
@@ -1233,7 +1243,19 @@ export function Canvas({
       if (presenting) return;
       const command = registry.matchEvent(e, commandContext);
       if (!command) return;
-      if (command.id === 'clipboard.copy' || command.id === 'clipboard.cut' || command.id === 'clipboard.paste') return;
+      if (command.id === 'clipboard.paste') return;
+      if (command.id === 'clipboard.copy' || command.id === 'clipboard.cut') {
+        command.run({
+          ...commandContext,
+          clipboard: {
+            ...commandContext.clipboard,
+            write: (payload) => {
+              pendingCopyRef.current = { type: command.id === 'clipboard.cut' ? 'cut' : 'copy', payload };
+            },
+          },
+        });
+        return;
+      }
       e.preventDefault();
       command.run(commandContext);
     }
@@ -1241,6 +1263,9 @@ export function Canvas({
     // Hold-to-pan is the one shortcut with two halves: the keydown is the
     // `view.pan` command, and releasing Space hands the previous tool back.
     function onKeyUp(e: KeyboardEvent) {
+      // A browser that omitted the clipboard event must not leave a capture
+      // for a later, unrelated Edit-menu copy/cut to consume.
+      pendingCopyRef.current = null;
       if (e.key === ' ') commandContext.pan.end();
     }
 

@@ -66,26 +66,82 @@ beforeEach(() => {
 afterEach(() => {
   act(() => { root.unmount(); });
   host.remove();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe('Canvas clipboard', () => {
-  it.each(['copy', 'cut'])('lets the keyboard fire %s and writes HTML and labels on that event', (type) => {
+  it.each(['copy', 'cut'])('captures %s on keydown and only writes it on the clipboard event', (type) => {
     act(() => {
       const id = store().addShape('rectangle', { x: 10, y: 20 });
       useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: n.id === id })) });
     });
+    const run = vi.spyOn(registry.find(`clipboard.${type}`)!, 'run');
     const values: Record<string, string> = {};
     expect(keyboard(type === 'copy' ? 'c' : 'x').defaultPrevented).toBe(false);
+    const captured = surface.ctx!.clipboard.get();
+    expect(captured?.nodes).toHaveLength(1);
+    expect(store().nodes).toHaveLength(type === 'copy' ? 1 : 0);
     const event = clipboardEvent(type, values);
     expect(event.defaultPrevented).toBe(true);
     expect(decodeClipboardPayload(values['text/html'])!.nodes).toHaveLength(1);
     expect(values).toHaveProperty('text/plain');
+    expect(decodeClipboardPayload(values['text/html'])).toEqual(captured);
+    expect(run).toHaveBeenCalledOnce();
     expect(store().nodes).toHaveLength(type === 'copy' ? 1 : 0);
     if (type === 'cut') {
       act(() => { store().undo(); });
       expect(store().nodes).toHaveLength(1);
     }
+  });
+
+  it.each(['copy', 'cut'])('keeps %s working when no clipboard event fires', (type) => {
+    act(() => {
+      store().loadDiagram('source', 'Source', false, payload('Selection'));
+      useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+    });
+    const run = vi.spyOn(registry.find(`clipboard.${type}`)!, 'run');
+    expect(keyboard(type === 'copy' ? 'c' : 'x').defaultPrevented).toBe(false);
+    expect(surface.ctx!.clipboard.get()?.nodes.map((n) => n.data.label)).toEqual(['Selection']);
+    expect(store().nodes).toHaveLength(type === 'cut' ? 0 : 1);
+    expect(run).toHaveBeenCalledOnce();
+    if (type === 'cut') {
+      act(() => { store().undo(); });
+      expect(store().nodes).toHaveLength(1);
+      expect(store().canUndo).toBe(false);
+    }
+  });
+
+  it.each(['copy', 'cut'])('runs %s once for a browser menu event without a keystroke', (type) => {
+    act(() => {
+      store().loadDiagram('source', 'Source', false, payload('Selection'));
+      useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+    });
+    const run = vi.spyOn(registry.find(`clipboard.${type}`)!, 'run');
+    const values: Record<string, string> = {};
+    expect(clipboardEvent(type, values).defaultPrevented).toBe(true);
+    expect(decodeClipboardPayload(values['text/html'])?.nodes[0].data.label).toBe('Selection');
+    expect(values['text/plain']).toBe('Selection');
+    expect(store().nodes).toHaveLength(type === 'cut' ? 0 : 1);
+    expect(run).toHaveBeenCalledOnce();
+  });
+
+  it.each(['copy', 'cut'])('expires a missing %s event on keyup before a later menu event', (type) => {
+    act(() => {
+      store().loadDiagram('source', 'Source', false, payload('First'));
+      useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+    });
+    const key = type === 'copy' ? 'c' : 'x';
+    keyboard(key);
+    act(() => {
+      host.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+      store().loadDiagram('next', 'Next', false, payload('Next'));
+      useDiagramStore.setState({ nodes: store().nodes.map((n) => ({ ...n, selected: true })) });
+    });
+    const values: Record<string, string> = {};
+    clipboardEvent(type, values);
+    expect(decodeClipboardPayload(values['text/html'])?.nodes[0].data.label).toBe('Next');
+    expect(store().nodes).toHaveLength(type === 'cut' ? 0 : 1);
   });
 
   it('pastes a system payload into a fresh canvas as one undo step', () => {
